@@ -108,7 +108,7 @@ ai-elder-care/
 ├── backend/        # Python Lambda handlers（chat, summary, apis）
 ├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB
 ├── data/           # 模擬長者 persona、情境對話腳本、seed 腳本、knowledge/ 衛教文件
-├── docs/           # 架構圖、使用者旅程、PII 說明
+├── docs/           # 框架（含架構圖）、API 規格、使用者旅程、PII 說明
 └── README.md
 ```
 
