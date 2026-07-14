@@ -17,7 +17,6 @@ __pycache__/
 
 # --- Terraform ---
 terraform/.terraform/
-terraform/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfvars
