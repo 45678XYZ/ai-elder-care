@@ -1,0 +1,14 @@
+{
+  "elder_id": "eld_001",
+  "name": "陳阿蘭",
+  "nickname": "阿蘭嬤",
+  "birth_year": 1948,
+  "gender": "female",
+  "lang_preference": "zh-TW",
+  "health_notes": ["高血壓", "膝關節退化"],
+  "family": [
+    { "relation": "兒子", "name": "陳志明", "note": "在台北工作，每週三來訪" },
+    { "relation": "孫子", "name": "小明", "note": "高中生" }
+  ],
+  "habit_note": "早睡早起，喜歡去公園散步、看歌仔戲"
+}
