@@ -1,0 +1,27 @@
+name: ai_elder_care
+description: 智慧長照陪伴 App——長者模式（語音互動陪伴）＋照護者模式（資訊介面）。
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 裝置端 ASR（zh-TW，含靜音偵測）
+  speech_to_text: ^7.0.0
+  # TTS 音檔播放（S3 presigned URL 串流）
+  just_audio: ^0.9.40
+  # 後端 API 呼叫
+  http: ^1.2.0
+  # TODO: Cognito 登入 SDK（amplify_flutter + amplify_auth_cognito）
+  # TODO: 本地通知（flutter_local_notifications，routines 提醒用）
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
