@@ -14,6 +14,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.egg-info/
+backend/chroma_db/
 
 # --- Terraform ---
 terraform/.terraform/
