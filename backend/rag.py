@@ -9,11 +9,18 @@ from google import genai
 from google.genai import types
 
 from embedding import get_embedding_function
+from reranker import rerank
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 CHROMA_DIR = BASE_DIR / "chroma_db"
 COLLECTION_NAME = "kb_collection"  # 需與 ingest.py 一致
+
+# 兩階段檢索：向量檢索先撈寬（CANDIDATE_POOL），reranker 精準重排後只取
+# 真正相關的前 N_RESULTS 筆進 context。優先求答得準，多一次 rerank 推論的
+# 延遲換安全邊際划算（實測純向量檢索 k=4 時「糖尿病診斷標準」剛好壓線，
+# k=5 又會稀釋「高血壓」這類問題的答案，兩難的根源是排序不夠準，不是 k 選錯）。
+CANDIDATE_POOL = 10
 N_RESULTS = 4
 
 # 測試用 Gemini（免費額度），之後接正式 API 再換回 Anthropic
@@ -57,10 +64,14 @@ def _get_genai_client() -> genai.Client:
 
 def answer(question: str) -> dict:
     collection = _get_collection()
-    result = collection.query(query_texts=[question], n_results=N_RESULTS)
+    result = collection.query(query_texts=[question], n_results=CANDIDATE_POOL)
 
-    documents = result["documents"][0]
-    metadatas = result["metadatas"][0]
+    candidate_documents = result["documents"][0]
+    candidate_metadatas = result["metadatas"][0]
+
+    order = rerank(question, candidate_documents)[:N_RESULTS]
+    documents = [candidate_documents[i] for i in order]
+    metadatas = [candidate_metadatas[i] for i in order]
 
     context_parts = []
     sources = []
