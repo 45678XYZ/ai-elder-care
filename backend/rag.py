@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+from bm25_search import BM25Index
 from embedding import get_embedding_function
 from reranker import rerank
 
@@ -43,6 +44,7 @@ PROMPT_TEMPLATE = """你是一個長照與健康衛教問答助手，只能根�
 
 _client: genai.Client | None = None
 _collection = None
+_bm25_index: BM25Index | None = None
 
 
 def _get_collection():
@@ -55,6 +57,16 @@ def _get_collection():
     return _collection
 
 
+def _get_bm25_index() -> BM25Index:
+    global _bm25_index
+    if _bm25_index is None:
+        all_chunks = _get_collection().get()
+        _bm25_index = BM25Index(
+            all_chunks["ids"], all_chunks["documents"], all_chunks["metadatas"]
+        )
+    return _bm25_index
+
+
 def _get_genai_client() -> genai.Client:
     global _client
     if _client is None:
@@ -64,10 +76,23 @@ def _get_genai_client() -> genai.Client:
 
 def answer(question: str) -> dict:
     collection = _get_collection()
-    result = collection.query(query_texts=[question], n_results=CANDIDATE_POOL)
+    dense_result = collection.query(query_texts=[question], n_results=CANDIDATE_POOL)
 
-    candidate_documents = result["documents"][0]
-    candidate_metadatas = result["metadatas"][0]
+    # dense（語意）+ BM25（關鍵字）各撈一批候選，用 chunk id 去重合併，
+    # 兩邊都撈得到的自然只留一份；只有其中一邊撈到的也保留，讓 reranker
+    # 對合併後的候選池統一評分排序。
+    candidates: dict[str, dict] = {}
+    for id_, doc, meta in zip(
+        dense_result["ids"][0], dense_result["documents"][0], dense_result["metadatas"][0]
+    ):
+        candidates[id_] = {"document": doc, "metadata": meta}
+
+    for hit in _get_bm25_index().search(question, CANDIDATE_POOL):
+        candidates.setdefault(hit["id"], {"document": hit["document"], "metadata": hit["metadata"]})
+
+    candidate_ids = list(candidates.keys())
+    candidate_documents = [candidates[i]["document"] for i in candidate_ids]
+    candidate_metadatas = [candidates[i]["metadata"] for i in candidate_ids]
 
     order = rerank(question, candidate_documents)[:N_RESULTS]
     documents = [candidate_documents[i] for i in order]

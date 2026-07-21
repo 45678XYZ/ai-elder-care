@@ -1,5 +1,7 @@
 chromadb
 sentence-transformers
+jieba
+rank-bm25
 fastapi
 uvicorn[standard]
 google-genai
