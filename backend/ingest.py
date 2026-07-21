@@ -3,6 +3,7 @@
 用法：python ingest.py
 """
 
+import re
 from pathlib import Path
 
 import chromadb
@@ -37,6 +38,7 @@ def parse_kb_file(path: Path) -> tuple[str, str, str]:
 
 
 def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+    """按字數硬切，只在段落本身就超過 size 時當備援用。"""
     if overlap >= size:
         raise ValueError(f"CHUNK_OVERLAP({overlap}) 必須小於 CHUNK_SIZE({size})，否則切塊會卡死")
 
@@ -51,6 +53,48 @@ def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) 
         if end >= len(text):
             break
         start = end - overlap
+    return chunks
+
+
+def split_paragraphs(text: str) -> list[str]:
+    """按空行切段落。kb/ 的文章不管有沒有小標題，段落間都固定空一行，
+    這個訊號比去猜各篇不一致的標題格式（有的用「一、」、有的用【】、
+    有的完全沒有）更可靠。"""
+    return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+
+
+def chunk_by_paragraphs(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
+    """把段落聚合成約 size 字的塊，不硬切斷段落（等於不硬切斷小標題底下的內容）。
+    單一段落本身就超過 size 時，退回 chunk_text() 按字數切。
+    塊與塊之間用「前一塊最後一段落」做重疊，保留跨塊語境。"""
+    paragraphs = split_paragraphs(text)
+    if not paragraphs:
+        return []
+
+    def block_len(paras: list[str]) -> int:
+        return sum(len(p) for p in paras) + 2 * max(len(paras) - 1, 0)
+
+    chunks: list[str] = []
+    current: list[str] = []
+
+    for para in paragraphs:
+        if len(para) > size:
+            if current:
+                chunks.append("\n\n".join(current))
+                current = []
+            chunks.extend(chunk_text(para, size=size, overlap=overlap))
+            continue
+
+        if current and block_len(current) + len(para) + 2 > size:
+            chunks.append("\n\n".join(current))
+            tail = current[-1]
+            current = [tail, para] if len(tail) + len(para) + 2 <= size else [para]
+        else:
+            current.append(para)
+
+    if current:
+        chunks.append("\n\n".join(current))
+
     return chunks
 
 
@@ -83,7 +127,7 @@ def main() -> None:
             print(f"[CJK 警告] 跳過 {path.name}：中文字元佔比僅 {ratio:.1%}，內容可能因字型編碼壞掉而遺失，請人工檢查後再重跑")
             continue
 
-        chunks = chunk_text(body)
+        chunks = chunk_by_paragraphs(body)
         if not chunks:
             print(f"[警告] {path.name} 正文為空，已跳過")
             continue
