@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from rag import answer
 
@@ -17,7 +17,15 @@ app.add_middleware(
 
 
 class AskRequest(BaseModel):
-    question: str
+    question: str = Field(min_length=1)
+
+    @field_validator("question")
+    @classmethod
+    def question_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("question 不可為空白")
+        return v
 
 
 class Source(BaseModel):
