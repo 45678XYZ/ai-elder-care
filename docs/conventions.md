@@ -1,4 +1,4 @@
-# 編碼慣例
+# 開發慣例
 
 命名、註解與程式風格的團隊約定。API 欄位與 ID 命名以 [api.md](api.md) 為準、資料表命名見 [framework.md](framework.md)。
 
