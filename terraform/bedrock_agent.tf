@@ -97,17 +97,17 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
         name        = "get_today_routines"
         description = "Retrieve a list of scheduled routines and their completion status for a specific elder on a given date."
         parameters {
-          map = {
-            elder_id = {
-              type        = "string"
-              description = "長者的唯一識別 ID，例如 eld_001"
-              required    = true
-            }
-            date = {
-              type        = "string"
-              description = "查詢的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
-              required    = true
-            }
+          parameter_detail {
+            name        = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameter_detail {
+            name        = "date"
+            type        = "string"
+            description = "查詢的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
+            required    = true
           }
         }
       }
@@ -117,27 +117,29 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
         name        = "complete_routine"
         description = "Mark a specific routine as completed and log a life event for the elder."
         parameters {
-          map = {
-            elder_id = {
-              type        = "string"
-              description = "長者的唯一識別 ID，例如 eld_001"
-              required    = true
-            }
-            routine_id = {
-              type        = "string"
-              description = "要完成的行程 ID，例如 rtn_001"
-              required    = true
-            }
-            date = {
-              type        = "string"
-              description = "完成的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
-              required    = true
-            }
-            completed_by = {
-              type        = "string"
-              description = "完成行程的角色，口語回報一律填 conversation"
-              required    = true
-            }
+          parameter_detail {
+            name        = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameter_detail {
+            name        = "routine_id"
+            type        = "string"
+            description = "要完成的行程 ID，例如 rtn_001"
+            required    = true
+          }
+          parameter_detail {
+            name        = "date"
+            type        = "string"
+            description = "完成的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
+            required    = true
+          }
+          parameter_detail {
+            name        = "completed_by"
+            type        = "string"
+            description = "完成行程的角色，口語回報一律填 conversation"
+            required    = true
           }
         }
       }
@@ -147,37 +149,41 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
         name        = "create_routine"
         description = "Create a new scheduled routine (either one-time or recurring) for the elder."
         parameters {
-          map = {
-            elder_id = {
-              type        = "string"
-              description = "長者的唯一識別 ID，例如 eld_001"
-              required    = true
-            }
-            title = {
-              type        = "string"
-              description = "行程的標題或內容，例如：吃血壓藥、看心臟科"
-              required    = true
-            }
-            type = {
-              type        = "string"
-              description = "行程類型分類，例如：medication, diet, activity, wellbeing, other"
-              required    = true
-            }
-            time = {
-              type        = "string"
-              description = "行程時間，格式為 HH:MM，例如 15:30"
-              required    = true
-            }
-            freq = {
-              type        = "string"
-              description = "頻率：daily, weekly, once"
-              required    = true
-            }
-            date = {
-              type        = "string"
-              description = "如果是單次(once)行程，必須提供日期 YYYY-MM-DD；每日或每週則免"
-              required    = false
-            }
+          parameter_detail {
+            name        = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameter_detail {
+            name        = "title"
+            type        = "string"
+            description = "行程的標題或內容，例如：吃血壓藥、看心臟科"
+            required    = true
+          }
+          parameter_detail {
+            name        = "type"
+            type        = "string"
+            description = "行程類型分類，例如：medication, diet, activity, wellbeing, other"
+            required    = true
+          }
+          parameter_detail {
+            name        = "time"
+            type        = "string"
+            description = "行程時間，格式為 HH:MM，例如 15:30"
+            required    = true
+          }
+          parameter_detail {
+            name        = "freq"
+            type        = "string"
+            description = "頻率：daily, weekly, once"
+            required    = true
+          }
+          parameter_detail {
+            name        = "date"
+            type        = "string"
+            description = "如果是單次(once)行程，必須提供日期 YYYY-MM-DD；每日或每週則免"
+            required    = false
           }
         }
       }
