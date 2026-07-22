@@ -22,6 +22,17 @@ terraform/.terraform/
 *.tfvars
 !*.tfvars.example
 
+# --- AI tool configs ---
+.claude/        # Claude Code
+.codex/         # OpenAI Codex
+.cursor/        # Cursor
+.windsurf/      # Windsurf
+.continue/      # Continue
+.aider*         # Aider
+.gemini/        # Gemini CLI
+.qwen/          # Qwen Code
+.roo/           # Roo Code
+
 # --- misc ---
 .DS_Store
 .env
