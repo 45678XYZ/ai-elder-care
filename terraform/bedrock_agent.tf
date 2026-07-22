@@ -35,7 +35,7 @@ resource "aws_iam_role_policy" "bedrock_agent_policy" {
           "bedrock:InvokeModelWithResponseStream"
         ]
         Resource = [
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0",
+          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-sonnet-53",
           "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0"
         ]
       },
@@ -51,10 +51,10 @@ resource "aws_iam_role_policy" "bedrock_agent_policy" {
   })
 }
 
-# 3. 部署 Bedrock Agent 本體 (使用 Claude 3.5 Sonnet)
+# 3. 部署 Bedrock Agent 本體 (使用 Claude 5 Sonnet)
 resource "aws_bedrockagent_agent" "elder_companion_agent" {
   agent_name                  = "${var.project_name}-companion"
-  foundation_model            = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+  foundation_model            = "anthropic.claude-sonnet-53"
   agent_resource_role_arn     = aws_iam_role.bedrock_agent_role.arn
   idle_session_ttl_in_seconds = 1800 # Session 閒置 30 分鐘超時
 
