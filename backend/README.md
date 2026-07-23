@@ -22,17 +22,4 @@ python -m pytest
 
 ## RAG PoC（衛教知識庫問答）
 
-跟上面的 Lambda 骨架分開，驗證長照衛教問答的檢索/生成邏輯，之後 `chat.py` 要接 Bedrock 做 RAG 前先在本機用 Chroma + Gemini 跑通。依賴列在 `requirements.txt`（目前裝在系統 Python，不在 `.venv` 裡，兩邊尚未整合）。
-
-```
-kb/            # 知識庫來源 txt，授權/收錄範圍說明見 kb/README.md
-embedding.py   # 向量化（多語 embedding model）
-bm25_search.py # BM25 關鍵字檢索
-reranker.py    # cross-encoder 重排
-ingest.py      # 建立/重建 Chroma 向量庫：python ingest.py
-rag.py         # 檢索 + Gemini 生成核心邏輯
-query.py       # CLI 測試：python query.py "問題"
-server.py      # FastAPI /ask：uvicorn server:app
-```
-
-執行前需要 `backend/.env`（參考 `.env.example`）設定 `GEMINI_API_KEY`。
+已移至 [experiments/rag-poc/](../experiments/rag-poc/)——與此 Lambda 骨架分開維護（在本機用 Chroma + Gemini 跑通檢索/生成）。正式版由 `chat.py` 接 Bedrock Knowledge Base 實作。
