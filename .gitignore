@@ -32,6 +32,7 @@ terraform/.terraform/
 .gemini/        # Gemini CLI
 .qwen/          # Qwen Code
 .roo/           # Roo Code
+graphify-out/   # Graphify 知識圖譜輸出
 
 # --- misc ---
 .DS_Store
