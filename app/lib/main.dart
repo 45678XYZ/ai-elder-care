@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'elder/screens/chat_screen.dart';
+
 void main() => runApp(const AiElderCareApp());
 
 /// App 進入點。
@@ -14,8 +16,10 @@ class AiElderCareApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '智慧長照陪伴',
-      // TODO: 登入頁 → 依 Cognito 角色導向長者模式或照護者模式
-      home: const Scaffold(body: Center(child: Text('智慧長照陪伴'))),
+      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
+      // TODO: 登入頁 → 依 Cognito 角色導向長者模式或照護者模式。
+      // 目前先直接進長者對話畫面，方便驗證 RAG PoC 串接。
+      home: const ChatScreen(),
     );
   }
 }

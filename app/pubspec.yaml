@@ -11,8 +11,14 @@ dependencies:
     sdk: flutter
   # 裝置端 ASR（zh-TW，含靜音偵測）
   speech_to_text: ^7.0.0
-  # TTS 音檔播放（S3 presigned URL 串流）
+  # 裝置端 TTS（第一版華語迴圈唸出回覆；zh-TW）
+  flutter_tts: ^4.2.0
+  # 播放正式 /chat 回傳的 reply_audio_url（Polly 合成、S3 presigned，串流）
   just_audio: ^0.9.40
+  # 錄音：客語／音檔路線，錄成 m4a 送 /chat 由後端辨識（STT）
+  record: ^5.1.0
+  # 錄音暫存路徑（getTemporaryDirectory）
+  path_provider: ^2.1.0
   # 後端 API 呼叫
   http: ^1.2.0
   # TODO: Cognito 登入 SDK（amplify_flutter + amplify_auth_cognito）
