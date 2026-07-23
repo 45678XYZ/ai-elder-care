@@ -17,6 +17,7 @@ __pycache__/
 
 # --- Terraform ---
 terraform/.terraform/
+terraform/build/
 *.tfstate
 *.tfstate.*
 *.tfvars
