@@ -14,10 +14,6 @@ from src.shared import db, responses
 ROLE_ELDER = "elder"
 ROLE_CAREGIVER = "caregiver"
 
-# 長者身分以 elder_id claim 判定。Cognito 自訂屬性在 ID token 內會帶 `custom:` 前綴，
-# 兩種設定皆接受；對外契約以 api.md 的 elder_id 為準。
-_ELDER_ID_CLAIMS = ("elder_id", "custom:elder_id")
-
 
 @dataclass(frozen=True)
 class Caller:
@@ -44,7 +40,9 @@ def get_caller(event) -> Caller:
     if not claims:
         raise AuthError(responses.error(500, "INTERNAL_ERROR", "缺少授權資訊"))
 
-    elder_id = _first_claim(claims, _ELDER_ID_CLAIMS)
+    # elder_id 由 pre-token-generation trigger 注入（見
+    # backend/src/handlers/pre_token_generation.py）；照護者無此 claim。
+    elder_id = claims.get("elder_id") or None
     role = ROLE_ELDER if elder_id else ROLE_CAREGIVER
     return Caller(role=role, user_id=claims.get("sub"), elder_id=elder_id)
 
@@ -68,15 +66,6 @@ def assert_can_access_elder(event, elder_id: str) -> Caller:
     if caller.user_id not in elder.get("caregiver_ids", []):
         raise _forbidden()
     return caller
-
-
-def _first_claim(claims: dict, keys):
-    """回傳第一個存在且非空的 claim 值，皆無則回 None。"""
-    for key in keys:
-        value = claims.get(key)
-        if value:
-            return value
-    return None
 
 
 def _forbidden() -> AuthError:

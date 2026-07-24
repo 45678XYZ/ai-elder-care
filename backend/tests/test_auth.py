@@ -42,12 +42,6 @@ def test_get_caller_caregiver():
     assert caller.user_id == "usr_c1"
 
 
-def test_get_caller_accepts_custom_prefixed_elder_id_claim():
-    caller = auth.get_caller(_event({"sub": "usr_e1", "custom:elder_id": "eld_009"}))
-    assert caller.role == auth.ROLE_ELDER
-    assert caller.elder_id == "eld_009"
-
-
 def test_get_caller_missing_claims_is_500():
     with pytest.raises(auth.AuthError) as exc:
         auth.get_caller({"requestContext": {}})
