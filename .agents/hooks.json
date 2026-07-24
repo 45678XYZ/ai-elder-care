@@ -1,5 +1,5 @@
 {
-  "auto-git-commit-hook": {
+  "hooks": {
     "Stop": [
       {
         "hooks": [
