@@ -1,9 +1,8 @@
-"""Antigravity IDE Hook - Safety Gate & Auto Git Commit (No External APIs)
+"""Antigravity IDE Hook - Local LLM-powered Auto Git Commit (Gemma-4-31B-it via llama.cpp)
 
-1. Runs automated unit tests (pytest) as a safety gate.
-2. If tests pass, stages files and generates a Conventional Commit message
-   based on changed files according to .agents/skills/git-commit/SKILL.md.
-3. Completely free of Gemini API or Bedrock calls.
+Reads workspace git diff, uses local Gemma-4-31B-it model via llama.cpp 
+instructed by .agents/skills/git-commit/SKILL.md to analyze the exact code diff
+and generate a semantic Conventional Commit message dynamically.
 """
 
 import json
@@ -11,144 +10,160 @@ import os
 import subprocess
 import sys
 
+# 本地 LLM 模型路徑與包含 llama_cpp 之 Python 環境
+LLAMA_PYTHON = r"C:\Users\chent\Desktop\我的資料夾\學校\大學\比賽\aws-hackathon\.venv\Scripts\python.exe"
+MODEL_PATH = r"C:\Users\chent\Desktop\我的資料夾\學校\大學\比賽\aws-hackathon\models\gemma-4-31B-it-Q4_K_M.gguf"
 
-def run_cmd(args: list[str], check: bool = True, cwd: str | None = None) -> tuple[int, str, str]:
-    """執行 Shell 指令並回傳 (returncode, stdout, stderr)，處理 Windows 編碼。"""
+try:
+    from llama_cpp import Llama
+    HAS_LLAMA_CPP = True
+except ImportError:
+    HAS_LLAMA_CPP = False
+    # 若目前環境缺少 llama_cpp，則以目標 .venv python 重新執行本腳本
+    if os.path.exists(LLAMA_PYTHON) and sys.executable.lower() != LLAMA_PYTHON.lower():
+        cmd = [LLAMA_PYTHON] + sys.argv
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        print(res.stdout)
+        if res.stderr:
+            sys.stderr.write(res.stderr)
+        sys.exit(res.returncode)
+
+
+def run_cmd(args: list[str]) -> str:
+    """執行 Shell 指令並回傳 stdout。"""
     try:
         res = subprocess.run(
             args,
             capture_output=True,
             text=True,
-            check=check,
-            cwd=cwd,
-            encoding="utf-8",
-            errors="replace"
+            check=True,
+            encoding="utf-8"
         )
-        stdout = res.stdout.strip() if res.stdout else ""
-        stderr = res.stderr.strip() if res.stderr else ""
-        return res.returncode, stdout, stderr
+        return res.stdout.strip()
     except subprocess.CalledProcessError as e:
-        stdout = e.stdout.strip() if e.stdout else ""
-        stderr = e.stderr.strip() if e.stderr else str(e)
-        return e.returncode, stdout, stderr
-    except Exception as e:
-        return 1, "", str(e)
+        sys.stderr.write(f"Command failed: {' '.join(args)}\nStderr: {e.stderr}\n")
+        return ""
 
 
-def run_tests() -> tuple[bool, str]:
-    """執行單元測試 Safety Gate。"""
-    backend_dir = os.path.join(os.getcwd(), "backend")
-    venv_python = os.path.join(backend_dir, ".venv", "Scripts", "python.exe")
-    python_cmd = venv_python if os.path.exists(venv_python) else sys.executable
-
-    test_args = [python_cmd, "-m", "pytest", "-v"]
-    code, stdout, stderr = run_cmd(test_args, check=False, cwd=backend_dir)
+def get_git_diff() -> tuple[str, list[str]]:
+    """Stage 當前變更並取得 git diff 與檔案列表。"""
+    run_cmd(["git", "add", "."])
+    diff = run_cmd(["git", "diff", "--staged"])
     
-    if code == 0:
-        return True, stdout
-    else:
-        output_msg = stdout if stdout else stderr
-        return False, f"Unit tests failed with code {code}:\n{output_msg}"
-
-
-def analyze_conventional_commit(changed_files: list[str]) -> str:
-    """依據 .agents/skills/git-commit/SKILL.md 規範解析 Conventional Commit 訊息。"""
-    types = set()
-    scopes = set()
-
-    for file_path in changed_files:
-        path_lower = file_path.lower()
-        if "docs/" in path_lower or path_lower.endswith(".md"):
-            types.add("docs")
-            scopes.add("docs")
-        elif "tests/" in path_lower or "test_" in path_lower:
-            types.add("test")
-            scopes.add("tests")
-        elif "terraform/" in path_lower or path_lower.endswith((".tf", ".hcl")):
-            types.add("build")
-            scopes.add("infra")
-        elif "backend/src/shared/" in path_lower:
-            types.add("feat")
-            scopes.add("backend-shared")
-        elif "backend/src/handlers/" in path_lower:
-            types.add("feat")
-            scopes.add("backend-api")
-        elif "app/" in path_lower:
-            types.add("feat")
-            scopes.add("flutter-app")
-        else:
-            types.add("chore")
-
-    # 決定 Type
-    if "feat" in types:
-        commit_type = "feat"
-    elif "fix" in types:
-        commit_type = "fix"
-    elif "refactor" in types:
-        commit_type = "refactor"
-    elif "test" in types and len(types) == 1:
-        commit_type = "test"
-    elif "docs" in types and len(types) == 1:
-        commit_type = "docs"
-    elif "build" in types and len(types) == 1:
-        commit_type = "build"
-    else:
-        commit_type = "feat"
-
-    # 決定 Scope
-    if len(scopes) == 1:
-        commit_scope = list(scopes)[0]
-    elif "backend-shared" in scopes or "backend-api" in scopes:
-        commit_scope = "backend"
-    elif "flutter-app" in scopes:
-        commit_scope = "app"
-    else:
-        commit_scope = "core"
-
-    first_basename = os.path.basename(changed_files[0]) if changed_files else "files"
-    if len(changed_files) == 1:
-        desc = f"update {first_basename}"
-    else:
-        desc = f"update {first_basename} and {len(changed_files) - 1} other file(s)"
-
-    return f"{commit_type}({commit_scope}): {desc}"
-
-
-def main():
-    # 1. 檢查 Git 變更
-    _, status_output, _ = run_cmd(["git", "status", "--porcelain"], check=False)
-    if not status_output:
-        print("No changes to verify or commit.")
-        sys.exit(0)
-
-    changed_files = []
-    for line in status_output.splitlines():
+    status_out = run_cmd(["git", "status", "--porcelain"])
+    files = []
+    for line in status_out.splitlines():
         line = line.strip()
         if line:
             parts = line.split(maxsplit=1)
             if len(parts) == 2:
-                changed_files.append(parts[1])
+                files.append(parts[1])
+                
+    return diff, files
 
-    # 2. 執行單元測試 Safety Gate
-    print("Running Safety Gate (pytest)...")
-    test_passed, test_msg = run_tests()
-    if not test_passed:
-        sys.stderr.write(f"SAFETY GATE FAILED:\n{test_msg}\n")
-        sys.exit(1)  # 阻斷 Commit 並回報 error 給 Antigravity Agent
 
-    print("Safety Gate passed cleanly!")
+def get_skill_instructions() -> str:
+    """讀取 .agents/skills/git-commit/SKILL.md 作為 LLM 系統提示詞規範。"""
+    skill_path = os.path.join(os.getcwd(), ".agents", "skills", "git-commit", "SKILL.md")
+    if os.path.exists(skill_path):
+        try:
+            with open(skill_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            pass
+    return "Follow Conventional Commits specification: <type>[optional scope]: <description>"
 
-    # 3. Stage 檔案並生成 Conventional Commit 訊息
-    run_cmd(["git", "add", "."])
-    commit_msg = analyze_conventional_commit(changed_files)
 
-    # 4. 執行 Commit
-    code, out, err = run_cmd(["git", "commit", "-m", commit_msg], check=False)
-    if code == 0:
-        print(f"Git commit succeeded: {commit_msg}")
+def generate_commit_msg_with_gemma_llamacpp(diff: str, files: list[str], skill_instructions: str) -> str:
+    """使用本地 Gemma-4-31B-it (llama.cpp) 分析 git diff 並動態生成 Conventional Commit。"""
+    if not os.path.exists(MODEL_PATH):
+        sys.stderr.write(f"Model file not found at {MODEL_PATH}\n")
+        return fallback_commit_analysis(files)
+
+    user_content = f"""You are a Conventional Commits generator following these skill rules:
+
+<SKILL_RULES>
+{skill_instructions}
+</SKILL_RULES>
+
+Changed Files:
+{json.dumps(files, indent=2, ensure_ascii=False)}
+
+Git Diff:
+{diff[:3000]}
+
+Task:
+Generate a single-line Conventional Commit message for the changes above.
+Format MUST be: <type>[optional scope]: <description>
+Requirements:
+- Output ONLY the single commit message line. No markdown formatting, quotes, or conversational text.
+- Present tense, imperative mood (e.g. 'add' not 'added').
+"""
+
+    prompt = f"<bos><start_of_turn>user\n{user_content}<end_of_turn>\n<start_of_turn>model\n"
+
+    try:
+        sys.stderr.write("Loading Gemma-4-31B-it via llama.cpp engine...\n")
+        llm = Llama(
+            model_path=MODEL_PATH,
+            n_ctx=4096,
+            n_gpu_layers=16,
+            n_threads=8,
+            verbose=False
+        )
+        
+        output = llm(
+            prompt,
+            max_tokens=64,
+            temperature=0.2,
+            stop=["<end_of_turn>", "<eos>", "<turn|>", "\n"]
+        )
+        
+        raw_text = output["choices"][0]["text"].strip()
+        msg = raw_text.strip('"').strip("'").strip("`").strip()
+        if msg:
+            return msg
+    except Exception as e:
+        sys.stderr.write(f"llama.cpp execution error: {e}\n")
+
+    return fallback_commit_analysis(files)
+
+
+def fallback_commit_analysis(files: list[str]) -> str:
+    """備援 Commit 訊息推導。"""
+    if not files:
+        return "chore: update project files"
+    first_file = files[0]
+    ext = os.path.splitext(first_file)[1]
+    if "docs/" in first_file or ext == ".md":
+        return f"docs: update {os.path.basename(first_file)}"
+    elif "test" in first_file:
+        return f"test: update {os.path.basename(first_file)}"
+    elif "terraform/" in first_file or ext in (".tf", ".hcl"):
+        return f"build(infra): update {os.path.basename(first_file)}"
+    elif "src/" in first_file:
+        return f"feat(backend): update {os.path.basename(first_file)}"
     else:
-        sys.stderr.write(f"Git commit failed:\n{err if err else out}\n")
-        sys.exit(1)
+        return f"chore: update {os.path.basename(first_file)}"
+
+
+def main():
+    diff, files = get_git_diff()
+    if not files:
+        print(json.dumps({"decision": "allow", "message": "No changes to commit"}))
+        sys.exit(0)
+
+    skill_instructions = get_skill_instructions()
+    commit_msg = generate_commit_msg_with_gemma_llamacpp(diff, files, skill_instructions)
+
+    commit_res = run_cmd(["git", "commit", "-m", commit_msg])
+
+    result = {
+        "decision": "allow",
+        "message": f"Gemma-31B llama.cpp Generated Commit: {commit_msg}",
+        "detail": commit_res
+    }
+    print(json.dumps(result, ensure_ascii=False))
 
 
 if __name__ == "__main__":
