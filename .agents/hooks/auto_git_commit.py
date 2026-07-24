@@ -128,7 +128,7 @@ Requirements:
 - Present tense, imperative mood (e.g. 'add' not 'added').
 """
 
-    prompt = f"<bos><start_of_turn>user\n{user_content}<end_of_turn>\n<start_of_turn>model\n"
+    prompt = f"<start_of_turn>user\n{user_content}<end_of_turn>\n<start_of_turn>model\n"
 
     llm = None
     last_error = None

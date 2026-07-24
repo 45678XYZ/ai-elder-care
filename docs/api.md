@@ -75,9 +75,12 @@
 | 欄位 | 說明 |
 |---|---|
 | `conversation_id` | 本輪對話紀錄的 ID；由此輪擷取的事件，其 `conversation_id` 即指向它 |
-| `transcript` | `audio` 輸入時回傳後端辨識文字；`text` 輸入時原樣回傳 |
-| `reply_audio_url` | Polly 合成音檔的 S3 presigned URL，15 分鐘有效 |
+| `transcript` | `audio` 輸入時回傳後端辨識文字；`text` 輸入時原樣回傳（映射至 DB `elder_transcript`） |
+| `reply_text` | AI 語意回覆內文（映射至 DB `ai_respond_text`） |
+| `reply_audio_url` | Polly 合成音檔的 S3 presigned URL，15 分鐘有效（映射至 DB `ai_audio_url`） |
 | `routines_updated` | 本輪對話有建立行程或完成行程時為 `true`——App 應重拉 `GET /routines` 並重排本地通知 |
+
+> 註：對話紀錄表 (`conversations`) 底層包含發起來源 `source` (`"elder_initiated"` \| `"system_routine_inquiry"`)、長者狀態 `user_status` (`"replied"` \| `"no_response"`)、系統狀態 `system_status` (`"success"` \| `"failed"`)、系統提示語 `ai_prompt_text` (及其語音 `ai_prompt_audio_url`)、長者話語 `elder_transcript` (及其錄音 `elder_audio_s3_key`)、AI 反饋 `ai_respond_text` (及其語音 `ai_respond_audio_url`)，以及三階段時間戳記 (`prompt_sent_at`, `elder_received_at`, `ai_responded_at`) 供長者反應時間與後端 Latency 分析。
 
 事件擷取、記憶更新在後端完成，不回傳給 App。
 

@@ -4,6 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from src.shared.models import (
+    ConversationCreate,
+    ConversationResponse,
     ElderCreate,
     ElderResponse,
     ElderUpdate,
@@ -79,3 +81,69 @@ def test_elder_response_model():
     assert er.elder_id == "eld_abc123"
     assert er.created_at == "2026-07-24T15:00:00+08:00"
     assert er.health_notes == []
+
+
+def test_conversation_create_model():
+    """測試 ConversationCreate 模型長者發話 vs 系統主動提醒模式、雙語音與三階段時間戳記。"""
+    # 模式 1: 長者主動發話
+    cc_elder = ConversationCreate(
+        elder_id="eld_001",
+        elder_transcript="我吃過血壓藥了",
+        ai_respond_text="真棒！我幫你記下來了。",
+        elder_audio_s3_key="audio/eld_001/input_001.m4a",
+        ai_respond_audio_url="https://s3.amazonaws.com/reply.mp3",
+        elder_received_at="2026-07-24T17:30:00+08:00",
+        ai_responded_at="2026-07-24T17:30:01+08:00",
+    )
+    assert cc_elder.source == "elder_initiated"
+    assert cc_elder.user_status == "replied"
+    assert cc_elder.system_status == "success"
+    assert cc_elder.ai_prompt_text is None
+    assert cc_elder.elder_transcript == "我吃過血壓藥了"
+    assert cc_elder.ai_prompt_audio_url is None
+    assert cc_elder.elder_audio_s3_key == "audio/eld_001/input_001.m4a"
+    assert cc_elder.ai_respond_audio_url == "https://s3.amazonaws.com/reply.mp3"
+    assert cc_elder.elder_received_at == "2026-07-24T17:30:00+08:00"
+    assert cc_elder.ai_responded_at == "2026-07-24T17:30:01+08:00"
+
+    # 模式 2: 系統主動提醒（長者逾時無回應）
+    cc_sys_no_resp = ConversationCreate(
+        elder_id="eld_001",
+        source="system_routine_inquiry",
+        user_status="no_response",
+        routine_id="rtn_001",
+        ai_prompt_text="阿蘭嬤，吃血壓藥時間到了喔！",
+        ai_prompt_audio_url="https://s3.amazonaws.com/prompt_rtn001.mp3",
+        prompt_sent_at="2026-07-24T17:00:00+08:00",
+    )
+    assert cc_sys_no_resp.source == "system_routine_inquiry"
+    assert cc_sys_no_resp.user_status == "no_response"
+    assert cc_sys_no_resp.elder_transcript is None
+    assert cc_sys_no_resp.ai_prompt_text == "阿蘭嬤，吃血壓藥時間到了喔！"
+    assert cc_sys_no_resp.ai_prompt_audio_url == "https://s3.amazonaws.com/prompt_rtn001.mp3"
+    assert cc_sys_no_resp.prompt_sent_at == "2026-07-24T17:00:00+08:00"
+
+    # 模式 3: 系統處理失敗紀錄
+    cc_failed = ConversationCreate(
+        elder_id="eld_001",
+        system_status="failed",
+        error_message="Polly TTS synthesis timeout",
+    )
+    assert cc_failed.system_status == "failed"
+    assert cc_failed.error_message == "Polly TTS synthesis timeout"
+
+
+def test_conversation_response_model():
+    """測試 ConversationResponse 完整結構。"""
+    cr = ConversationResponse(
+        conversation_id="cnv_999",
+        elder_id="eld_001",
+        created_at="2026-07-24T17:30:00+08:00",
+        elder_transcript="昨天睡得很好",
+        ai_respond_text="太棒了！保持規律作息喔。",
+        ai_respond_audio_url="https://s3.amazonaws.com/response.mp3",
+    )
+    assert cr.conversation_id == "cnv_999"
+    assert cr.elder_id == "eld_001"
+    assert cr.created_at == "2026-07-24T17:30:00+08:00"
+    assert cr.ai_respond_audio_url == "https://s3.amazonaws.com/response.mp3"

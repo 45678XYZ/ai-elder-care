@@ -207,26 +207,55 @@ def list_elders(caregiver_id: str = None) -> list[dict[str, Any]]:
 # -----------------------------------------------------------------------------
 
 def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
-    """儲存對話紀錄。"""
+    """儲存對話紀錄。自動補充 conversation_id（若無）與 created_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
+    
+    data = dict(conversation_data)
+    
+    # 自動補全 conversation_id (前綴 cnv_)
+    if not data.get("conversation_id"):
+        data["conversation_id"] = f"cnv_{uuid.uuid4().hex[:12]}"
+        
+    # 自動補全 created_at 時間戳記 (+08:00)
+    if not data.get("created_at"):
+        data["created_at"] = datetime.now(TZ_TAIPEI).isoformat()
+        
+    # 設定預設欄位
+    data.setdefault("source", "elder_initiated")
+    data.setdefault("user_status", "replied")
+    data.setdefault("system_status", "success")
+    data.setdefault("lang", "zh-TW")
+    data.setdefault("input_type", "text")
+    data.setdefault("routines_updated", False)
+
     try:
-        table.put_item(Item=conversation_data)
-        return convert_decimals(conversation_data)
+        table.put_item(Item=data)
+        return convert_decimals(data)
     except ClientError as e:
         raise DBError(f"儲存對話紀錄失敗: {e.response['Error']['Message']}")
 
 
-def get_recent_conversations(elder_id: str, limit: int = 10) -> list[dict[str, Any]]:
-    """查詢長者近期對話紀錄。"""
+def get_recent_conversations(
+    elder_id: str, limit: int = 10, next_token: str = None
+) -> tuple[list[dict[str, Any]], str | None]:
+    """分頁查詢長者近期對話紀錄（按 created_at 時間倒序）。"""
     table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
+    
+    query_kwargs: dict[str, Any] = {
+        "KeyConditionExpression": "elder_id = :eid",
+        "ExpressionAttributeValues": {":eid": elder_id},
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    if next_token:
+        query_kwargs["ExclusiveStartKey"] = decode_next_token(next_token)
+
     try:
-        resp = table.query(
-            KeyConditionExpression="elder_id = :eid",
-            ExpressionAttributeValues={":eid": elder_id},
-            ScanIndexForward=False,
-            Limit=limit,
-        )
-        return convert_decimals(resp.get("Items", []))
+        resp = table.query(**query_kwargs)
+        items = convert_decimals(resp.get("Items", []))
+        last_key = resp.get("LastEvaluatedKey")
+        new_next_token = encode_next_token(last_key) if last_key else None
+        return items, new_next_token
     except ClientError as e:
         raise DBError(f"查詢對話紀錄失敗: {e.response['Error']['Message']}")
 
