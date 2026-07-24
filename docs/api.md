@@ -99,13 +99,15 @@
       "birth_year": 1948,
       "gender": "female",
       "lang_preference": "zh-TW",
+      "address_region": "台北市大安區",
       "health_notes": ["高血壓", "膝關節退化"],
       "family": [
         { "relation": "兒子", "name": "陳志明", "note": "在台北工作，每週三來訪" },
         { "relation": "孫子", "name": "小明", "note": "高中生" }
       ],
       "habit_note": "早睡早起，喜歡去公園散步、看歌仔戲",
-      "created_at": "2026-07-01T10:00:00+08:00"
+      "created_at": "2026-07-01T10:00:00+08:00",
+      "updated_at": "2026-07-01T10:00:00+08:00"
     }
   ]
 }

@@ -49,11 +49,43 @@ def test_get_and_create_elder(mock_get_resource):
     assert elder["elder_id"] == "eld_001"
     assert elder["birth_year"] == 1948
 
-    # Test create_elder
-    data = {"elder_id": "eld_002", "name": "王大同"}
+    # Test create_elder (explicit ID)
+    data = {"elder_id": "eld_002", "name": "王大同", "address_region": "台北市大安區"}
     created = db.create_elder(data)
     assert created["name"] == "王大同"
-    mock_table.put_item.assert_called_once_with(Item=data)
+    assert created["elder_id"] == "eld_002"
+    assert created["address_region"] == "台北市大安區"
+    assert "created_at" in created
+    assert "updated_at" in created
+
+    # Test create_elder (auto-generated ID with eld_ prefix)
+    auto_data = {"name": "李小花"}
+    auto_created = db.create_elder(auto_data)
+    assert auto_created["name"] == "李小花"
+    assert auto_created["elder_id"].startswith("eld_")
+    assert "created_at" in auto_created
+    assert "updated_at" in auto_created
+
+
+@patch("src.shared.db.get_dynamodb_resource")
+def test_update_elder(mock_get_resource):
+    """測試 Elders 表之 PATCH 更新與 updated_at 自動刷新。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+
+    mock_table.update_item.return_value = {
+        "Attributes": {
+            "elder_id": "eld_001",
+            "name": "陳阿蘭",
+            "nickname": "阿蘭姊",
+            "updated_at": "2026-07-24T15:30:00+08:00",
+        }
+    }
+
+    updated = db.update_elder("eld_001", {"nickname": "阿蘭姊"})
+    assert updated["nickname"] == "阿蘭姊"
+    assert "updated_at" in updated
+    mock_table.update_item.assert_called_once()
 
 
 @patch("src.shared.db.get_dynamodb_resource")

@@ -22,6 +22,7 @@ from decimal import Decimal
 import json
 import os
 from typing import Any
+import uuid
 
 import boto3
 from botocore.exceptions import ClientError
@@ -117,24 +118,48 @@ def get_elder(elder_id: str) -> dict[str, Any] | None:
 
 
 def create_elder(elder_data: dict[str, Any]) -> dict[str, Any]:
-    """新增長者資料。"""
+    """新增長者資料。自動補充 elder_id（若無）、created_at 與 updated_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_ELDERS)
+    
+    # 複製資料避免改動原始帶入字典
+    data = dict(elder_data)
+    
+    # 自動補全 elder_id (前綴 eld_)
+    if not data.get("elder_id"):
+        data["elder_id"] = f"eld_{uuid.uuid4().hex[:12]}"
+        
+    # 自動補全 ISO 8601 台灣時間戳記 (+08:00)
+    now_str = datetime.now(TZ_TAIPEI).isoformat()
+    if not data.get("created_at"):
+        data["created_at"] = now_str
+    if not data.get("updated_at"):
+        data["updated_at"] = now_str
+        
+    # 預設 List 欄位
+    for list_key in ("health_notes", "family", "caregiver_ids"):
+        if data.get(list_key) is None:
+            data[list_key] = []
+            
     try:
-        table.put_item(Item=elder_data)
-        return convert_decimals(elder_data)
+        table.put_item(Item=data)
+        return convert_decimals(data)
     except ClientError as e:
         raise DBError(f"建立長者資料失敗: {e.response['Error']['Message']}")
 
 
 def update_elder(elder_id: str, patch_data: dict[str, Any]) -> dict[str, Any]:
-    """更新長者資料（部分更新）。"""
+    """更新長者資料（部分更新）。自動刷新 updated_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_ELDERS)
+
+    # 複製 patch_data 並注入/更新 updated_at
+    data = dict(patch_data)
+    data["updated_at"] = datetime.now(TZ_TAIPEI).isoformat()
 
     # 動態建構 UpdateExpression
     update_parts = []
     expr_names = {}
     expr_values = {}
-    for k, v in patch_data.items():
+    for k, v in data.items():
         if k in ("elder_id", "created_at"):
             continue
         attr_key = f"#{k}"
