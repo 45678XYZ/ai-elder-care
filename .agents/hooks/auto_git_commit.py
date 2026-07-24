@@ -1,8 +1,9 @@
-"""Antigravity IDE Hook - LLM-powered Auto Git Commit
+"""Antigravity IDE Hook - Safety Gate & Auto Git Commit (No External APIs)
 
-Reads workspace git diff, uses LLM (AWS Bedrock / Gemini / OpenAI) instructed by 
-.agents/skills/git-commit/SKILL.md to analyze the exact code diff,
-and generates semantic Conventional Commit messages dynamically without hardcoding.
+1. Runs automated unit tests (pytest) as a safety gate.
+2. If tests pass, stages files and generates a Conventional Commit message
+   based on changed files according to .agents/skills/git-commit/SKILL.md.
+3. Completely free of Gemini API or Bedrock calls.
 """
 
 import json
@@ -10,175 +11,144 @@ import os
 import subprocess
 import sys
 
-# Try importing boto3 for AWS Bedrock
-try:
-    import boto3
-    HAS_BOTO3 = True
-except ImportError:
-    HAS_BOTO3 = False
 
-
-def run_cmd(args: list[str]) -> str:
-    """執行 Shell 指令並回傳 stdout。"""
+def run_cmd(args: list[str], check: bool = True, cwd: str | None = None) -> tuple[int, str, str]:
+    """執行 Shell 指令並回傳 (returncode, stdout, stderr)，處理 Windows 編碼。"""
     try:
         res = subprocess.run(
             args,
             capture_output=True,
             text=True,
-            check=True,
-            encoding="utf-8"
+            check=check,
+            cwd=cwd,
+            encoding="utf-8",
+            errors="replace"
         )
-        return res.stdout.strip()
+        stdout = res.stdout.strip() if res.stdout else ""
+        stderr = res.stderr.strip() if res.stderr else ""
+        return res.returncode, stdout, stderr
     except subprocess.CalledProcessError as e:
-        sys.stderr.write(f"Command failed: {' '.join(args)}\nStderr: {e.stderr}\n")
-        return ""
+        stdout = e.stdout.strip() if e.stdout else ""
+        stderr = e.stderr.strip() if e.stderr else str(e)
+        return e.returncode, stdout, stderr
+    except Exception as e:
+        return 1, "", str(e)
 
 
-def get_git_diff() -> tuple[str, list[str]]:
-    """Stage 當前變更並取得 git diff 與檔案列表。"""
-    run_cmd(["git", "add", "."])
-    diff = run_cmd(["git", "diff", "--staged"])
+def run_tests() -> tuple[bool, str]:
+    """執行單元測試 Safety Gate。"""
+    backend_dir = os.path.join(os.getcwd(), "backend")
+    venv_python = os.path.join(backend_dir, ".venv", "Scripts", "python.exe")
+    python_cmd = venv_python if os.path.exists(venv_python) else sys.executable
+
+    test_args = [python_cmd, "-m", "pytest", "-v"]
+    code, stdout, stderr = run_cmd(test_args, check=False, cwd=backend_dir)
     
-    status_out = run_cmd(["git", "status", "--porcelain"])
-    files = []
-    for line in status_out.splitlines():
+    if code == 0:
+        return True, stdout
+    else:
+        output_msg = stdout if stdout else stderr
+        return False, f"Unit tests failed with code {code}:\n{output_msg}"
+
+
+def analyze_conventional_commit(changed_files: list[str]) -> str:
+    """依據 .agents/skills/git-commit/SKILL.md 規範解析 Conventional Commit 訊息。"""
+    types = set()
+    scopes = set()
+
+    for file_path in changed_files:
+        path_lower = file_path.lower()
+        if "docs/" in path_lower or path_lower.endswith(".md"):
+            types.add("docs")
+            scopes.add("docs")
+        elif "tests/" in path_lower or "test_" in path_lower:
+            types.add("test")
+            scopes.add("tests")
+        elif "terraform/" in path_lower or path_lower.endswith((".tf", ".hcl")):
+            types.add("build")
+            scopes.add("infra")
+        elif "backend/src/shared/" in path_lower:
+            types.add("feat")
+            scopes.add("backend-shared")
+        elif "backend/src/handlers/" in path_lower:
+            types.add("feat")
+            scopes.add("backend-api")
+        elif "app/" in path_lower:
+            types.add("feat")
+            scopes.add("flutter-app")
+        else:
+            types.add("chore")
+
+    # 決定 Type
+    if "feat" in types:
+        commit_type = "feat"
+    elif "fix" in types:
+        commit_type = "fix"
+    elif "refactor" in types:
+        commit_type = "refactor"
+    elif "test" in types and len(types) == 1:
+        commit_type = "test"
+    elif "docs" in types and len(types) == 1:
+        commit_type = "docs"
+    elif "build" in types and len(types) == 1:
+        commit_type = "build"
+    else:
+        commit_type = "feat"
+
+    # 決定 Scope
+    if len(scopes) == 1:
+        commit_scope = list(scopes)[0]
+    elif "backend-shared" in scopes or "backend-api" in scopes:
+        commit_scope = "backend"
+    elif "flutter-app" in scopes:
+        commit_scope = "app"
+    else:
+        commit_scope = "core"
+
+    first_basename = os.path.basename(changed_files[0]) if changed_files else "files"
+    if len(changed_files) == 1:
+        desc = f"update {first_basename}"
+    else:
+        desc = f"update {first_basename} and {len(changed_files) - 1} other file(s)"
+
+    return f"{commit_type}({commit_scope}): {desc}"
+
+
+def main():
+    # 1. 檢查 Git 變更
+    _, status_output, _ = run_cmd(["git", "status", "--porcelain"], check=False)
+    if not status_output:
+        print("No changes to verify or commit.")
+        sys.exit(0)
+
+    changed_files = []
+    for line in status_output.splitlines():
         line = line.strip()
         if line:
             parts = line.split(maxsplit=1)
             if len(parts) == 2:
-                files.append(parts[1])
-                
-    return diff, files
+                changed_files.append(parts[1])
 
+    # 2. 執行單元測試 Safety Gate
+    print("Running Safety Gate (pytest)...")
+    test_passed, test_msg = run_tests()
+    if not test_passed:
+        sys.stderr.write(f"SAFETY GATE FAILED:\n{test_msg}\n")
+        sys.exit(1)  # 阻斷 Commit 並回報 error 給 Antigravity Agent
 
-def get_skill_instructions() -> str:
-    """讀取 .agents/skills/git-commit/SKILL.md 作為 LLM 系統提示詞規範。"""
-    skill_path = os.path.join(os.getcwd(), ".agents", "skills", "git-commit", "SKILL.md")
-    if os.path.exists(skill_path):
-        try:
-            with open(skill_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception:
-            pass
-    return "Follow Conventional Commits specification: <type>[optional scope]: <description>"
+    print("Safety Gate passed cleanly!")
 
+    # 3. Stage 檔案並生成 Conventional Commit 訊息
+    run_cmd(["git", "add", "."])
+    commit_msg = analyze_conventional_commit(changed_files)
 
-def generate_commit_msg_with_llm(diff: str, files: list[str], skill_instructions: str) -> str:
-    """呼叫 LLM (AWS Bedrock / Gemini API / OpenAI) 動態分析 Diff 並生成 Conventional Commit。"""
-    system_prompt = f"""You are an AI Git Commit Assistant. Follow the Conventional Commits specification in the provided skill instructions.
-
-<SKILL_INSTRUCTIONS>
-{skill_instructions}
-</SKILL_INSTRUCTIONS>
-
-Task:
-Analyze the provided git diff and changed files list, then generate a concise, precise Conventional Commit message.
-Format MUST be: <type>[optional scope]: <description>
-
-Rules:
-- Do NOT output any markdown blocks, quotes, or explanatory text.
-- Output ONLY the commit message line.
-- Present tense, imperative mood (e.g. 'add' not 'added').
-"""
-
-    user_prompt = f"""Changed Files:
-{json.dumps(files, indent=2, ensure_ascii=False)}
-
-Git Diff:
-{diff[:6000]}
-"""
-
-    # 1. 優先嘗試 AWS Bedrock (專案架構規範)
-    if HAS_BOTO3:
-        try:
-            region = os.environ.get("AWS_REGION", "us-east-1")
-            client = boto3.client("bedrock-runtime", region_name=region)
-            model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
-            
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 100,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_prompt}]
-            })
-            
-            response = client.invoke_model(body=body, modelId=model_id)
-            res_body = json.loads(response.get("body").read())
-            msg = res_body.get("content", [{}])[0].get("text", "").strip()
-            if msg:
-                # 移除可能的多餘換行或引號
-                msg = msg.strip('"').strip("'").strip("`").splitlines()[0]
-                return msg
-        except Exception as e:
-            sys.stderr.write(f"Bedrock LLM invocation fallback: {e}\n")
-
-    # 2. 次要嘗試 HTTP LLM (若有 GEMINI_API_KEY 或 OPENAI_API_KEY)
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if gemini_key:
-        try:
-            import urllib.request
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
-            payload = {
-                "contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}]
-            }
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                msg = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                if msg:
-                    return msg.strip('"').strip("'").strip("`").splitlines()[0]
-        except Exception as e:
-            sys.stderr.write(f"Gemini API invocation fallback: {e}\n")
-
-    # 3. LLM API 無法取得時之智慧推導備援
-    return fallback_llm_analysis(files)
-
-
-def fallback_llm_analysis(files: list[str]) -> str:
-    """當無 LLM 金鑰時之邏輯推導回傳訊息 (避免硬編碼特定字串)。"""
-    if not files:
-        return "chore: update project files"
-        
-    first_file = files[0]
-    ext = os.path.splitext(first_file)[1]
-    
-    if "docs/" in first_file or ext == ".md":
-        return f"docs: update {os.path.basename(first_file)}"
-    elif "test" in first_file:
-        return f"test: update {os.path.basename(first_file)}"
-    elif "terraform/" in first_file or ext in (".tf", ".hcl"):
-        return f"build(infra): update {os.path.basename(first_file)}"
-    elif "src/" in first_file:
-        return f"feat(backend): update {os.path.basename(first_file)}"
+    # 4. 執行 Commit
+    code, out, err = run_cmd(["git", "commit", "-m", commit_msg], check=False)
+    if code == 0:
+        print(f"Git commit succeeded: {commit_msg}")
     else:
-        return f"chore: update {os.path.basename(first_file)}"
-
-
-def main():
-    diff, files = get_git_diff()
-    if not files:
-        print(json.dumps({"decision": "allow", "message": "No changes to commit"}))
-        sys.exit(0)
-
-    # 讀取 skill 規範
-    skill_instructions = get_skill_instructions()
-
-    # 呼叫 LLM 分析 diff 並動態產出 commit 訊息
-    commit_msg = generate_commit_msg_with_llm(diff, files, skill_instructions)
-
-    # 執行 Git Commit
-    commit_res = run_cmd(["git", "commit", "-m", commit_msg])
-
-    result = {
-        "decision": "allow",
-        "message": f"LLM Generated Commit: {commit_msg}",
-        "detail": commit_res
-    }
-    print(json.dumps(result, ensure_ascii=False))
+        sys.stderr.write(f"Git commit failed:\n{err if err else out}\n")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

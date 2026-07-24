@@ -1,15 +1,19 @@
 {
-  "auto-git-commit-hook": {
-    "Stop": [
-      {
-        "hooks": [
+  "hooks": [
+    {
+      "name": "agent-safety-gate-and-commit",
+      "trigger": "AfterAgent",
+      "condition": {
+        "files_changed": true
+      },
+      "procedure": {
+        "steps": [
           {
-            "type": "command",
-            "command": "python .agents/hooks/auto_git_commit.py",
-            "timeout": 30
+            "run": "python .agents/hooks/auto_git_commit.py"
           }
-        ]
+        ],
+        "on_failure": "fail_and_retry_agent"
       }
-    ]
-  }
+    }
+  ]
 }
