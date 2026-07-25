@@ -32,6 +32,7 @@ terraform/.terraform/
 .gemini/        # Gemini CLI
 .qwen/          # Qwen Code
 .roo/           # Roo Code
+.agents/        # Antigravity
 
 # --- misc ---
 .DS_Store
