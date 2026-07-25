@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 # 執行期依賴（Lambda 部署包依此安裝；boto3 為 Lambda 執行環境內建，本機開發需要）
 dependencies = [
   "boto3",
+  "pydantic",
 ]
 
 [project.optional-dependencies]
