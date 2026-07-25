@@ -217,3 +217,25 @@ resource "aws_dynamodb_table" "routines" {
     Environment = "production"
   }
 }
+
+# auth 身分對應表（非 framework 資料表）：Cognito sub → elder_id，供 pre-token-generation
+# trigger 查詢後注入 elder_id claim（見 cognito.tf、backend/src/handlers/pre_token_generation.py）。
+resource "aws_dynamodb_table" "elder_accounts" {
+  name         = "${var.project_name}-elder-accounts"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "sub"
+
+  attribute {
+    name = "sub"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = {
+    Project     = var.project_name
+    Environment = "production"
+  }
+}
