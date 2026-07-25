@@ -1,6 +1,6 @@
-"""DynamoDB 6 張表之 Pydantic 資料模型定義。
+"""DynamoDB 5 張表之 Pydantic 資料模型定義。
 
-包含 elders, conversations, events, daily_summaries, memories, routines。
+包含 elders, conversations, events, daily_summaries, routines。
 此模組為全系統資料 Schema 之單一真理來源 (Single Source of Truth)，
 供 API Handlers (Request/Response DTO Validation) 與 shared/db.py 共同引用。
 """

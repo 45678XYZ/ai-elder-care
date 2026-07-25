@@ -1,11 +1,10 @@
 """DynamoDB 存取層（docs/framework.md 與 docs/api.md 資料模型）。
 
-提供 6 張表的統一讀寫介面：
+提供 5 張表的統一讀寫介面：
 - elders: 長者 persona 與綁定資料
 - conversations: 對話紀錄
 - events: 結構化生活事件（「實際發生」的唯一紀錄，含例行公事完成）
 - daily_summaries: AI 每日摘要
-- memories: 長期記憶
 - routines: 例行公事計畫與當日動態行程計算
 
 技術重點：
@@ -35,7 +34,6 @@ TABLE_ELDERS = os.environ.get("TABLE_ELDERS", "elders")
 TABLE_CONVERSATIONS = os.environ.get("TABLE_CONVERSATIONS", "conversations")
 TABLE_EVENTS = os.environ.get("TABLE_EVENTS", "events")
 TABLE_DAILY_SUMMARIES = os.environ.get("TABLE_DAILY_SUMMARIES", "daily_summaries")
-TABLE_MEMORIES = os.environ.get("TABLE_MEMORIES", "memories")
 TABLE_ROUTINES = os.environ.get("TABLE_ROUTINES", "routines")
 
 # 全域 Boto3 資源初始化（連線重用）
@@ -570,29 +568,3 @@ def get_daily_summaries(elder_id: str, from_date: str, to_date: str) -> list[dic
     except ClientError as e:
         raise DBError(f"查詢每日摘要失敗: {e.response['Error']['Message']}")
 
-
-# -----------------------------------------------------------------------------
-# Memories 表操作
-# -----------------------------------------------------------------------------
-
-def get_memories(elder_id: str) -> list[dict[str, Any]]:
-    """查詢長者長期記憶。"""
-    table = get_dynamodb_resource().Table(TABLE_MEMORIES)
-    try:
-        resp = table.query(
-            KeyConditionExpression="elder_id = :eid",
-            ExpressionAttributeValues={":eid": elder_id},
-        )
-        return convert_decimals(resp.get("Items", []))
-    except ClientError as e:
-        raise DBError(f"查詢長期記憶失敗: {e.response['Error']['Message']}")
-
-
-def save_memory(memory_data: dict[str, Any]) -> dict[str, Any]:
-    """寫入/更新長期記憶。"""
-    table = get_dynamodb_resource().Table(TABLE_MEMORIES)
-    try:
-        table.put_item(Item=memory_data)
-        return convert_decimals(memory_data)
-    except ClientError as e:
-        raise DBError(f"儲存長期記憶失敗: {e.response['Error']['Message']}")

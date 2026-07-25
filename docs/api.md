@@ -56,11 +56,11 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 
 response 前只執行：
 
-1. 回覆所需的 ASR、近期上下文、既有 events/memories/routines 查詢與 AI/TTS。
+1. 回覆所需的 ASR、近期上下文、既有 events/routines 查詢、AgentCore 長期記憶與 AI/TTS。
 2. 使用既有 chat 模型 structured output 加 deterministic safety rules 的 realtime rail。
 3. 需要立即生效的 routine 建立、修改、停用或完成，以及潛在高風險 wellbeing/safety signal 的事件寫入。
 
-一般生活 events 與 conversation memories 不由 realtime materialize；只在 session close 後由 batch 處理。後端 `rt_labels` 與 extraction 狀態不回傳 App。
+一般生活 events 不由 realtime materialize；只在 session close 後由 batch 處理。後端 `rt_labels` 與 extraction 狀態不回傳 App。
 
 #### Request
 
@@ -138,11 +138,11 @@ response 前只執行：
 | `reply_audio_url` | 15 分鐘 S3 presigned URL |
 | `routines_updated` | 本次 response 前已成功建立、修改、停用 routine 或完成 occurrence 時為 true，否則為 false |
 
-`routines_updated` 必須反映已提交的業務結果，不得只代表模型曾提出候選。App 收到 true 後可背景呼叫 `GET /routines` 更新定義與當日狀態。一般 events/memories 尚未產生不影響 200 response；回覆失敗時沿用通用錯誤格式。
+`routines_updated` 必須反映已提交的業務結果，不得只代表模型曾提出候選。App 收到 true 後可背景呼叫 `GET /routines` 更新定義與當日狀態。一般 events 尚未產生不影響 200 response；回覆失敗時沿用通用錯誤格式。
 
 ### POST /chat/sessions/{session_id}/close — 明確關閉
 
-App 在停止免手持互動、離開對話畫面或切換長者前呼叫。此 endpoint 表示停止向該 session 追加 turn、freeze immutable snapshot，並啟動離線 normal events/memories materialization；不保證 response 時 batch 已完成。
+App 在停止免手持互動、離開對話畫面或切換長者前呼叫。此 endpoint 表示停止向該 session 追加 turn、freeze immutable snapshot，並啟動離線 normal events materialization；不保證 response 時 batch 已完成。
 
 只有 token 對應的長者本人可呼叫。request body 可省略；傳送時必須是空 object：
 
@@ -177,7 +177,7 @@ close 以 session 狀態保證冪等，不需要 `client_request_id`：
 - 同一 session 已 `closed` 時，重複 close 回相同 `closed_at` 與當下 `batch_status` 的 200。
 - `/chat` 與 close race 由條件式 session transition 決定：turn reserve 先成功時 close 看到 inflight 並回 409；close 先轉為 closing 時 chat 不可 append 舊 session，須建立新 active session後 reserve。
 - `closed` 在 batch 前已成立；SQS 傳送失敗可由 recovery sweep 重投，不會把 session reopen。
-- response 只承諾 session 不再接受新 turn且離線工作已可恢復地啟動，不承諾 normal events 或 memories 已 materialized。
+- response 只承諾 session 不再接受新 turn且離線工作已可恢復地啟動，不承諾 normal events 已 materialized。
 
 ---
 

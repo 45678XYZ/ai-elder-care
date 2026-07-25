@@ -10,7 +10,8 @@
 - **語言策略：中文先行、客語第二階段**
 - **Flutter 端做薄，智慧邏輯放 AWS 後端（Python Lambda）**
 - **IaC：Terraform**
-- **對話處理採 Hybrid realtime/batch**：`POST /chat` 只同步處理 routine 建立、修改、停用、完成，以及潛在高風險 wellbeing/safety signals；session 關閉後才由 batch 補齊一般生活事件與長期記憶
+- **對話處理採 Hybrid realtime/batch**：`POST /chat` 只同步處理 routine 建立、修改、停用、完成，以及潛在高風險 wellbeing/safety signals；session 關閉後才由 batch 補齊一般生活事件
+- **長期記憶**：使用 AWS AgentCore 服務管理，不自建 DynamoDB memories 表
 
 ## 系統架構
 
@@ -32,7 +33,7 @@ flowchart TB
         dlq["SQS DLQ"]
         dlqreconciler["DLQ reconciler Lambda<br/>DLQ event source"]
         alerting["CloudWatch alarm / SNS"]
-        batch["batch extractor Lambda<br/>static topic chunks<br/>normal events + memories"]
+        batch["batch extractor Lambda<br/>static topic chunks<br/>normal events + in-memory dedup"]
         summaryschedule["EventBridge summary schedule"]
         summary["daily summary generator Lambda"]
         apis["資料 API Lambda<br/>elders / summaries / events<br/>routines / stats"]
@@ -40,7 +41,7 @@ flowchart TB
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
         rules["deterministic safety rules"]
         polly["Polly TTS"]
-        ddb[("DynamoDB<br/>conversations / events / summaries<br/>memories / routines")]
+        ddb[("DynamoDB<br/>conversations / events / summaries / routines")]
         s3[("S3<br/>TTS 音檔、衛教文件")]
         kb["Bedrock Knowledge Bases"]
     end
@@ -66,7 +67,7 @@ flowchart TB
     closer -->|enqueue after closed| queue
     queue --> batch
     batch -->|batch extraction| model
-    batch -->|normal events + memories + batch state| ddb
+    batch -->|normal events + batch state| ddb
     queue -->|重試耗盡| dlq
     dlq -->|DLQ event source| dlqreconciler
     dlqreconciler -->|conditional failed convergence| ddb
@@ -100,9 +101,9 @@ flowchart TB
 
 | 功能 | 定位 |
 |---|---|
-| 語音互動陪伴（Module A） | 免手持語音對話，回應具時間、節日、近期對話、既有事件與 batch 長期記憶等情境；可查詢自身紀錄與行程 |
+| 語音互動陪伴（Module A） | 免手持語音對話，回應具時間、節日、近期對話、既有事件與 AgentCore 長期記憶等情境；可查詢自身紀錄與行程 |
 | 生活記錄（Module B） | realtime 僅同步 routine 變更／完成與潛在高風險 wellbeing/safety signals；session 關閉後由 batch 萃取一般事件 |
-| AI 記憶（Module B） | 對話來源 memories 由 batch 單獨寫入；realtime 只能讀既有 memories |
+| AI 記憶（Module B） | 長期記憶由 AWS AgentCore 服務管理，不自建 DynamoDB memories 表 |
 | 每日摘要（Module B） | 固定六類結構，以 `complete`／`partial` 表示相關 session 的 batch 是否完成 |
 | 例行公事與提醒（Module B） | 照護者或 realtime 對話建立／修改／停用；完成狀態由 events 衍生；兩端以本地通知提醒 |
 | 照護者介面（Module C） | 長者管理、每日摘要、統計圖表、事件時間軸 |
@@ -117,8 +118,9 @@ flowchart TB
 | `conversations` | turn、同表 session metadata、凍結的 session snapshot 與 static chunk manifest |
 | `events` | 實際發生事件與 routine 完成的 canonical 紀錄 |
 | `daily_summaries` | 帶 `data_status` 的衍生快照 |
-| `memories` | batch 維護的跨日長期事實；seed 是初始化例外 |
 | `routines` | 不可變版本的例行公事計畫；完成狀態由 events 動態衍生 |
+
+> 長期記憶（memories）由 AWS AgentCore 服務管理，不使用 DynamoDB 自建表。
 
 ### `elders` 表
 
@@ -231,7 +233,7 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 
 `rt_labels` 可同時含 `routine` 與 `safety_alert`；`none` 不得與其他 label 共存。一般事件不屬於 realtime label。沒有 realtime 工作時使用 `rt_labels=["none"]`，並完成 rail 狀態；不另啟動完整 extraction 模型呼叫。
 
-兩軌 ownership 不得混用：realtime 只更新 `rt_labels`、`rt_extraction_status`、`rt_extraction_version`、`rt_extraction_attempts`、`rt_extraction_lease_owner`、`rt_extraction_lease_until`、`rt_extracted_at`，並寫 routine 與高風險 safety event；batch 只更新 `batch_extraction_status`、`batch_chunk_id`、`batch_extractor_version`、`batch_extracted_at`，並寫一般 events、memories 或 enrich 既有 safety event。turn 對話內容在 `request_status=completed` 後不可修改。相同 idempotency key/hash 重送 completed 結果；failed 結果重播首次穩定錯誤，要重試須使用新 `client_request_id`。
+兩軌 ownership 不得混用：realtime 只更新 `rt_labels`、`rt_extraction_status`、`rt_extraction_version`、`rt_extraction_attempts`、`rt_extraction_lease_owner`、`rt_extraction_lease_until`、`rt_extracted_at`，並寫 routine 與高風險 safety event；batch 只更新 `batch_extraction_status`、`batch_chunk_id`、`batch_extractor_version`、`batch_extracted_at`，並寫一般 events 或 enrich 既有 safety event。turn 對話內容在 `request_status=completed` 後不可修改。相同 idempotency key/hash 重送 completed 結果；failed 結果重播首次穩定錯誤，要重試須使用新 `client_request_id`。
 
 - `elder_initiated` turn 的 `idempotency_key=client_request_id`；`conversation_id` 由 `elder_id + idempotency_key` 穩定產生。request lease、`request_hash` 與 completed/failed 結果共同保證相同請求不重複寫入，payload 不同則視為 idempotency conflict。
 - active chat context 依 session metadata 的 `recent_conversation_ids` 回 Base table 強一致讀取，不以最終一致的 `conversations-by-time` GSI 組裝當輪 context。
@@ -321,7 +323,8 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 | `extraction_track` | String | 是 | 首次建立來源：`realtime` \| `batch` \| `manual` |
 | `ts` | String | 是 | 事件實際發生時間 |
 | `type` | String | 是 | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `other` |
-| `detail` | String | 是 | 目前 canonical 事件描述 |
+| `detail` | String | 是 | canonical 事件的自然語言摘要描述 |
+| `structured_detail` | Map | 否 | JSON 格式的結構化細節屬性（如 `{"medication_name": "血壓藥", "dosage": "一顆", "timing": "早上飯後"}`）；欄位結構因 `type` 不同而異，API 不暴露 |
 | `source` | String | 是 | `conversation` \| `manual` |
 | `conversation_id` | String | 否 | 對話事件主要來源 turn；維持 API 契約 |
 | `evidence_conversation_ids` | List[String] | 是 | 支持目前事件內容的來源 turn IDs |
@@ -338,40 +341,27 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 
 - routine completion：canonical key 只由 logical occurrence 的 `elder_id + routine_id + routine_date` 決定；手動與對話完成、以及同日不同 routine version 都收斂到同一 event。`routine_version` 只記錄完成當下採用的有效版本，不參與 identity；存在該 canonical completion event 即判定 occurrence 為 `done`，否則依排程、目前時間與 grace period 動態衍生 `pending` 或 `missed`，routines 表不重複保存狀態。
 - high-risk safety：canonical key 由 `session_id + canonical alert episode` 決定；同一 session 同一警訊 episode 的 realtime 與 batch evidence 收斂。
-- normal event：canonical key 由 `date/time bucket + canonical subject + canonical action + canonical object` 決定。bucket 粒度依可可靠解析的時間精度；不使用 chunk、track、模型版本或描述文字。
+- normal event：canonical key 由 `Date + Slot + Subject + Predicate` 決定。
+  - **Date**：`YYYY-MM-DD`，台灣日界（+08:00）。
+  - **Slot**：固定邊界的時間桶，粒度由 `EVENT_SLOT_MINUTES` 設定（預設 30 分鐘）。例如 30 分鐘時：`SLOT_0900`（表示 09:00~09:29）、`SLOT_0930`（表示 09:30~09:59）；60 分鐘時：`SLOT_09`（表示 09:00~09:59）。計算公式：`slot_index = floor(minute_of_day / EVENT_SLOT_MINUTES)`，`slot_label` 依粒度決定格式。Slot 粒度一旦寫入 event 後不可變更；變更粒度只影響新建事件，舊事件保留原 Slot。
+  - **Subject**：canonical 正規化主體，經 server-owned alias/normalization 收斂。
+  - **Predicate**：合併原先 Action + Object 的單一語意謂語（如 `服用血壓藥`、`公園散步`）。
+  - 不使用 chunk、track、模型版本或描述文字決定 identity。
 - 所有 `event_id` 都由 `elder_id + canonical_event_key` 穩定產生，與 chunk 無關。`source_chunk_id` 可記初建來源，但 `evidence_conversation_ids` 可跨 chunk 擴充。
-- event identity 與既有事實欄位原則上不可覆寫；唯一可條件更新的例外是既有 realtime safety event 的合法 enrichment。batch 以相同 event ID 與目前 `revision` 為條件，遞增 `revision` 並 enrich `detail`、`evidence_conversation_ids`、`confidence`、`updated_at`；不得重建事件，也不得因已存在就跳過補充資訊。
+- event identity 與既有事實欄位原則上不可覆寫；唯一可條件更新的例外是既有 realtime safety event 的合法 enrichment。batch 以相同 event ID 與目前 `revision` 為條件，遞增 `revision` 並 enrich `detail`、`structured_detail`、`evidence_conversation_ids`、`confidence`、`updated_at`；不得重建事件，也不得因已存在就跳過補充資訊。
 - batch 建立一般事件時使用 conditional Put。retry 命中完全相同 canonical event 視為冪等；若內容互斥則保留既有資料、記錄衝突並讓工作失敗／告警，不靜默覆寫。
 - `GET /events` 一律 Query `events-by-time`；日期邊界以台灣時間計算，`ScanIndexForward=false` 回最新事件優先，`type` 以 FilterExpression 過濾，分頁將 DynamoDB `LastEvaluatedKey` 編碼為不透明 `next_token`。
-- `detail` 保存足以供時間軸、摘要與語音查詢使用的完整事件描述，但不複製逐字稿；需要追溯原文時，依主要 `conversation_id` 或 `evidence_conversation_ids` 回 conversations 讀取，以減少 PII 重複儲存。
-- `GET /events` 只公開既有 API 欄位，不暴露 canonical key、track、chunk 或 revision。canonical 規則降低重複機率，但不宣稱 zero duplicate 或 100% extraction accuracy。
+- `detail` 保存足以供時間軸、摘要與語音查詢使用的完整事件描述，但不複製逐字稿；`structured_detail` 保存結構化細節供後端摘要生成、統計與 RAG 使用。需要追溯原文時，依主要 `conversation_id` 或 `evidence_conversation_ids` 回 conversations 讀取，以減少 PII 重複儲存。
+- `GET /events` 只公開既有 API 欄位，不暴露 canonical key、track、chunk、revision 或 `structured_detail`。canonical 規則降低重複機率，但不宣稱 zero duplicate 或 100% extraction accuracy。
 - events 不設定 TTL；資料依 PII 政策保留／刪除，DynamoDB 啟用 AWS owned key 靜態加密與 Point-in-Time Recovery。
 
-### `memories` 表
+#### Batch 記憶體內去重 (In-Memory Deduplication)
 
-Base table：PK `elder_id` + SK `memory_key`。`memory_key=mem_<stable-hash(canonical_subject + predicate)>`。
+- Session 關閉後的 Batch 階段，Session 的所有對話已凍結（Snapshot），Batch Worker 先在記憶體中將「前後 30 分鐘內重複講到的事件」進行合併與洗牌，最後只產出一筆標準化事件，並算出一組固定的 Canonical Key 寫入 DynamoDB。
+- 因為 Batch 處理的 input 是 immutable frozen snapshot，記憶體內操作是確定性的（deterministic），retry 冪等。
+- 合併規則：同一 Subject + Predicate 且時間差在 `EVENT_SLOT_MINUTES`（預設 30 分鐘）內的事件收斂為同一筆；`detail` 與 `structured_detail` 取最完整的一次，`evidence_conversation_ids` 聯集所有來源 turn。
+- 去重後的標準化事件以 conditional Put 寫入 DynamoDB；跨 Session 的相同 canonical key 依已有 conditional Put 規則處理。
 
-| 欄位 | 型別 | 必填 | 說明 |
-|---|---|---|---|
-| `elder_id`, `memory_key` | String | 是 | 長者與穩定語意鍵 |
-| `category` | String | 是 | `family` \| `preference` \| `health` \| `habit` \| `other` |
-| `subject`, `predicate`, `value`, `fact` | String | 是 | 正規化主體、屬性、目前值與自然語言事實 |
-| `confidence` | Number | 是 | 0–1 |
-| `source` | String | 是 | `conversation` \| `seed` |
-| `source_conversation_id` | String | 否 | 主要來源 turn |
-| `evidence_conversation_ids` | List[String] | 否 | 全部 supporting core turns，可跨 chunk |
-| `source_session_id`, `source_chunk_id` | String | 否 | conversation 來源追溯 |
-| `source_observed_at` | String | 是 | 來源事實發生／觀察時間，不以處理時間取代 |
-| `first_seen_at`, `last_confirmed_at`, `updated_at` | String | 是 | 生命週期時間 |
-| `active` | Boolean | 是 | 是否注入 chat；預設 true |
-| `schema_version` | Number | 是 | 初始 `1` |
-
-- 對話來源 memories 是 batch-owned：realtime `/chat` 可讀 active memories，但不得新增、更新或停用。`source=seed` 僅為初始化例外。
-- 只有可跨日使用且無特定一次性發生時間的穩定事實可寫入；「今天吃藥」只能是 event。
-- `subject` 必須先經 server-owned canonical alias／normalization 規則收斂（例如同一親友的稱謂別名映射到同一 canonical subject）；不得直接以模型自由文字作為 `memory_key` 輸入。`memory_key` 只由 canonical subject + predicate 穩定產生。
-- 同一 key 且新觀察值相同時，不重建 item；條件式合併 evidence，更新 `last_confirmed_at`、`updated_at`、confidence 與最新來源追溯，保留 `first_seen_at`。較新的觀察值改變時，更新 `value`、`fact`、confidence、來源欄位與 `source_observed_at`，並設 `active=true`；只有較新的明確失效／否定證據才可設 `active=false`，保留舊值與歷史時間供稽核但不再注入 chat。舊或相同觀察時間不得覆寫較新事實。
-- retry 以同一 key、`source_observed_at` 與條件式更新維持冪等。讀取 chat memory 時，以 `elder_id` Query Base table 並套用 `active=true` FilterExpression；MVP 每位長者記憶量低，不為 active 狀態另建 GSI，若未來讀取放大再評估 sparse index。
-- memories 不設定 TTL；內容視為 PII，依 PII 政策保留／刪除，DynamoDB 啟用 AWS owned key 靜態加密與 Point-in-Time Recovery。
 
 ### `daily_summaries` 表
 
@@ -443,10 +433,10 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 ## Session／Chunk 與資料邊界
 
 - **Session** 是 immutable input snapshot 的邊界：active 接納 turns，closing freeze/verify，closed 固定輸入並啟動離線 materialization。closed 先於 batch。
-- **Realtime ownership**：chat 回覆、routine create/update/deactivate/complete，以及潛在高風險 wellbeing/safety signals。它使用既有 chat structured output 與 deterministic rules，不追求一般事件完整萃取，不寫 memories。
-- **Batch ownership**：closed snapshot 的 normal events、memories、既有 safety event enrichment、chunk manifest 與 batch 狀態。它不改 routine，也不改 frozen turn/session input。
+- **Realtime ownership**：chat 回覆、routine create/update/deactivate/complete，以及潛在高風險 wellbeing/safety signals。它使用既有 chat structured output 與 deterministic rules，不追求一般事件完整萃取。
+- **Batch ownership**：closed snapshot 的 normal events（含記憶體內去重）、既有 safety event enrichment、chunk manifest 與 batch 狀態。它不改 routine，也不改 frozen turn/session input。
 - **Chunk** 只是同一 closed session 的 static processing range，不是公開 API 資源或資料身分。core ranges 完整且不重疊，context overlap 不 emit。
-- **Events** 是實際發生與 routine 完成的 canonical 紀錄；**routines** 是計畫；**memories** 是 batch 維護的穩定長期事實；**daily_summaries** 是具 `data_status` 的衍生快照。
+- **Events** 是實際發生與 routine 完成的 canonical 紀錄；**routines** 是計畫；**daily_summaries** 是具 `data_status` 的衍生快照。長期記憶由 AWS AgentCore 管理。
 
 ## 成本與可觀測性
 
@@ -468,13 +458,14 @@ ai-elder-care/
 ## Verification
 
 - **Routine 秒級可見／occurrence 冪等**：驗證對話中的 routine 建立、修改、停用與完成在 `/chat` response 前原子提交，`routines_updated` 準確；照護者 POST/PATCH 並行同 scoped request 收斂；同 routine/date 改版仍只顯示一筆 occurrence，completion 不重複。
-- **一般事件 close 後產生**：一般 diet/activity/sleep/medication/wellbeing/other 事件與 memories 不在 realtime 寫入，close 並完成 batch 後才 materialize。
+- **一般事件 close 後產生**：一般 diet/activity/sleep/medication/wellbeing/other 事件不在 realtime 寫入，close 並完成 batch 後才 materialize。
+- **Batch 去重**：batch worker 先在記憶體內依 `EVENT_SLOT_MINUTES` 去重，再以 conditional Put 寫入；retry 冪等。
 - **Realtime safety**：chat structured output 加 deterministic rules 可在 response 前建立潛在高風險 safety event；batch 同 key 只做 revision enrichment。
 - **Close immutable／inflight recovery**：驗證 `/chat` reserve 與 close race、inflight 回 409、lease-expired turn 接管或安全失敗移除 reservation、`active→closing→closed`，以及 closed 後無法追加或修改 frozen turns、ordered IDs、counts 與 snapshot hash。
 - **Manifest retry reuse**：首次條件式保存 manifest 後，SQS retry、duplicate delivery 與 DLQ replay 的 manifest、core ranges、ordinal 與 chunk IDs 完全相同；所有 core turns 恰好一次，context-only 不 emit。
 - **SQS duplicate／DLQ／recovery**：模擬 closed 後 SendMessage 前中斷，由 `BATCH#PENDING` sweep 重投；processing lease 尚有效的相同 session/hash duplicate 不執行並直接 ack、由原 owner 收斂，僅 lease expired 可由 delivery／recovery 接管；failed/completed duplicate ack 不執行；retryable redrive 不假設同步 DDB；DLQ reconciler 依 session/hash 收斂 failed、清 lease與告警，人工 replay 先做 failed→pending 並從 frozen state/manifest 重建。
 - **Cross-track safety enrichment**：realtime 先建 safety event，batch 以相同 canonical key 條件式增加 revision、detail/evidence/confidence，確認 event ID 不變且 evidence 可跨 chunk。
 - **摘要 partial→complete**：有 active/closing 或 batch pending/processing/failed session 時為 `partial`；等待窗口後可先寫 partial，相關 batch 完成後重算為 `complete`，相同或較舊 input cutoff 的 partial 不得蓋掉 complete。
-- **資料契約**：turn 雙軌欄位、session/batch enum、event identity、memory source、summary `data_status` 與 `docs/api.md` 一致；API 不暴露 extraction internals。
+- **資料契約**：turn 雙軌欄位、session/batch enum、event identity、summary `data_status` 與 `docs/api.md` 一致；API 不暴露 extraction internals。長期記憶由 AWS AgentCore 管理，不在 DynamoDB 資料契約範圍內。
 - **端到端**：Android 完成中文免手持迴圈、明確 close、batch 收斂、照護者事件／摘要顯示；客語於第二階段以測試音檔驗證。
 - 後端單元、整合測試（pytest），並以 LocalStack／測試環境覆蓋 DynamoDB 條件式寫入、transaction、SQS retry/DLQ 與 EventBridge recovery。
