@@ -17,12 +17,13 @@ __pycache__/
 
 # --- Terraform ---
 terraform/.terraform/
+terraform/build/
 *.tfstate
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
 
-# --- AI tool configs ---
+# --- AI tool configs (local, per-developer) ---
 .claude/        # Claude Code
 .codex/         # OpenAI Codex
 .cursor/        # Cursor
