@@ -18,6 +18,7 @@
 import base64
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
 import json
 import os
 from typing import Any
@@ -263,11 +264,32 @@ def get_recent_conversations(
 # -----------------------------------------------------------------------------
 
 def create_event(event_data: dict[str, Any]) -> dict[str, Any]:
-    """新增生活事件。"""
+    """新增生活事件。支援依據 canonical_event_key 自動計算穩定 event_id 與產生 event_time_key。"""
     table = get_dynamodb_resource().Table(TABLE_EVENTS)
+    data = dict(event_data)
+    
+    elder_id = data.get("elder_id", "")
+    canonical_key = data.get("canonical_event_key")
+    
+    if not data.get("event_id"):
+        if canonical_key:
+            stable_sig = f"{elder_id}:{canonical_key}".encode("utf-8")
+            data["event_id"] = f"evt_{hashlib.sha256(stable_sig).hexdigest()[:12]}"
+        else:
+            data["event_id"] = f"evt_{uuid.uuid4().hex[:12]}"
+            
+    ts = data.get("ts") or datetime.now(TZ_TAIPEI).isoformat()
+    data["ts"] = ts
+    data["event_time_key"] = f"{ts}#{data['event_id']}"
+    data.setdefault("revision", 1)
+    data.setdefault("schema_version", 1)
+    data.setdefault("evidence_conversation_ids", [])
+    data.setdefault("source", "conversation")
+    data.setdefault("extraction_track", "batch")
+
     try:
-        table.put_item(Item=event_data)
-        return convert_decimals(event_data)
+        table.put_item(Item=data)
+        return convert_decimals(data)
     except ClientError as e:
         raise DBError(f"建立事件紀錄失敗: {e.response['Error']['Message']}")
 

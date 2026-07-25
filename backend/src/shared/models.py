@@ -5,7 +5,7 @@
 供 API Handlers (Request/Response DTO Validation) 與 shared/db.py 共同引用。
 """
 
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -91,6 +91,9 @@ class ConversationCreate(BaseModel):
     ai_prompt_audio_s3_key: str | None = Field(default=None, description="系統提醒語音 S3 物件路徑 (AI 1)")
     elder_audio_s3_key: str | None = Field(default=None, description="長者原始錄音 S3 物件路徑 (Elder)")
     ai_respond_audio_s3_key: str | None = Field(default=None, description="AI 最終回應語音 S3 物件路徑 (AI 2)")
+    ai_prompt_audio_url: str | None = Field(default=None, description="系統提醒語音 URL (AI 1)")
+    elder_audio_url: str | None = Field(default=None, description="長者原始錄音 URL (Elder)")
+    ai_respond_audio_url: str | None = Field(default=None, description="AI 最終回應語音 URL (AI 2)")
     prompt_sent_at: str | None = Field(default=None, description="系統送出提醒發問之時間戳記")
     elder_received_at: str | None = Field(default=None, description="接收到長者輸入之時間戳記 (長者反應時間分析)")
     ai_responded_at: str | None = Field(default=None, description="AI 推理完成送出回應之時間戳記 (後端 Latency 分析)")
@@ -122,3 +125,108 @@ class ConversationResponse(BaseModel):
     elder_received_at: str | None = Field(default=None, description="接收長者輸入時間")
     ai_responded_at: str | None = Field(default=None, description="AI 完成回應時間")
     routines_updated: bool = Field(default=False, description="是否觸發行程更新")
+
+
+# -----------------------------------------------------------------------------
+# Events 表模型
+# -----------------------------------------------------------------------------
+
+class EventCreate(BaseModel):
+    """建立生活事件 Request Body。"""
+    elder_id: str = Field(..., description="長者 ID")
+    ts: str = Field(..., description="事件發生的 ISO 8601 時間戳記")
+    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] = Field(..., description="事件分類")
+    detail: str = Field(..., description="事件自然語言描述")
+    structured_detail: dict[str, Any] | None = Field(default=None, description="JSON 結構化細節資訊")
+    source: Literal["conversation", "manual"] = Field(default="conversation", description="資料來源")
+    canonical_event_key: str | None = Field(default=None, description="Date+Slot+Subject+Predicate 標準化鍵")
+    extraction_track: Literal["realtime", "batch", "manual"] = Field(default="batch", description="萃取軌道")
+    conversation_id: str | None = Field(default=None, description="關聯之 Turn ID")
+    evidence_conversation_ids: list[str] = Field(default_factory=list, description="支持此事件之 Turn IDs")
+    session_id: str | None = Field(default=None, description="關聯 Session ID")
+    source_chunk_id: str | None = Field(default=None, description="初建 Chunk ID")
+    routine_id: str | None = Field(default=None, description="對應例行公事 ID")
+    routine_version: int | None = Field(default=None, description="完成時的 Routine 版本號")
+    routine_date: str | None = Field(default=None, description="完成的 Routine 日期 YYYY-MM-DD")
+    completed_by: Literal["conversation", "elder", "caregiver"] | None = Field(default=None, description="完成角色")
+    confidence: float | None = Field(default=None, description="AI 萃取信心度 (0~1)")
+    revision: int = Field(default=1, description="版本號，預設 1")
+
+
+class EventResponse(BaseModel):
+    """生活事件 Response 物件 (GET /events)。"""
+    event_id: str = Field(..., description="事件唯一識別碼 (前綴 evt_)")
+    elder_id: str = Field(..., description="長者 ID")
+    ts: str = Field(..., description="事件發生時間 (ISO 8601)")
+    type: str = Field(..., description="事件分類")
+    detail: str = Field(..., description="事件描述")
+    source: str = Field(default="conversation", description="事件來源")
+    conversation_id: str | None = Field(default=None, description="對話 turn ID")
+    routine_id: str | None = Field(default=None, description="例行公事 ID")
+
+
+# -----------------------------------------------------------------------------
+# Daily Summaries 表模型
+# -----------------------------------------------------------------------------
+
+class DailySummaryResponse(BaseModel):
+    """每日摘要 Response 物件 (GET /summaries)。"""
+    elder_id: str = Field(..., description="長者 ID")
+    date: str = Field(..., description="日期 (YYYY-MM-DD)")
+    overview: str = Field(..., description="當日總覽")
+    sections: dict[str, str | None] = Field(..., description="六大分類區塊 (diet/activity/sleep/medication/wellbeing/other)")
+    routines: dict[str, Any] = Field(..., description="例行公事完成統計與清單 (completed, missed, items)")
+    alerts: list[str] = Field(default_factory=list, description="警訊清單")
+    interaction_count: int = Field(default=0, description="當日對話輪數")
+    data_status: Literal["complete", "partial"] = Field(default="complete", description="資料完整度")
+    pending_session_count: int = Field(default=0, description="待處理 Session 數")
+    generated_at: str = Field(..., description="生成時間")
+
+
+# -----------------------------------------------------------------------------
+# Routines 表模型
+# -----------------------------------------------------------------------------
+
+class RoutineSchedule(BaseModel):
+    """例行公事排程設定。"""
+    freq: Literal["daily", "weekly", "once"] = Field(..., description="頻率 (每日/每週/單次)")
+    time: str | None = Field(default=None, description="時間 (HH:MM，如 09:00)")
+    weekday: int | None = Field(default=None, description="星期幾 (1-7，週一為 1，僅 weekly 使用)")
+    date: str | None = Field(default=None, description="特定日期 (YYYY-MM-DD，僅 once 使用)")
+
+
+class RoutineCreate(BaseModel):
+    """建立例行公事 Request Body (POST /routines)。"""
+    client_request_id: str = Field(..., description="冪等識別 UUID")
+    elder_id: str = Field(..., description="長者 ID")
+    title: str = Field(..., description="行程標題 (如：吃血壓藥)")
+    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] = Field(default="other", description="分類")
+    schedule: RoutineSchedule = Field(..., description="排程設定")
+    remind: bool = Field(default=True, description="是否發送提醒通知")
+
+
+class RoutineUpdate(BaseModel):
+    """更新/停用例行公事 Request Body (PATCH /routines/{id})。"""
+    client_request_id: str = Field(..., description="冪等識別 UUID")
+    title: str | None = Field(default=None, description="行程標題")
+    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] | None = Field(default=None, description="分類")
+    schedule: RoutineSchedule | None = Field(default=None, description="排程設定")
+    remind: bool | None = Field(default=None, description="是否發送提醒")
+    active: bool | None = Field(default=None, description="是否啟用")
+
+
+class RoutineResponse(BaseModel):
+    """例行公事定義與當日動態行程 Response 物件。"""
+    routine_id: str = Field(..., description="例行公事 ID (前綴 rtn_)")
+    elder_id: str = Field(..., description="長者 ID")
+    title: str = Field(..., description="行程標題")
+    type: str = Field(default="other", description="分類")
+    schedule: RoutineSchedule | dict[str, Any] | None = Field(default=None, description="排程設定")
+    remind: bool = Field(default=True, description="是否提醒")
+    active: bool = Field(default=True, description="是否啟用")
+    created_by: str = Field(default="caregiver", description="建立者角色")
+    created_at: str | None = Field(default=None, description="建立時間")
+    scheduled_at: str | None = Field(default=None, description="預定時間 (ISO 8601)")
+    status: Literal["pending", "done", "missed"] | None = Field(default=None, description="當日完成狀態")
+    completed_at: str | None = Field(default=None, description="完成時間 (ISO 8601)")
+    completed_by: str | None = Field(default=None, description="完成角色 (conversation/elder/caregiver)")

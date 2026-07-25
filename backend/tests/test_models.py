@@ -6,10 +6,17 @@ from pydantic import ValidationError
 from src.shared.models import (
     ConversationCreate,
     ConversationResponse,
+    DailySummaryResponse,
     ElderCreate,
     ElderResponse,
     ElderUpdate,
+    EventCreate,
+    EventResponse,
     FamilyMember,
+    RoutineCreate,
+    RoutineResponse,
+    RoutineSchedule,
+    RoutineUpdate,
 )
 
 
@@ -147,3 +154,76 @@ def test_conversation_response_model():
     assert cr.elder_id == "eld_001"
     assert cr.created_at == "2026-07-24T17:30:00+08:00"
     assert cr.ai_respond_audio_url == "https://s3.amazonaws.com/response.mp3"
+
+
+def test_event_models():
+    """測試 EventCreate 與 EventResponse 模型。"""
+    ec = EventCreate(
+        elder_id="eld_001",
+        ts="2026-07-25T09:05:00+08:00",
+        type="medication",
+        detail="已服用血壓藥一顆",
+        structured_detail={"medication_name": "血壓藥", "dosage": "1 顆"},
+        canonical_event_key="2026-07-25#SLOT_0900#長者#服用血壓藥",
+    )
+    assert ec.elder_id == "eld_001"
+    assert ec.type == "medication"
+    assert ec.structured_detail["medication_name"] == "血壓藥"
+    assert ec.canonical_event_key == "2026-07-25#SLOT_0900#長者#服用血壓藥"
+
+    er = EventResponse(
+        event_id="evt_123",
+        elder_id="eld_001",
+        ts="2026-07-25T09:05:00+08:00",
+        type="medication",
+        detail="已服用血壓藥一顆",
+    )
+    assert er.event_id == "evt_123"
+    assert er.type == "medication"
+
+
+def test_daily_summary_model():
+    """測試 DailySummaryResponse 模型。"""
+    ds = DailySummaryResponse(
+        elder_id="eld_001",
+        date="2026-07-25",
+        overview="今日狀態良好，有按時用藥。",
+        sections={"medication": "已服用血壓藥", "diet": "三餐正常", "activity": None, "sleep": None, "wellbeing": None, "other": None},
+        routines={"completed": 1, "missed": 0, "items": []},
+        alerts=[],
+        generated_at="2026-07-25T20:00:00+08:00",
+    )
+    assert ds.elder_id == "eld_001"
+    assert ds.data_status == "complete"
+    assert ds.sections["medication"] == "已服用血壓藥"
+
+
+def test_routine_models():
+    """測試 RoutineSchedule, RoutineCreate, RoutineUpdate, RoutineResponse 模型。"""
+    sched = RoutineSchedule(freq="daily", time="09:00")
+    rc = RoutineCreate(
+        client_request_id="uuid_123",
+        elder_id="eld_001",
+        title="吃血壓藥",
+        type="medication",
+        schedule=sched,
+    )
+    assert rc.title == "吃血壓藥"
+    assert rc.schedule.freq == "daily"
+
+    ru = RoutineUpdate(client_request_id="uuid_124", active=False)
+    assert ru.active is False
+    assert ru.title is None
+
+    rr = RoutineResponse(
+        routine_id="rtn_001",
+        elder_id="eld_001",
+        title="吃血壓藥",
+        type="medication",
+        schedule={"freq": "daily", "time": "09:00"},
+        status="done",
+        completed_at="2026-07-25T09:05:00+08:00",
+    )
+    assert rr.routine_id == "rtn_001"
+    assert rr.status == "done"
+
