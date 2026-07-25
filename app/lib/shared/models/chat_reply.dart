@@ -4,13 +4,20 @@
 class ChatReply {
   const ChatReply({
     required this.conversationId,
+    required this.sessionId,
     required this.transcript,
     required this.replyText,
     required this.replyAudioUrl,
     required this.routinesUpdated,
   });
 
+  /// 本 turn 的 ID；同一個 `client_request_id` 重送回同一個值。
   final String conversationId;
+
+  /// 本 turn 實際寫入的 session。**一律以此值覆蓋本地持有的 session id**——
+  /// 原 session 若已 idle／關閉／達上限，後端會改用新建的 session 並在此回新 ID
+  /// （判定規則見 docs/api.md）。
+  final String sessionId;
 
   final String transcript;
   final String replyText;
@@ -23,6 +30,7 @@ class ChatReply {
 
   factory ChatReply.fromJson(Map<String, dynamic> json) => ChatReply(
         conversationId: json['conversation_id'] as String? ?? '',
+        sessionId: json['session_id'] as String? ?? '',
         transcript: json['transcript'] as String? ?? '',
         replyText: json['reply_text'] as String? ?? '',
         replyAudioUrl: json['reply_audio_url'] as String? ?? '',

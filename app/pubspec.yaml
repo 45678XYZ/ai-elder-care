@@ -16,11 +16,22 @@ dependencies:
   # 播放正式 /chat 回傳的 reply_audio_url（Polly 合成、S3 presigned，串流）
   just_audio: ^0.9.40
   # 錄音：客語／音檔路線，錄成 m4a 送 /chat 由後端辨識（STT）
-  record: ^5.1.0
+  # 用 7.x：5.x 家族的 record_linux 0.7.2 未實作 startStream，會讓 Android build 也編不過
+  record: ^7.0.0
   # 錄音暫存路徑（getTemporaryDirectory）
   path_provider: ^2.1.0
   # 後端 API 呼叫
   http: ^1.2.0
+  # 產生 client_request_id（/chat 與 routine 寫入端點的冪等鍵，見 docs/api.md）
+  uuid: ^4.5.0
+  # 記住「首次設定已完成」與長者基本資料，之後啟動直接進角色選擇
+  shared_preferences: ^2.2.0
+  # 設計系統字體：Noto Serif TC（≥24sp）／Noto Sans TC（<24sp）
+  google_fonts: ^6.2.1
+  # 導覽：照護者多畫面 + 具名路由（見 HANDOFF 畫面清單）
+  go_router: ^14.2.0
+  # 照護者統計圖表（折線／長條／Waffle）
+  fl_chart: ^0.68.0
   # TODO: Cognito 登入 SDK（amplify_flutter + amplify_auth_cognito）
   # TODO: 本地通知（flutter_local_notifications，routines 提醒用）
 

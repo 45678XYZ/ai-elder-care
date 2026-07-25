@@ -41,13 +41,17 @@ class AuthService {
     return token == null ? null : parseIdentity(token);
   }
 
-  /// 解析 ID token 的 claims → 身分。與後端 `auth.py` 一致：有 `elder_id`（或自訂屬性
-  /// `custom:elder_id`）為長者，否則照護者。token 格式不對時回 null。
+  /// 解析 ID token 的 claims → 身分。與後端 `auth.py` 一致：有 `elder_id` 為長者，
+  /// 否則照護者。token 格式不對時回 null。
+  ///
+  /// 只認 `elder_id` 這一個 claim：它由 pre-token-generation trigger 注入
+  /// （見 `backend/src/handlers/pre_token_generation.py`），不是 Cognito 自訂屬性，
+  /// 所以沒有 `custom:elder_id` 這種寫法。
   static CognitoIdentity? parseIdentity(String idToken) {
     final claims = _decodeJwtClaims(idToken);
     if (claims == null) return null;
 
-    final raw = claims['elder_id'] ?? claims['custom:elder_id'];
+    final raw = claims['elder_id'];
     final elderId = (raw is String && raw.isNotEmpty) ? raw : null;
     final sub = claims['sub'];
 
@@ -78,7 +82,8 @@ class AuthService {
   // ---- 以下需接上 Cognito SDK 與 User Pool 設定，尚未實作 ----
 
   // TODO(cognito): 接 amplify_auth_cognito，需 terraform/cognito.tf 提供 User Pool ID /
-  //   App Client ID / region；且 pool 須定義自訂屬性 `elder_id`（長者帳號設，照護者不設）。
+  //   App Client ID / region。App 端不需要為 elder_id 做任何設定——長者身分存在後端的
+  //   elder_accounts 表（sub→elder_id），由 pre-token trigger 在發 token 時注入。
   // TODO(cognito): signIn(email, password) → 設 _idToken；signUp(...)；signOut() → 清 _idToken。
   // TODO(cognito): token 自動更新——過期時用 refresh token 換新（或每次 API 呼叫前取最新）。
   // TODO(cognito): 接上後，[ApiClient] 建構時 tokenProvider 指向 `() async => idToken`

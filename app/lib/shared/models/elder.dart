@@ -7,10 +7,12 @@ class Elder {
     this.birthYear,
     this.gender,
     required this.langPreference,
+    this.addressRegion,
     this.healthNotes = const [],
     this.family = const [],
     this.habitNote,
     this.createdAt,
+    this.updatedAt,
   });
 
   final String elderId;
@@ -23,6 +25,9 @@ class Elder {
   /// 語言偏好；可用值見 docs/api.md。
   final String langPreference;
 
+  /// 居住地區（如「台北市大安區」）。
+  final String? addressRegion;
+
   /// 健康註記。
   final List<String> healthNotes;
   final List<FamilyMember> family;
@@ -31,6 +36,9 @@ class Elder {
   final String? habitNote;
   final DateTime? createdAt;
 
+  /// 後端只在成功變更時刷新；建立當下與 [createdAt] 相同。
+  final DateTime? updatedAt;
+
   factory Elder.fromJson(Map<String, dynamic> json) => Elder(
         elderId: json['elder_id'] as String? ?? '',
         name: json['name'] as String? ?? '',
@@ -38,6 +46,7 @@ class Elder {
         birthYear: json['birth_year'] as int?,
         gender: json['gender'] as String?,
         langPreference: json['lang_preference'] as String? ?? 'zh-TW',
+        addressRegion: json['address_region'] as String?,
         healthNotes: (json['health_notes'] as List<dynamic>?)
                 ?.map((e) => e as String)
                 .toList() ??
@@ -50,6 +59,9 @@ class Elder {
         createdAt: json['created_at'] == null
             ? null
             : DateTime.tryParse(json['created_at'] as String),
+        updatedAt: json['updated_at'] == null
+            ? null
+            : DateTime.tryParse(json['updated_at'] as String),
       );
 }
 
