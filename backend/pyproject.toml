@@ -15,8 +15,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # 開發期工具，不進部署包：pip install -e ".[dev]"
+# moto 用於在本機驗證 DynamoDB 條件式寫入與 GSI 查詢，版本釘住避免行為隨版本漂移
 dev = [
   "pytest",
+  "moto[dynamodb]==5.2.2",
 ]
 
 [tool.setuptools.packages.find]

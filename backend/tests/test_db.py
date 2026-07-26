@@ -198,24 +198,35 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     mock_table.query.assert_called_once()
 
 
-@patch("src.shared.db.get_dynamodb_client")
-def test_complete_routine_with_event_transact(mock_get_client):
-    """測試 transact_write_items 連動交易寫入。"""
-    mock_client = MagicMock()
-    mock_get_client.return_value = mock_client
+@patch("src.shared.db.create_event")
+def test_complete_routine_with_event_writes_canonical_completion(mock_create_event):
+    """completion 只有一個寫入點，canonical key 由 routine_id + routine_date 決定。
+
+    條件式寫入、跨入口收斂與 batch 禁令的完整驗證見 tests/test_events_data_layer.py。
+    """
+    mock_create_event.return_value = {
+        "event_id": "evt_100",
+        "ts": "2026-07-14T10:00:00.000+08:00",
+    }
 
     res = db.complete_routine_with_event(
         elder_id="eld_001",
         routine_id="rtn_001",
-        date_str="2026-07-14",
-        event_id="evt_100",
+        routine_date="2026-07-14",
         ts="2026-07-14T10:00:00+08:00",
-        source="manual",
+        completed_by="caregiver",
         detail="手動確認完成服藥",
         event_type="medication",
+        routine_version=2,
     )
 
     assert res["routine_id"] == "rtn_001"
     assert res["status"] == "done"
-    assert res["completed_by"] == "manual"
-    mock_client.transact_write_items.assert_called_once()
+    assert res["completed_by"] == "caregiver"
+    assert res["event_id"] == "evt_100"
+
+    payload = mock_create_event.call_args.args[0]
+    assert payload["canonical_event_key"] == "ROUTINE#rtn_001#2026-07-14"
+    # version 只記錄採用的版本，不參與 identity
+    assert payload["routine_version"] == 2
+    assert "routine_version" not in payload["canonical_event_key"]
