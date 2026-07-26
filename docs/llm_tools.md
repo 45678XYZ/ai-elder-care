@@ -13,6 +13,9 @@
 | `get_today_routines` | 取得長者指定日期的例行行程與完成狀態。 | 長者問：「我今天還要吃什麼藥？」或 AI 需要主動關懷今日行程時。 |
 | `complete_routine` | 將特定行程標記為已完成，並記錄生活事件。 | 長者說：「我吃過血壓藥了」或「我剛量完血糖了」。 |
 | `create_routine` | 幫長者建立一個新的例行行程或單次提醒。 | 長者說：「幫我記下週一早上九點要看醫生」或「我明天下午要散步」。 |
+| `get_recent_events` | 查詢長者近期的生活事件與健康記錄歷史。 | 長者問：「我這週有滑倒過嗎？」或「我昨天晚餐吃了什麼？」。 |
+| `get_elder_profile` | 查詢長者的個人暱稱、喜好偏好、健康注意事項與家屬成員。 | 長者問：「你知道我女兒叫什麼名字嗎？」或 AI 主動進行親切對話時。 |
+| `remind_pending_routines` | 查詢長者今日尚未完成的待辦行程並回傳提醒事項。 | 長者問：「我還有什麼事情沒做嗎？」或 AI 需要主動進行行程提醒時。 |
 
 ---
 
@@ -161,6 +164,114 @@
       "routine_id": "rtn_003",
       "title": "看醫生",
       "scheduled_at": "2026-07-21T15:00:00+08:00"
+    }
+    ```
+
+---
+
+### 2.4 `get_recent_events` (查詢生活事件歷史)
+*   **LLM 描述**：`Retrieve recent life events, activities, and recorded health signals for the elder.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": {
+          "type": "string",
+          "description": "長者的唯一識別 ID，例如 eld_001"
+        },
+        "event_type": {
+          "type": "string",
+          "description": "可選的事件類型過濾，例如：routine_completion, wellbeing, activity, family, diet, other"
+        }
+      },
+      "required": ["elder_id"]
+    }
+    ```
+*   **回傳資料 (Output JSON)**：
+    ```json
+    {
+      "status": "success",
+      "count": 2,
+      "data": [
+        {
+          "event_id": "evt_001",
+          "elder_id": "eld_001",
+          "type": "routine_completion",
+          "detail": "完成吃血壓藥",
+          "ts": "2026-07-20T09:05:00+08:00"
+        }
+      ]
+    }
+    ```
+
+---
+
+### 2.5 `get_elder_profile` (查詢長者喜好與個人檔案)
+*   **LLM 描述**：`Retrieve personal preferences, hobbies, health notes, and family members of the elder.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": {
+          "type": "string",
+          "description": "長者的唯一識別 ID，例如 eld_001"
+        }
+      },
+      "required": ["elder_id"]
+    }
+    ```
+*   **回傳資料 (Output JSON)**：
+    ```json
+    {
+      "status": "success",
+      "data": {
+        "elder_id": "eld_001",
+        "name": "林阿蘭",
+        "nickname": "阿蘭嬤",
+        "health_notes": ["有高血壓歷史", "左膝關節不適"],
+        "family": [{"name": "小明", "relation": "兒子"}],
+        "preferences": {"tea": "高山烏龍茶", "music": "鄧麗君經典金曲"}
+      }
+    }
+    ```
+
+---
+
+### 2.6 `remind_pending_routines` (主動提醒待辦行程)
+*   **LLM 描述**：`Check and retrieve pending scheduled routines for the elder to generate warm reminders.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": {
+          "type": "string",
+          "description": "長者的唯一識別 ID，例如 eld_001"
+        },
+        "date": {
+          "type": "string",
+          "description": "查詢的日期，格式為 YYYY-MM-DD"
+        }
+      },
+      "required": ["elder_id"]
+    }
+    ```
+*   **回傳資料 (Output JSON)**：
+    ```json
+    {
+      "status": "success",
+      "date": "2026-07-20",
+      "pending_count": 1,
+      "pending_routines": [
+        {
+          "routine_id": "rtn_001",
+          "title": "吃晚間血壓藥",
+          "scheduled_at": "2026-07-20T19:00:00+08:00",
+          "status": "pending"
+        }
+      ]
     }
     ```
 

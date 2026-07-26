@@ -187,6 +187,60 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
           }
         }
       }
+
+      # 工具四：查詢近期生活事件歷史
+      functions {
+        name        = "get_recent_events"
+        description = "Retrieve recent life events, activities, and recorded health signals for the elder."
+        parameters {
+          parameter_detail {
+            name        = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameter_detail {
+            name        = "event_type"
+            type        = "string"
+            description = "可選的事件類型過濾，例如：routine_completion, wellbeing, activity, family, diet, other"
+            required    = false
+          }
+        }
+      }
+
+      # 工具五：查詢長者個人喜好與家屬檔案
+      functions {
+        name        = "get_elder_profile"
+        description = "Retrieve personal preferences, hobbies, health notes, and family members of the elder."
+        parameters {
+          parameter_detail {
+            name        = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+        }
+      }
+
+      # 工具六：主動提醒待辦行程
+      functions {
+        name        = "remind_pending_routines"
+        description = "Check and retrieve pending scheduled routines for the elder to generate warm reminders."
+        parameters {
+          parameter_detail {
+            name        = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameter_detail {
+            name        = "date"
+            type        = "string"
+            description = "可選的查詢日期，格式為 YYYY-MM-DD，預設為今天"
+            required    = false
+          }
+        }
+      }
     }
   }
 }

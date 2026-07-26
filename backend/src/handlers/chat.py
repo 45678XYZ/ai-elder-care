@@ -128,11 +128,20 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
 
     client = get_bedrock_agent_runtime()
     try:
+        # 產生帶有台灣時間 (UTC+8) 的當前時間前綴，讓 LLM 精準感知當前時間與星期
+        tz_offset = 8 * 3600
+        tw_time_tuple = time.gmtime(time.time() + tz_offset)
+        weekdays = ["日", "一", "二", "三", "四", "五", "六"]
+        wday_str = weekdays[int(time.strftime("%w", tw_time_tuple))]
+        tw_time_str = time.strftime(f"%Y-%m-%d %H:%M (週{wday_str})", tw_time_tuple)
+
+        prompt_with_time = f"[目前台灣時間: {tw_time_str}]\n{transcript}"
+
         response = client.invoke_agent(
             agentId=BEDROCK_AGENT_ID,
             agentAliasId=BEDROCK_AGENT_ALIAS_ID,
             sessionId=elder_id,
-            inputText=transcript
+            inputText=prompt_with_time
         )
 
         reply_text = ""

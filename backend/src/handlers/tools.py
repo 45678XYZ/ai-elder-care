@@ -105,11 +105,87 @@ def handle_create_routine(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"建立新行程失敗: {str(e)}"}
 
 
+def handle_get_recent_events(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具四：查詢長者近期的生活事件與健康記錄歷史。"""
+    elder_id = params.get("elder_id")
+    event_type = params.get("event_type")
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+
+    try:
+        # 查詢近期的事件歷史 (最多 20 筆)
+        items, _ = db.list_events(
+            elder_id=elder_id,
+            event_type=event_type,
+            limit=20
+        )
+        return {"status": "success", "count": len(items), "data": items}
+    except Exception as e:
+        print(f"[Error] handle_get_recent_events 失敗: {e}")
+        return {"status": "error", "message": f"查詢生活事件失敗: {str(e)}"}
+
+
+def handle_get_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具五：查詢長者的個人檔案、喜好偏好、健康注意事項與家屬成員。"""
+    elder_id = params.get("elder_id")
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+
+    try:
+        elder_info = db.get_elder(elder_id)
+        if not elder_info:
+            return {"status": "error", "message": f"找不到長者 (ID: {elder_id}) 的個人檔案"}
+
+        # 整理對 LLM 溫暖對話有幫助的資料
+        profile = {
+            "elder_id": elder_info.get("elder_id"),
+            "name": elder_info.get("name"),
+            "nickname": elder_info.get("nickname"),
+            "lang_preference": elder_info.get("lang_preference"),
+            "health_notes": elder_info.get("health_notes", []),
+            "family": elder_info.get("family", []),
+            "preferences": elder_info.get("preferences", {})
+        }
+        return {"status": "success", "data": profile}
+    except Exception as e:
+        print(f"[Error] handle_get_elder_profile 失敗: {e}")
+        return {"status": "error", "message": f"查詢長者檔案失敗: {str(e)}"}
+
+
+def handle_remind_pending_routines(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具六：查詢長者今日尚未完成 (pending) 的例行行程並回傳提醒事項。"""
+    elder_id = params.get("elder_id")
+    date_str = params.get("date", time.strftime("%Y-%m-%d"))
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+
+    try:
+        daily = db.get_daily_routines(elder_id, date_str)
+        items = daily.get("items", [])
+        pending_items = [i for i in items if i.get("status") == "pending"]
+
+        return {
+            "status": "success",
+            "date": date_str,
+            "pending_count": len(pending_items),
+            "pending_routines": pending_items
+        }
+    except Exception as e:
+        print(f"[Error] handle_remind_pending_routines 失敗: {e}")
+        return {"status": "error", "message": f"查詢待提醒行程失敗: {str(e)}"}
+
+
 # 工具分流映射字典 (Function Name -> Handler Function)
 TOOL_HANDLERS = {
     "get_today_routines": handle_get_today_routines,
     "complete_routine": handle_complete_routine,
     "create_routine": handle_create_routine,
+    "get_recent_events": handle_get_recent_events,
+    "get_elder_profile": handle_get_elder_profile,
+    "remind_pending_routines": handle_remind_pending_routines,
 }
 
 
