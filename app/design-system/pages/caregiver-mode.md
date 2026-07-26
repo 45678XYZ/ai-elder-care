@@ -5,6 +5,7 @@
 ## 長者管理（elders_screen）
 - GET/POST/PATCH `/elders`、GET/POST/PATCH `/routines`；兼管理後台
 - 建例行事項（服藥時間、回診、約會）；巢狀底 `#faf6ee`
+- **語音語言（`lang_preference`）只在這裡可改**——介面文字一律華語，這個值只決定長輩說話與聽回覆走華語或客語，長者端不提供切換（見 [../../CLAUDE.md](../../CLAUDE.md) 全域約束）
 
 ## 每日摘要（summaries_screen）
 - GET `/summaries`：固定六類 sections，null 顯示「今日對話未提及」

@@ -30,6 +30,8 @@
 - Touch target 最小 48dp
 
 ### 全域
+- **目標裝置是 Android 手機**，不為平板／桌面寬度另做版面。畫面本身是彈性的（Flex/Expanded），但寬螢幕下只會被拉開而非重新排版，這是接受的取捨。`web` build 僅供截圖與快速預覽用，不是出貨目標
+- **介面單一語言（華語），不做語言切換 UI、不做 i18n**。`lang_preference`（`zh-TW`｜`hak`）只決定**語音**走哪條路（客語裝置端無法辨識，改錄音送後端），與畫面文字無關；且**只能在照護者「管理」頁更改**，長者端不提供切換
 - 所有畫面須在 `textScaler: TextScaler.linear(2.0)` 下不 overflow（用 Flex/Expanded，勿寫死 px）
 - 狀態不可只靠顏色傳遞——必須搭配 icon 或文字
 - 對比度目標 WCAG AAA（7:1），非 AA
