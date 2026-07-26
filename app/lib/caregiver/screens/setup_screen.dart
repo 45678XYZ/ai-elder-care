@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/services/notification_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../theme/app_theme.dart';
 
@@ -58,6 +59,11 @@ class _SetupScreenState extends State<SetupScreen> {
       nickname: _nicknameCtrl.text.trim(),
       lang: _lang,
     );
+
+    // 在這裡才要通知權限，不在 App 一啟動就問——照護者剛設定完長輩資料，
+    // 這時「要不要提醒吃藥」是有情境的問題，答應的機率也高得多。
+    await NotificationService.instance.requestPermission();
+
     if (mounted) context.go('/');
   }
 

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../shared/models/elder.dart';
 import '../../shared/models/routine.dart';
 import '../../shared/services/demo_data.dart';
+import '../../shared/services/notification_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
@@ -78,6 +81,9 @@ class _EldersScreenState extends State<EldersScreen> {
         createdAt: DateTime.now(),
       ));
     });
+    // 行程變了就重排提醒，否則新增的項目要等下次啟動才會響
+    unawaited(NotificationService.instance.syncRoutines(_routines));
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: AppColors.barDark,
@@ -146,6 +152,8 @@ class _EldersScreenState extends State<EldersScreen> {
         createdAt: r.createdAt,
       );
     });
+    // 停用要立刻讓提醒消失，不能等下次啟動
+    unawaited(NotificationService.instance.syncRoutines(_routines));
   }
 
   @override

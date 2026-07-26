@@ -34,8 +34,13 @@ dependencies:
   fl_chart: ^0.68.0
   # 農曆換算（今日畫面的農民曆牌面）。輸出為簡體，一律經 lunar_date.dart 轉繁再顯示
   lunar: ^1.7.8
+  # 例行公事提醒：依 GET /routines 的定義排本地通知
+  flutter_local_notifications: ^22.2.0
+  # 排程通知要指定時區（台灣 +08:00），否則跨時區或日光節約會排錯時間
+  timezone: ^0.11.1
+  # 取得裝置目前時區名稱，餵給 timezone 初始化
+  flutter_timezone: ^5.1.0
   # TODO: Cognito 登入 SDK（amplify_flutter + amplify_auth_cognito）
-  # TODO: 本地通知（flutter_local_notifications，routines 提醒用）
 
 dev_dependencies:
   flutter_test:
