@@ -17,22 +17,24 @@ __pycache__/
 
 # --- Terraform ---
 terraform/.terraform/
+terraform/build/
 *.tfstate
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
 
 # --- AI tool configs ---
-.claude/        # Claude Code
-.codex/         # OpenAI Codex
-.cursor/        # Cursor
-.windsurf/      # Windsurf
-.continue/      # Continue
-.aider*         # Aider
-.gemini/        # Gemini CLI
-.qwen/          # Qwen Code
-.roo/           # Roo Code
-graphify-out/   # Graphify 知識圖譜輸出
+.claude/
+.codex/
+.cursor/
+.windsurf/
+.continue/
+.aider*
+.gemini/
+.qwen/
+.roo/
+.agents/
+graphify-out/
 
 # --- misc ---
 .DS_Store
