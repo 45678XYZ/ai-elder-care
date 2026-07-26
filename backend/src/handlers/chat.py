@@ -31,11 +31,13 @@ S3_BUCKET_NAME = os.environ.get("S3_AUDIO_BUCKET", "ai-elder-care-audio")
 BEDROCK_AGENT_ID = os.environ.get("BEDROCK_AGENT_ID", "")
 BEDROCK_AGENT_ALIAS_ID = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "TSTALIASID")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
+SAGEMAKER_CE_ENDPOINT_NAME = os.environ.get("SAGEMAKER_CE_ENDPOINT_NAME", "")
 CE_ASR_API_URL = os.environ.get("CE_ASR_API_URL", "https://api.ce-asr.example.com/v1/transcribe")
 
 # 全域 Boto3 Clients (Warm Start 重用連線)
 _s3_client = None
 _bedrock_agent_runtime = None
+_sagemaker_runtime = None
 
 
 def get_s3_client():
@@ -54,6 +56,14 @@ def get_bedrock_agent_runtime():
     return _bedrock_agent_runtime
 
 
+def get_sagemaker_runtime():
+    """取得 SageMaker Runtime Client 實例。"""
+    global _sagemaker_runtime
+    if _sagemaker_runtime is None:
+        _sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=AWS_REGION)
+    return _sagemaker_runtime
+
+
 def parse_event_body(event: Dict[str, Any]) -> Dict[str, Any]:
     """解析 API Gateway event 中的 body 內容。"""
     body = event.get("body")
@@ -68,16 +78,32 @@ def parse_event_body(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def transcribe_audio(audio_bytes: bytes, audio_format: str, lang: str) -> str:
-    """呼叫 CE ASR API 將語音轉寫為文字。
+    """呼叫 SageMaker CE 模型 Endpoint 或 CE ASR API 將語音轉寫為文字。
     
-    若在開發環境未設定 CE_ASR_API_URL，則回傳 Mock 轉譯文字供測試。
+    優先檢查 SAGEMAKER_CE_ENDPOINT_NAME，若有設定則透過 boto3 呼叫 SageMaker；
+    若未設定 Endpoint，則回傳 Mock 轉譯文字供測試。
     """
-    # 檢查長度是否超過約 60 秒（以 5MB 音檔大小為防護邊界）
+    # 檢查長度是否超過約 60 秒（以 5MB 音檔大小為防禦邊界）
     if len(audio_bytes) > 5 * 1024 * 1024:
         raise ValueError("AUDIO_TOO_LONG")
 
-    # TODO: 串接實際 CE ASR HTTP POST 請求
-    # 這裡預留轉譯處理邏輯
+    # 1. 若配置了 SageMaker Endpoint，透過 boto3 原生呼叫 SageMaker 上的 CE 模型
+    if SAGEMAKER_CE_ENDPOINT_NAME:
+        try:
+            sm_client = get_sagemaker_runtime()
+            response = sm_client.invoke_endpoint(
+                EndpointName=SAGEMAKER_CE_ENDPOINT_NAME,
+                ContentType=f"audio/{audio_format}",
+                Body=audio_bytes,
+                CustomAttributes=f"lang={lang}"
+            )
+            result = json.loads(response["Body"].read().decode("utf-8"))
+            return result.get("text", "")
+        except Exception as e:
+            print(f"[Error] SageMaker ASR invoke failed: {e}")
+            raise RuntimeError(f"SageMaker ASR error: {e}")
+
+    # 2. 未設定 Endpoint 時的保底 / Mock 文字（供開發測試期使用）
     if lang == "hak":
         return "阿頭仔，𠊎今晡日有食藥仔囉。"
     return "小助手，我今天已經吃過血壓藥了。"
