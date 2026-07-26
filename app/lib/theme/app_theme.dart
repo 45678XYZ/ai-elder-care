@@ -34,6 +34,10 @@ abstract final class AppColors {
   static const accent = Color(0xFFD15640); // 非文字：外框、外環、進度
   static const accentPressed = Color(0xFF9A210C);
 
+  /// 日曆平日藍。台灣日曆的慣例是假日紅、平日藍——牌面依當天是不是假日切換主色。
+  /// 明度與 [accentText] 相當，在紙底上對比 >=7:1。
+  static const calendarWeekday = Color(0xFF1B4E8C);
+
   // §2.5 語意色
   static const successFg = Color(0xFF1F4E27);
   static const successBg = Color(0xFFDFF6DE);

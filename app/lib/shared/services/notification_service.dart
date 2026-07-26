@@ -65,11 +65,17 @@ class NotificationService {
   /// 請求通知權限（Android 13+ 才需要；更早的版本安裝即授權）。
   ///
   /// 回傳 false 表示使用者拒絕——此時提醒不會響，UI 應該讓照護者知道。
+  /// 任何失敗都回 false 而不往上拋：請求權限是流程中的一步，
+  /// 不該因為平台不支援或外掛出錯就把使用者卡在當前畫面。
   Future<bool> requestPermission() async {
-    final android = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    if (android == null) return false;
-    return await android.requestNotificationsPermission() ?? false;
+    try {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (android == null) return false;
+      return await android.requestNotificationsPermission() ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 依目前的 routine 定義重排全部提醒。

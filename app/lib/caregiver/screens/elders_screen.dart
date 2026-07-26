@@ -315,7 +315,7 @@ class _ElderProfileCard extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: AppSpacing.xs),
-                Text('只影響長輩說話與聽回覆，App 畫面一律華語',
+                Text('※ 影響語音辨識',
                     style: text.bodySmall?.copyWith(color: AppColors.chevron)),
               ],
             ),

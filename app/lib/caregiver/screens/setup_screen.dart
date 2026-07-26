@@ -21,6 +21,10 @@ class _SetupScreenState extends State<SetupScreen> {
   final _nameCtrl = TextEditingController();
   final _nicknameCtrl = TextEditingController();
 
+  /// 驗證失敗時要捲回表單頂端——錯誤訊息在欄位下方，但使用者按的按鈕在畫面最下面，
+  /// 不捲回去他只會看到「按了沒反應」。
+  final _scrollCtrl = ScrollController();
+
   /// 語言偏好，對齊 api.md lang_preference：'zh-TW' | 'hak'。
   String _lang = 'zh-TW';
 
@@ -38,6 +42,7 @@ class _SetupScreenState extends State<SetupScreen> {
   void dispose() {
     _nameCtrl.dispose();
     _nicknameCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -51,7 +56,27 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate()) {
+      // 錯誤訊息在畫面上方、按鈕在下方，只印紅字等於沒有回饋（§8：送出必有狀態回饋）。
+      // 捲回頂端讓錯誤進入視野，再補一則提示說明為什麼沒有往下走。
+      await _scrollCtrl.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.barDark,
+          content: Text('請先填長輩姓名',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyLarge
+                  ?.copyWith(color: AppColors.onDark)),
+        ),
+      );
+      return;
+    }
     // TODO: 串接後 POST /elders 建立長者資料（name / nickname / lang_preference）。
     // 目前先持久化到本機：標記已完成首次設定並存長者資料，之後啟動不再進此畫面。
     await AppSession.instance.saveSetup(
@@ -62,7 +87,14 @@ class _SetupScreenState extends State<SetupScreen> {
 
     // 在這裡才要通知權限，不在 App 一啟動就問——照護者剛設定完長輩資料，
     // 這時「要不要提醒吃藥」是有情境的問題，答應的機率也高得多。
-    await NotificationService.instance.requestPermission();
+    //
+    // 不論結果如何都要往下走：使用者按了「完成設定」，設定就該完成。
+    // 權限拿不到的後果是提醒不會響，不是把人卡在這一頁。
+    try {
+      await NotificationService.instance.requestPermission();
+    } catch (_) {
+      // 忽略：通知權限失敗不影響設定完成
+    }
 
     if (mounted) context.go('/');
   }
@@ -73,6 +105,7 @@ class _SetupScreenState extends State<SetupScreen> {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
+          controller: _scrollCtrl,
           padding: AppSpacing.pageBody,
           child: Form(
             key: _formKey,
@@ -80,7 +113,7 @@ class _SetupScreenState extends State<SetupScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('初次設定 · 由照護者填寫',
+                Text('初次設定',
                     style: text.labelSmall
                         ?.copyWith(color: AppColors.inkSecondary)),
                 const SizedBox(height: AppSpacing.sm),
@@ -107,12 +140,23 @@ class _SetupScreenState extends State<SetupScreen> {
                   controller: _nicknameCtrl,
                   style: text.bodyLarge,
                   textInputAction: TextInputAction.done,
-                  decoration: _fieldDecoration(hint: '例如：阿蘭嬤（留空就用姓名）'),
+                  decoration: _fieldDecoration(hint: '例如：阿蘭嬤'),
                 ),
                 const SizedBox(height: AppSpacing.xl),
 
-                // 語言單選。只決定語音路徑（ASR／TTS），不是介面語言。
-                Text('長輩說話的語言', style: text.labelLarge),
+                // 語言單選。只決定語音路徑（ASR／TTS），不是介面語言——
+                // 這件事註記在標題旁就夠了，使用者不需要知道背後的分工。
+                // Wrap：textScaler 放大時註記換到下一行，不擠壞標題。
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: AppSpacing.sm,
+                  children: [
+                    Text('長輩說話的語言', style: text.labelLarge),
+                    Text('※ 影響語音辨識，可在 照護者模式 › 管理 更改',
+                        style: text.bodySmall
+                            ?.copyWith(color: AppColors.inkSecondary)),
+                  ],
+                ),
                 const SizedBox(height: AppSpacing.sm),
                 _LangCard(
                   title: '華語',
@@ -127,13 +171,6 @@ class _SetupScreenState extends State<SetupScreen> {
                   sample: '「$_displayName，食飽吂？今晡日想聊聊無？」',
                   selected: _lang == 'hak',
                   onTap: () => setState(() => _lang = 'hak'),
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Text(
-                  '這只影響長輩跟 AI 說話與聽回覆時使用的語言；App 畫面文字一律是華語。'
-                  '長者端不顯示切換按鈕，日後要改請到「管理」頁。',
-                  style:
-                      text.bodySmall?.copyWith(color: AppColors.inkSecondary),
                 ),
                 const SizedBox(height: AppSpacing.xl),
 

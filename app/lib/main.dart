@@ -12,7 +12,14 @@ Future<void> main() async {
   // 讀取持久化設定前需先初始化 binding。
   WidgetsFlutterBinding.ensureInitialized();
   await AppSession.instance.load();
-  await NotificationService.instance.init();
+
+  // 通知初始化失敗不該擋住 App 啟動——在不支援本地通知的平台（web 預覽）、
+  // 或外掛初始化出問題時，使用者仍然要能用其他功能。
+  try {
+    await NotificationService.instance.init();
+  } catch (_) {
+    // 提醒排不上，其餘照常
+  }
 
   runApp(AiElderCareApp());
 

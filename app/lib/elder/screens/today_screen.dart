@@ -152,7 +152,8 @@ class _TodayScreenState extends State<TodayScreen> {
 /// ```
 ///
 /// 四角各司其職（左上國曆年、中上干支、右上月份直排、左側農曆直排），
-/// 中央留給巨大的日期。全朱紅單色，靠字級與位置分層次，不加第二個顏色。
+/// 中央留給巨大的日期。整面單色、靠字級與位置分層次——顏色照台灣日曆的慣例，
+/// 假日（週末與農曆節日）朱紅、平日藍。
 class _AlmanacPanel extends StatelessWidget {
   const _AlmanacPanel();
 
@@ -163,6 +164,14 @@ class _AlmanacPanel extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final now = DateTime.now();
     final lunar = LunarDate.of(now);
+
+    // 台灣日曆慣例：假日紅、平日藍。農曆節日（春節、中秋…）也算假日。
+    // TODO: 國定假日（如雙十、清明補假）需要行事曆資料才判得出來，目前只認週末與農曆節日。
+    final isHoliday = now.weekday == DateTime.saturday ||
+        now.weekday == DateTime.sunday ||
+        lunar.festival != null;
+    final calColor =
+        isHoliday ? AppColors.accentText : AppColors.calendarWeekday;
 
     return AppCard(
       // 牌面用最白的紙色，跟下方一般卡片（card）區隔開，像一張撕曆貼在頁面上
@@ -179,20 +188,26 @@ class _AlmanacPanel extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${now.year}', style: AlmanacTypography.year),
+              Text('${now.year}',
+                  style: AlmanacTypography.year.copyWith(color: calColor)),
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text('歲次${lunar.ganZhiYear}年',
                       textAlign: TextAlign.center,
-                      style: AlmanacTypography.ganZhi),
+                      style:
+                          AlmanacTypography.ganZhi.copyWith(color: calColor)),
                 ),
               ),
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('${now.month}', style: AlmanacTypography.monthNumber),
-                  Text('月', style: AlmanacTypography.monthLabel),
+                  Text('${now.month}',
+                      style: AlmanacTypography.monthNumber
+                          .copyWith(color: calColor)),
+                  Text('月',
+                      style: AlmanacTypography.monthLabel
+                          .copyWith(color: calColor)),
                 ],
               ),
             ],
@@ -203,7 +218,7 @@ class _AlmanacPanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               _VerticalText('農曆${lunar.monthDay}',
-                  style: AlmanacTypography.lunar,
+                  style: AlmanacTypography.lunar.copyWith(color: calColor),
                   gap: AlmanacTypography.lunarGap),
               // 日期在「農曆直排右緣」到「卡片右緣」之間置中——與左右兩側等距，
               // 而不是對齊整張卡片的中線（那會被左邊的直排推得偏右）。
@@ -212,7 +227,8 @@ class _AlmanacPanel extends StatelessWidget {
                 child: Center(
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
-                    child: Text('${now.day}', style: AlmanacTypography.day),
+                    child: Text('${now.day}',
+                        style: AlmanacTypography.day.copyWith(color: calColor)),
                   ),
                 ),
               ),
@@ -225,7 +241,7 @@ class _AlmanacPanel extends StatelessWidget {
             padding: EdgeInsets.only(
                 left: AlmanacTypography.weekday.letterSpacing ?? 0),
             child: Text('星期${_weekdays[now.weekday - 1]}',
-                style: AlmanacTypography.weekday),
+                style: AlmanacTypography.weekday.copyWith(color: calColor)),
           ),
 
           // 節氣或農曆節日只在當天出現
@@ -233,9 +249,9 @@ class _AlmanacPanel extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-              decoration: const BoxDecoration(
-                color: AppColors.accentText,
-                borderRadius: BorderRadius.all(AppRadius.pill),
+              decoration: BoxDecoration(
+                color: calColor,
+                borderRadius: const BorderRadius.all(AppRadius.pill),
               ),
               child: Text(lunar.highlight!,
                   style: text.headlineSmall?.copyWith(color: Colors.white)),
