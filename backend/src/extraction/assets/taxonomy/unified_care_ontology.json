@@ -1,0 +1,3735 @@
+{
+  "@context": {
+    "uco": "http://w3id.org/uco/care#",
+    "icf": "http://id.who.int/icf/",
+    "omaha": "http://omahasystem.org/",
+    "schema": "https://schema.org/",
+    "skos": "http://www.w3.org/2004/02/skos/core#"
+  },
+  "metadata": {
+    "title": "統一照護本體論 (Unified Care Ontology, UCO)",
+    "version": "1.0.0",
+    "language": "zh-TW",
+    "qualifier_scale": "ICF 5-level qualifiers (0-4) with natural language descriptions",
+    "total_nodes_count": 49,
+    "total_positive_mappings_count": 292
+  },
+  "nodes": [
+    {
+      "concept_id": "UCO",
+      "display_name": "統一照護本體論",
+      "display_name_en": "Unified Care Ontology",
+      "level": 0,
+      "is_leaf": false,
+      "definition": "涵蓋長者日常生活行為紀錄與健康狀態結果的標準化階層分類體系。",
+      "label_description_for_retrieval": "統一照護本體論總根節點",
+      "parent": null,
+      "children": [
+        "UCO.BehavioralRecord",
+        "UCO.ExtendedDomain",
+        "UCO.StatusOutcome"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": []
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord",
+      "display_name": "行為紀錄",
+      "display_name_en": "Behavioral Record",
+      "level": 1,
+      "is_leaf": false,
+      "definition": "長者外顯行為（飲食、睡眠、活動、用藥）與內在心智狀態（情緒、心理、意圖）。",
+      "label_description_for_retrieval": "記錄長者外顯行為與內在心智狀態",
+      "parent": "UCO",
+      "children": [
+        "UCO.BehavioralRecord.CognitionOrientation",
+        "UCO.BehavioralRecord.EmotionalMentalState",
+        "UCO.BehavioralRecord.InterpersonalSocialBehavior",
+        "UCO.BehavioralRecord.MedicationBehavior",
+        "UCO.BehavioralRecord.NutritionEatingBehavior",
+        "UCO.BehavioralRecord.PhysicalActivityMobility",
+        "UCO.BehavioralRecord.SleepRestBehavior"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": []
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.CognitionOrientation",
+      "display_name": "認知與定向感",
+      "display_name_en": "Cognition & Orientation",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "時間/地點/人物定向感失常、記憶衰退與執行功能障礙。",
+      "label_description_for_retrieval": "記錄長者時間地點混淆、近事記憶衰退與重複詢問等認知狀況",
+      "parent": "UCO.BehavioralRecord",
+      "children": [
+        "UCO.BehavioralRecord.CognitionOrientation.MemoryExecutiveDeficit",
+        "UCO.BehavioralRecord.CognitionOrientation.OrientationImpairment"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "cognitive_domain",
+          "type": "enum",
+          "nullable": true,
+          "description": "受損認知範疇 (定向感/近事記憶/執行功能)"
+        },
+        {
+          "name": "decline_severity",
+          "type": "enum",
+          "nullable": true,
+          "description": "認知衰退程度 (輕微忘記/顯著重複/無法獨立)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.CognitionOrientation.MemoryExecutiveDeficit",
+      "display_name": "記憶衰退與執行障礙",
+      "display_name_en": "Memory & Executive Deficit",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "近期記憶減退、短時間重複詢問或無法完成多步驟任務。",
+      "label_description_for_retrieval": "長者剛吃過飯又問什麼時候開飯、找不到眼鏡皮包重複問問題",
+      "parent": "UCO.BehavioralRecord.CognitionOrientation",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b117",
+          "label": "智力功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b122",
+          "label": "整體心理社會功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "ICF",
+          "code": "b140",
+          "label": "注意力功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b1400",
+          "label": "持續注意力",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b1401",
+          "label": "轉移注意力",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b1402",
+          "label": "分配注意力",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b144",
+          "label": "記憶力功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "b1440",
+          "label": "短期記憶",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "b1441",
+          "label": "長期記憶",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b1442",
+          "label": "記憶提取",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "b147",
+          "label": "心理運動功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "ICF",
+          "code": "b160",
+          "label": "思維功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b1600",
+          "label": "思維速度",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "b1601",
+          "label": "思維形式",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "b164",
+          "label": "高階認知功能",
+          "relation": "skos:exactMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "b167",
+          "label": "語言心理功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "b172",
+          "label": "計算功能",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b176",
+          "label": "複雜動作順序心理功能",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d1",
+          "label": "學習與應用知識",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d110",
+          "label": "視覺觀察",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "ICF",
+          "code": "d115",
+          "label": "聽覺聆聽",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "ICF",
+          "code": "d160",
+          "label": "集中注意力",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "d175",
+          "label": "解決問題",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d177",
+          "label": "做出決定",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d2",
+          "label": "一般任務與要求",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d210",
+          "label": "執行單一任務",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "d220",
+          "label": "執行多重任務",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.92
+        },
+        {
+          "source": "ICF",
+          "code": "d230",
+          "label": "執行日常作息",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d2300",
+          "label": "管理日常活動",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d240",
+          "label": "處理壓力與心理要求",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#39",
+          "label": "#39 醫療追蹤與就醫行為",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#39-SS-01",
+          "label": "#39 醫療追蹤與就醫行為 (簽症: 未按時門診回診/看診取消)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#39-SS-02",
+          "label": "#39 醫療追蹤與就醫行為 (簽症: 在家未按時量測血壓或血糖)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#39-SS-03",
+          "label": "#39 醫療追蹤與就醫行為 (簽症: 身體不適時及時就醫主訴)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "schema.org",
+          "type": "CheckAction",
+          "label": "CheckAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "schema.org",
+          "type": "ChooseAction",
+          "label": "ChooseAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "schema.org",
+          "type": "SearchAction",
+          "label": "SearchAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        }
+      ],
+      "examples": [
+        "「我剛剛是不是還沒吃早餐啊？（其實十分鐘前剛吃完一碗粥）」",
+        "「奇怪，我的鑰匙跟老花眼鏡放到哪裡去了？我怎麼完全想不起來了！」",
+        "「這個遙控器要按哪一個按鈕才能轉台？我怎麼突然不會用了…」"
+      ],
+      "synonyms": [
+        "智力功能",
+        "整體心理社會功能",
+        "注意力功能",
+        "持續注意力",
+        "轉移注意力",
+        "分配注意力",
+        "記性",
+        "記憶"
+      ],
+      "own_properties": [
+        {
+          "name": "impaired_task_item",
+          "type": "string",
+          "nullable": true,
+          "description": "異常執行功能項目 (忘記鑰匙/遙控器不會用)"
+        },
+        {
+          "name": "repetition_count",
+          "type": "integer",
+          "nullable": true,
+          "description": "短時間重複詢問次數"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.CognitionOrientation.OrientationImpairment",
+      "display_name": "定向感障礙",
+      "display_name_en": "Orientation Impairment",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "對時間、日期、目前地點或周遭人物出現認知混淆。",
+      "label_description_for_retrieval": "長者問現在是早上還是晚上、這裡是不是我舊家、認不出女兒",
+      "parent": "UCO.BehavioralRecord.CognitionOrientation",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b110",
+          "label": "意識功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b1100",
+          "label": "意識狀態",
+          "relation": "skos:broadMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b1101",
+          "label": "意識持續性",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "b1102",
+          "label": "意識品質",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b114",
+          "label": "定向感功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "b1140",
+          "label": "時間定向感",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "b1141",
+          "label": "地點定向感",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "b1142",
+          "label": "人物定向感",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "b1602",
+          "label": "思維內容",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "ICF",
+          "code": "d2301",
+          "label": "管理時間",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        }
+      ],
+      "examples": [
+        "「請問一下現在外面是早上還是半夜？我搞清楚今天是星期幾了…」",
+        "「奇怪，這裡不是我在大稻埕的老家嗎？我為什麼會睡在這個房間裡？」",
+        "「妳是誰啊？妳是我請的幫傭嗎？（其實是親生女兒）」"
+      ],
+      "synonyms": [
+        "意識功能",
+        "意識狀態",
+        "意識持續性",
+        "意識品質",
+        "定向感功能",
+        "時間定向感",
+        "地點定向感",
+        "人物定向感"
+      ],
+      "own_properties": [
+        {
+          "name": "orientation_target",
+          "type": "enum",
+          "nullable": true,
+          "description": "失常維度 (時間混淆/地點迷路/人物誤認)"
+        },
+        {
+          "name": "disorientation_manifestation",
+          "type": "string",
+          "nullable": true,
+          "description": "對話混淆表現"
+        }
+      ],
+      "scope_note": "【明確包含】：對當下時間、目前所在空間地點、或眼前真實存在人物的識別錯亂（如：將眼前看護/女兒認錯、在家中以為在飯店/醫院、搞錯當下年份季節）。【明確排除】：知覺異常或無中生有的視聽幻覺現象（例如：看見已故親人出現在客廳、看見牆上有蟲在跑、聽見不存在的聲音）。看見不存在的已故親人屬於視幻覺（Visual Hallucination），切勿標註為定向感障礙。"
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.EmotionalMentalState",
+      "display_name": "情緒與心智狀態",
+      "display_name_en": "Emotional & Mental State",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "憂鬱、焦慮、喪失感與愉悅等情感與心智狀態。",
+      "label_description_for_retrieval": "記錄長者自述或表現出之憂鬱低落、焦慮不安、哀傷與愉悅情緒",
+      "parent": "UCO.BehavioralRecord",
+      "children": [
+        "UCO.BehavioralRecord.EmotionalMentalState.AnxiousAgitation",
+        "UCO.BehavioralRecord.EmotionalMentalState.DepressedAffect",
+        "UCO.BehavioralRecord.EmotionalMentalState.GriefLoss",
+        "UCO.BehavioralRecord.EmotionalMentalState.PositiveAffect"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "expressed_emotion",
+          "type": "string",
+          "nullable": true,
+          "description": "表達之心情描述"
+        },
+        {
+          "name": "emotion_polarity",
+          "type": "enum",
+          "nullable": true,
+          "description": "情緒極性 (正向/負向/焦慮/易怒)"
+        },
+        {
+          "name": "trigger_event",
+          "type": "string",
+          "nullable": true,
+          "description": "情緒觸發事件"
+        },
+        {
+          "name": "bpsd_symptom",
+          "type": "string",
+          "nullable": true,
+          "description": "伴隨失智症精神行為症狀"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.EmotionalMentalState.AnxiousAgitation",
+      "display_name": "焦慮與躁動狀態",
+      "display_name_en": "Anxiety & Agitated State",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "過度擔心、焦慮不安、坐立難安或易怒暴躁。",
+      "label_description_for_retrieval": "長者說心跳很快慌張、一直問兒子怎麼還沒來、坐立不安",
+      "parent": "UCO.BehavioralRecord.EmotionalMentalState",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b1303",
+          "label": "渴求",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "ICF",
+          "code": "b1304",
+          "label": "衝動控制",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b1520",
+          "label": "情緒適切性",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "b1521",
+          "label": "情緒調節",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b156",
+          "label": "知覺功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#37",
+          "label": "#37 物質使用與菸酒習慣",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#37-SS-01",
+          "label": "#37 物質使用與菸酒習慣 (簽症: 抽菸/吸菸習慣)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "schema.org",
+          "type": "DisagreeAction",
+          "label": "DisagreeAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "schema.org",
+          "type": "ReactAction",
+          "label": "ReactAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.75
+        }
+      ],
+      "examples": [
+        "「我兒子怎麼還沒來接我？是不是路上出車禍了？我心裡好慌張不安慌得不得了！」",
+        "「不要管我！你們大家到底要逼我到什麼時候！整個人煩躁得坐立難安！」"
+      ],
+      "synonyms": [
+        "渴求",
+        "衝動控制",
+        "情緒適切性",
+        "情緒調節",
+        "知覺功能"
+      ],
+      "own_properties": [
+        {
+          "name": "agitation_level",
+          "type": "enum",
+          "nullable": true,
+          "description": "躁動強度 (坐立難安/過度恐慌)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.EmotionalMentalState.DepressedAffect",
+      "display_name": "憂鬱與低落心境",
+      "display_name_en": "Depressed Affect & Low Energy",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "情緒低落、無精打采、缺乏動力與無力感。",
+      "label_description_for_retrieval": "長者自述心靈空虛孤單、活著沒意思、沒心情動",
+      "parent": "UCO.BehavioralRecord.EmotionalMentalState",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b130",
+          "label": "活力與驅力功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b1300",
+          "label": "活力水平",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b1301",
+          "label": "動機",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b1302",
+          "label": "食慾",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "ICF",
+          "code": "b1522",
+          "label": "情緒範圍",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#36",
+          "label": "#36 個人清潔與照護衛生",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#36-SS-01",
+          "label": "#36 個人清潔與照護衛生 (簽症: 洗澡頻率不足/數日未洗澡)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#36-SS-02",
+          "label": "#36 個人清潔與照護衛生 (簽症: 頭髮雜亂/指甲未剪/口腔未刷牙)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#36-SS-03",
+          "label": "#36 個人清潔與照護衛生 (簽症: 穿著髒污或不合時宜衣物)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#37-SS-02",
+          "label": "#37 物質使用與菸酒習慣 (簽症: 飲酒過量/酗酒)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        }
+      ],
+      "examples": [
+        "「最近覺得心情好低落，整天都不想說話，覺得活著好沒意思…」",
+        "「看著空盪盪的客廳覺得好孤單，做什麼事情都提不起勁來。」"
+      ],
+      "synonyms": [
+        "活力與驅力功能",
+        "活力水平",
+        "動機",
+        "胃口",
+        "想吃東西",
+        "食欲",
+        "吃得下",
+        "情緒範圍"
+      ],
+      "own_properties": []
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.EmotionalMentalState.GriefLoss",
+      "display_name": "哀傷與喪失感",
+      "display_name_en": "Grief & Sense of Loss",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "因喪親、身體功能退化或環境轉變引發之哀傷感。",
+      "label_description_for_retrieval": "長者哭泣懷念老伴、想到自己腳不能走好難過",
+      "parent": "UCO.BehavioralRecord.EmotionalMentalState",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b180",
+          "label": "自我與時間體驗功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        }
+      ],
+      "examples": [
+        "「想到我老伴已經離開我兩年了，眼淚就止不住一直流出來…」",
+        "「以前我還能到處爬山跑跳，現在連走路都要人扶，想到就覺得很傷心。」"
+      ],
+      "synonyms": [
+        "自我與時間體驗功能"
+      ],
+      "own_properties": [
+        {
+          "name": "loss_type",
+          "type": "enum",
+          "nullable": true,
+          "description": "喪失感來源 (喪親老伴/身體失能)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.EmotionalMentalState.PositiveAffect",
+      "display_name": "愉快與安定情緒",
+      "display_name_en": "Positive & Stable Affect",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "心情愉悅、安定、滿意或充滿熱情。",
+      "label_description_for_retrieval": "長者說今天心情真好、跟孫子玩很開心滿意",
+      "parent": "UCO.BehavioralRecord.EmotionalMentalState",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b126",
+          "label": "氣質與個性功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "b152",
+          "label": "情緒功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "schema.org",
+          "type": "AgreeAction",
+          "label": "AgreeAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        }
+      ],
+      "examples": [
+        "「今天孫子來看我，大家一起吃飯聊天，我心裡覺得好幸福好開心！」",
+        "「午後坐在陽台曬太陽吹微微的風，感覺心情非常平安踏實。」"
+      ],
+      "synonyms": [
+        "氣質與個性功能",
+        "心情",
+        "情緒",
+        "開心",
+        "難過",
+        "鬱卒"
+      ],
+      "own_properties": []
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.InterpersonalSocialBehavior",
+      "display_name": "社交與人際互動",
+      "display_name_en": "Interpersonal & Social Behavior",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "家屬互動、媒體觀看、社群軟體使用與社區休閒。",
+      "label_description_for_retrieval": "記錄長者與子女聊天、看電視新聞歌仔戲、滑手機 LINE 通話與社區唱歌活動",
+      "parent": "UCO.BehavioralRecord",
+      "children": [
+        "UCO.BehavioralRecord.InterpersonalSocialBehavior.FamilyInterpersonal",
+        "UCO.BehavioralRecord.InterpersonalSocialBehavior.LeisureRecreation",
+        "UCO.BehavioralRecord.InterpersonalSocialBehavior.MediaConsumption",
+        "UCO.BehavioralRecord.InterpersonalSocialBehavior.SmartphoneUsage"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "interaction_partner",
+          "type": "string",
+          "nullable": true,
+          "description": "互動對象 (子女/孫子/照服員/鄰居)"
+        },
+        {
+          "name": "communication_channel",
+          "type": "enum",
+          "nullable": true,
+          "description": "通訊管道 (面對面/電話/LINE視訊/電視)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.InterpersonalSocialBehavior.FamilyInterpersonal",
+      "display_name": "家屬與照顧者互動",
+      "display_name_en": "Family & Caregiver Interaction",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "與子女、孫輩或照顧服務員進行交談與互動。",
+      "label_description_for_retrieval": "長者與女兒通電話聊天、跟照服員說笑互動",
+      "parent": "UCO.BehavioralRecord.InterpersonalSocialBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b330",
+          "label": "言語流暢度與節奏功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "d710",
+          "label": "基本人際互動",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d720",
+          "label": "複雜人際互動",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d760",
+          "label": "家庭關係",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d770",
+          "label": "親密關係",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#38",
+          "label": "#38 家庭計畫與照護安排",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#38-SS-01",
+          "label": "#38 家庭計畫與照護安排 (簽症: 長照方式/機構住宿選擇決策拉鋸)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#42-SS-02",
+          "label": "#42 輔具與醫療設備使用 (簽症: 抗拒使用建議的輔具 (如堅持不用拐杖))",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "schema.org",
+          "type": "BefriendAction",
+          "label": "BefriendAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "schema.org",
+          "type": "InteractAction",
+          "label": "InteractAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        }
+      ],
+      "examples": [
+        "「剛剛我大女兒打電話過來關心我的身體狀況，我們聊了快二十分鐘。」",
+        "「照服員小王對我態度很好，我很喜歡跟他聊年輕時候的事。」"
+      ],
+      "synonyms": [
+        "言語流暢度與節奏功能",
+        "基本人際互動",
+        "複雜人際互動",
+        "家人關係",
+        "跟兒子聊天",
+        "孫子探視",
+        "家庭生活",
+        "親密關係"
+      ],
+      "own_properties": [
+        {
+          "name": "family_member_role",
+          "type": "string",
+          "nullable": true,
+          "description": "家屬角色 (大女兒/小兒子/孫子)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.InterpersonalSocialBehavior.LeisureRecreation",
+      "display_name": "社區休閒與娛樂活動",
+      "display_name_en": "Community Leisure & Recreation",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "參與卡拉OK唱歌、社區共餐、棋藝或文康活動。",
+      "label_description_for_retrieval": "長者在關懷據點唱卡拉OK、下棋、參加共餐活動",
+      "parent": "UCO.BehavioralRecord.InterpersonalSocialBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "d910",
+          "label": "社區生活",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d920",
+          "label": "休閒與娛樂",
+          "relation": "skos:exactMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d9200",
+          "label": "遊戲與棋藝",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d9201",
+          "label": "體育運動",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.88
+        },
+        {
+          "source": "ICF",
+          "code": "d9204",
+          "label": "興趣嗜好",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d9205",
+          "label": "社交聚會",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.92
+        },
+        {
+          "source": "schema.org",
+          "type": "PlayAction",
+          "label": "PlayAction",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        }
+      ],
+      "examples": [
+        "「今天去社區照顧據點參加共餐，大家一起吃午飯還唱了幾首日文老歌。」",
+        "「下午跟鄰居張先生在活動中心下象棋下了兩局。」"
+      ],
+      "synonyms": [
+        "社區生活",
+        "休閒與娛樂",
+        "遊戲與棋藝",
+        "體育運動",
+        "興趣嗜好",
+        "聊天",
+        "開槓",
+        "聚會"
+      ],
+      "own_properties": [
+        {
+          "name": "recreation_activity",
+          "type": "string",
+          "nullable": true,
+          "description": "休閒活動名稱 (卡拉OK/下棋)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.InterpersonalSocialBehavior.MediaConsumption",
+      "display_name": "電視與影音媒體觀看",
+      "display_name_en": "TV & Media Consumption",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "觀看電視新聞、連續劇、歌仔戲或廣播收聽。",
+      "label_description_for_retrieval": "長者看八點檔新聞、楊麗花歌仔戲或聽廣播",
+      "parent": "UCO.BehavioralRecord.InterpersonalSocialBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "d9202",
+          "label": "藝文欣賞與閱讀",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "schema.org",
+          "type": "ListenAction",
+          "label": "ListenAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "schema.org",
+          "type": "WatchAction",
+          "label": "WatchAction",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        }
+      ],
+      "examples": [
+        "「八點到了，快幫我把電視轉到台視，我要看楊麗花歌仔戲！」",
+        "「下午我習慣坐在沙發上看電視新聞瞭解一下氣象報告。」"
+      ],
+      "synonyms": [
+        "藝文欣賞與閱讀"
+      ],
+      "own_properties": [
+        {
+          "name": "show_title",
+          "type": "string",
+          "nullable": true,
+          "description": "節目影音標題"
+        },
+        {
+          "name": "screen_device",
+          "type": "enum",
+          "nullable": true,
+          "description": "觀看設備 (電視/平板)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.InterpersonalSocialBehavior.SmartphoneUsage",
+      "display_name": "智慧型手機與社群通訊",
+      "display_name_en": "Smartphone & Social App Usage",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "滑手機、使用 LINE 傳訊息、語音或視訊通話。",
+      "label_description_for_retrieval": "長者用 LINE 傳早安圖、跟孫子開 LINE 視訊通話",
+      "parent": "UCO.BehavioralRecord.InterpersonalSocialBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "schema.org",
+          "type": "CommentAction",
+          "label": "CommentAction",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "schema.org",
+          "type": "CommunicateAction",
+          "label": "CommunicateAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "schema.org",
+          "type": "ReadAction",
+          "label": "ReadAction",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "schema.org",
+          "type": "ShareAction",
+          "label": "ShareAction",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.85
+        }
+      ],
+      "examples": [
+        "「你看！我剛剛用 LINE 傳了一張早安蓮花圖給我老朋友。」",
+        "「我用智慧型手機跟住在美國的孫子開 LINE 視訊，看到他長高好開心！」"
+      ],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "app_used",
+          "type": "string",
+          "nullable": true,
+          "description": "使用之 App (LINE/Facebook)"
+        },
+        {
+          "name": "screen_time_minutes",
+          "type": "integer",
+          "nullable": true,
+          "description": "螢幕使用時間 (分鐘)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.MedicationBehavior",
+      "display_name": "用藥行為與遵囑",
+      "display_name_en": "Medication Regimen & Adherence",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "按時服藥、遵囑狀況、自述不良反應與外用照護程序。",
+      "label_description_for_retrieval": "記錄長者按時服藥、漏藥狀況、藥物不良反應與藥膏點眼藥照護",
+      "parent": "UCO.BehavioralRecord",
+      "children": [
+        "UCO.BehavioralRecord.MedicationBehavior.AdherenceDisruption",
+        "UCO.BehavioralRecord.MedicationBehavior.AdverseDrugEffect",
+        "UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication",
+        "UCO.BehavioralRecord.MedicationBehavior.TopicalCareProcedure"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "medication_item",
+          "type": "string",
+          "nullable": true,
+          "description": "藥品名稱/藥袋標示 (如「降血壓藥/心律錠」)"
+        },
+        {
+          "name": "pill_appearance",
+          "type": "string",
+          "nullable": true,
+          "description": "藥品外型描述 (如「黃色圓形小錠」「白色長膠囊」)"
+        },
+        {
+          "name": "medication_route",
+          "type": "enum",
+          "nullable": true,
+          "description": "給藥途徑 (口服/外用藥膏/點眼藥/水劑)"
+        },
+        {
+          "name": "dosage",
+          "type": "string",
+          "nullable": true,
+          "description": "給藥劑量 (如「1錠」「2滴」)"
+        },
+        {
+          "name": "dosing_frequency",
+          "type": "string",
+          "nullable": true,
+          "description": "給藥頻率 (如「早晚飯後」「睡前1次」)"
+        },
+        {
+          "name": "prescriber_department",
+          "type": "string",
+          "nullable": true,
+          "description": "開立科別 (心臟內科/身心科/風濕免疫科)"
+        },
+        {
+          "name": "adherence_status",
+          "type": "enum",
+          "nullable": true,
+          "description": "服藥遵照度 (按時/漏吃/延遲/自行增減)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.MedicationBehavior.AdherenceDisruption",
+      "display_name": "遵囑中斷與劑量調整",
+      "display_name_en": "Medication Adherence Disruption",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "漏服藥物、延遲服藥或自行增減藥物劑量。",
+      "label_description_for_retrieval": "長者說忘記吃藥、覺得症狀好了自行停藥或多吃一顆",
+      "parent": "UCO.BehavioralRecord.MedicationBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "OmahaSystem",
+          "code": "#35-SS-01",
+          "label": "#35 用藥處方與遵醫囑行為 (簽症: 漏吃藥/忘記服藥)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#35-SS-02",
+          "label": "#35 用藥處方與遵醫囑行為 (簽症: 服藥劑量不對/時間點錯誤)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#35-SS-03",
+          "label": "#35 用藥處方與遵醫囑行為 (簽症: 抗拒吃藥/自行停藥)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        }
+      ],
+      "examples": [
+        "「糟糕！我今天中午出門太急，忘記把飯後的血糖藥帶出來吃了…」",
+        "「我覺得最近頭都不會暈了，所以自己把高血壓藥改減半顆吃。」"
+      ],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "disruption_reason",
+          "type": "enum",
+          "nullable": true,
+          "description": "中斷或調劑原因 (忘記帶藥/自行停藥/副作用恐懼)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.MedicationBehavior.AdverseDrugEffect",
+      "display_name": "用藥不良反應自述",
+      "display_name_en": "Adverse Drug Effect Report",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "服藥後出現之頭暈、嗜睡、胃痛或過敏等不良反應。",
+      "label_description_for_retrieval": "長者自述吃完藥後覺得頭重腳輕胃很不舒服",
+      "parent": "UCO.BehavioralRecord.MedicationBehavior",
+      "children": [],
+      "source_mappings": [],
+      "examples": [
+        "「不知道為什麼，吃完剛開的新藥之後，我就一直覺得頭暈昏沉沉的。」",
+        "「這包藥吃了之後我的胃好刺痛，而且皮膚有點起紅疹發癢。」"
+      ],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "suspected_symptom",
+          "type": "string",
+          "nullable": true,
+          "description": "懷疑藥物引發之副作用症狀 (頭暈/胃刺痛/過敏紅疹)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication",
+      "display_name": "按時服藥",
+      "display_name_en": "Scheduled Medication Intake",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "依醫囑處方按時按量服用口服藥物。",
+      "label_description_for_retrieval": "長者說吃完飯有按時把降血壓降血糖的藥配水吞下去",
+      "parent": "UCO.BehavioralRecord.MedicationBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "d5702",
+          "label": "維護個人健康（用藥遵從）",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#35",
+          "label": "#35 用藥處方與遵醫囑行為",
+          "relation": "skos:broadMatch",
+          "confidence": 0.92
+        },
+        {
+          "source": "schema.org",
+          "type": "DoseSchedule",
+          "label": "DoseSchedule",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "schema.org",
+          "type": "Drug",
+          "label": "Drug",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        }
+      ],
+      "examples": [
+        "「吃完早餐後半小時，我已經把藥包裡的止痛藥跟高血壓藥吃掉了。」",
+        "「我有乖乖照醫生交代，睡前配溫開水吞了一顆安眠藥。」"
+      ],
+      "synonyms": [
+        "吃藥",
+        "服藥",
+        "按時吃藥",
+        "慢性病藥"
+      ],
+      "own_properties": [
+        {
+          "name": "on_time_flag",
+          "type": "boolean",
+          "nullable": true,
+          "description": "是否精確按時服藥"
+        },
+        {
+          "name": "pill_count",
+          "type": "integer",
+          "nullable": true,
+          "description": "本次服用藥丸顆數"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.MedicationBehavior.TopicalCareProcedure",
+      "display_name": "外用藥物照護程序",
+      "display_name_en": "Topical Medication Procedure",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "外用藥膏擦拭、眼藥水點用或貼布使用。",
+      "label_description_for_retrieval": "長者或照服員幫忙點眼藥水、擦關節止痛藥膏或貼貼布",
+      "parent": "UCO.BehavioralRecord.MedicationBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "schema.org",
+          "type": "UseAction",
+          "label": "UseAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.7
+        }
+      ],
+      "examples": [
+        "「請幫我在右邊膝蓋擦一下酸痛藥膏，順便貼上一塊酸痛貼布。」",
+        "「時間到了，照服員剛剛幫我的雙眼點了降眼壓的眼藥水。」"
+      ],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "topical_site",
+          "type": "string",
+          "nullable": true,
+          "description": "外用擦藥/貼布/點眼藥部位 (如右膝蓋/雙眼)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.NutritionEatingBehavior",
+      "display_name": "飲食與營養行為",
+      "display_name_en": "Nutrition & Eating Behavior",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "長者正餐進食、點心攝取、飲水、食慾變化與吞嚥消化狀況。",
+      "label_description_for_retrieval": "記錄長者飲食、點心、飲水攝取量與吞嚥食慾狀況",
+      "parent": "UCO.BehavioralRecord",
+      "children": [
+        "UCO.BehavioralRecord.NutritionEatingBehavior.AppetiteChange",
+        "UCO.BehavioralRecord.NutritionEatingBehavior.BeverageIntake",
+        "UCO.BehavioralRecord.NutritionEatingBehavior.MainMeal",
+        "UCO.BehavioralRecord.NutritionEatingBehavior.SnackSupplement",
+        "UCO.BehavioralRecord.NutritionEatingBehavior.SwallowingDifficulty",
+        "UCO.BehavioralRecord.NutritionEatingBehavior.WaterIntake"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "meal_context",
+          "type": "enum",
+          "nullable": true,
+          "description": "餐次情境 (早餐/午餐/晚餐/點心/宵夜)"
+        },
+        {
+          "name": "food_description",
+          "type": "string",
+          "nullable": true,
+          "description": "食物與菜色綜合描述"
+        },
+        {
+          "name": "portion_consumed",
+          "type": "string",
+          "nullable": true,
+          "description": "進食完成份量 (全部吃光/吃半碗/拒食)"
+        },
+        {
+          "name": "fluid_volume_ml",
+          "type": "float",
+          "nullable": true,
+          "description": "飲水或飲料體積 (毫升 ml)"
+        },
+        {
+          "name": "appetite_status",
+          "type": "enum",
+          "nullable": true,
+          "description": "整體食慾評估 (良好/下降/嘔吐)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.NutritionEatingBehavior.AppetiteChange",
+      "display_name": "食慾異常與改變",
+      "display_name_en": "Appetite Change",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "食慾明顯下降、拒食、噁心感或食慾改善。",
+      "label_description_for_retrieval": "長者說完全不想吃東西、看到飯就噁心或食慾變好",
+      "parent": "UCO.BehavioralRecord.NutritionEatingBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b515",
+          "label": "消化功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "ICF",
+          "code": "b530",
+          "label": "體重維持功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        }
+      ],
+      "examples": [
+        "「不知道為什麼這兩天都沒什麼胃口，看到飯菜就覺得噁心想吐。」",
+        "「今天心情比較好，感覺肚子會餓了，想吃點熱湯麵。」"
+      ],
+      "synonyms": [
+        "消化功能",
+        "體重",
+        "變瘦",
+        "變胖",
+        "公斤"
+      ],
+      "own_properties": [
+        {
+          "name": "nausea_flag",
+          "type": "boolean",
+          "nullable": true,
+          "description": "是否伴隨噁心嘔吐症狀"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.NutritionEatingBehavior.BeverageIntake",
+      "display_name": "一般與功能性飲料",
+      "display_name_en": "Beverage Intake",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "牛奶、茶飲、湯品及其他流質飲料之攝取。",
+      "label_description_for_retrieval": "長者喝熱牛奶、泡熱茶或喝流質湯品",
+      "parent": "UCO.BehavioralRecord.NutritionEatingBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "d5601",
+          "label": "送飲料入口",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "schema.org",
+          "type": "DrinkAction",
+          "label": "DrinkAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        }
+      ],
+      "examples": [
+        "「我早上習慣沖一杯熱牛奶配饅頭。」",
+        "「午後在庭院泡了一壺高山烏龍茶跟老朋友一起喝。」"
+      ],
+      "synonyms": [
+        "送飲料入口"
+      ],
+      "own_properties": [
+        {
+          "name": "beverage_type",
+          "type": "string",
+          "nullable": true,
+          "description": "飲料類型 (熱牛奶/烏龍茶)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.NutritionEatingBehavior.MainMeal",
+      "display_name": "正餐進食",
+      "display_name_en": "Main Meal Intake",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "長者於固定餐次（早餐、午餐、晚餐）之進食行為與完成份量。",
+      "label_description_for_retrieval": "長者提到吃早餐、午餐、晚餐正餐菜色與吃完幾碗飯",
+      "parent": "UCO.BehavioralRecord.NutritionEatingBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b510",
+          "label": "攝食功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d550",
+          "label": "進食行為",
+          "relation": "skos:exactMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d5500",
+          "label": "切碎食物",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d5501",
+          "label": "送食物入口",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d5502",
+          "label": "咀嚼食物",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d630",
+          "label": "備餐與料理",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "d6301",
+          "label": "準備複雜餐點",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "schema.org",
+          "type": "ConsumeAction",
+          "label": "ConsumeAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "schema.org",
+          "type": "CookAction",
+          "label": "CookAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "schema.org",
+          "type": "Diet",
+          "label": "Diet",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "schema.org",
+          "type": "EatAction",
+          "label": "EatAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        }
+      ],
+      "examples": [
+        "「阿姨，我今天中午把一整碗滷肉飯跟青菜都吃光光了！」",
+        "「今天的晚餐湯太鹹了，我只吃了半碗飯就不想吃了。」",
+        "「早上的稀飯煮得很軟，我搭配醬菜吃得很開心。」"
+      ],
+      "synonyms": [
+        "攝食功能",
+        "吃飯",
+        "用餐",
+        "吃正餐",
+        "吃午餐",
+        "吃晚餐",
+        "切碎食物",
+        "送食物入口"
+      ],
+      "own_properties": [
+        {
+          "name": "dishes",
+          "type": "string",
+          "nullable": true,
+          "description": "詳細菜色明細"
+        },
+        {
+          "name": "vegetables_fruits",
+          "type": "string",
+          "nullable": true,
+          "description": "蔬果攝取細節"
+        },
+        {
+          "name": "soup",
+          "type": "string",
+          "nullable": true,
+          "description": "湯品類型"
+        },
+        {
+          "name": "staple_food",
+          "type": "string",
+          "nullable": true,
+          "description": "主食種類 (白飯/稀飯/麵/燕麥)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.NutritionEatingBehavior.SnackSupplement",
+      "display_name": "點心與營養補充品",
+      "display_name_en": "Snack & Supplement Intake",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "餐間零食點心與特殊營養補充品之攝取。",
+      "label_description_for_retrieval": "長者在兩餐之間吃餅乾、水果或喝高蛋白營養沖泡品",
+      "parent": "UCO.BehavioralRecord.NutritionEatingBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b540",
+          "label": "一般代謝功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "ICF",
+          "code": "d6300",
+          "label": "準備簡單餐點",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "schema.org",
+          "type": "NutritionInformation",
+          "label": "NutritionInformation",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        }
+      ],
+      "examples": [
+        "「下午三點的時候，照服員拿了一罐高蛋白奶粉泡給我喝。」",
+        "「剛剛隔壁陳太太拿了紅豆餅過來，我吃了一整顆。」"
+      ],
+      "synonyms": [
+        "一般代謝功能",
+        "準備簡單餐點"
+      ],
+      "own_properties": [
+        {
+          "name": "snack_type",
+          "type": "string",
+          "nullable": true,
+          "description": "點心類型 (餅乾/水果/紅豆餅)"
+        },
+        {
+          "name": "supplement_brand",
+          "type": "string",
+          "nullable": true,
+          "description": "營養補充品品牌 (安素/完勝)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.NutritionEatingBehavior.SwallowingDifficulty",
+      "display_name": "吞嚥困難與嗆咳",
+      "display_name_en": "Swallowing Difficulty & Choking",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "用餐或飲水時之吞嚥障礙、含飯、咳嗽與嗆食現象。",
+      "label_description_for_retrieval": "長者自述吃太快吞不下去、喝水直咳嗽或含著飯吞不下去",
+      "parent": "UCO.BehavioralRecord.NutritionEatingBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b5100",
+          "label": "吸吮",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "b5101",
+          "label": "咬碎",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b5102",
+          "label": "咀嚼",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b5103",
+          "label": "吞嚥",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d5503",
+          "label": "吞嚥食物",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d5602",
+          "label": "吞飲液體",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        }
+      ],
+      "examples": [
+        "「剛才喝水喝太快，一下子嗆到咳了好久，胸口好難受…」",
+        "「這塊肉太硬了我咬不動，含在嘴裡很久都吞不下去。」"
+      ],
+      "synonyms": [
+        "吸吮",
+        "咬碎",
+        "咀嚼",
+        "吞下去",
+        "嗆到",
+        "吞嚥",
+        "喉嚨卡卡",
+        "吞嚥食物"
+      ],
+      "own_properties": [
+        {
+          "name": "choking_trigger_texture",
+          "type": "enum",
+          "nullable": true,
+          "description": "引發嗆咳之食物質地 (薄流質/固體)"
+        },
+        {
+          "name": "coughing_frequency",
+          "type": "enum",
+          "nullable": true,
+          "description": "咳嗽頻率 (每口都嗆/偶爾)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.NutritionEatingBehavior.WaterIntake",
+      "display_name": "白開水飲用",
+      "display_name_en": "Water Intake",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "白開水或溫開水之攝取與飲水量。",
+      "label_description_for_retrieval": "長者自述喝水水量或照服員提醒喝溫開水紀錄",
+      "parent": "UCO.BehavioralRecord.NutritionEatingBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "d560",
+          "label": "飲水與喝飲料",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d5600",
+          "label": "拿取杯子",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#27-SS-03",
+          "label": "#27 血液循環與血壓心跳 (簽症: 雙下肢水腫/腳踝腫脹)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#30",
+          "label": "#30 泌尿機能與尿失禁",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#30-SS-01",
+          "label": "#30 泌尿機能與尿失禁 (簽症: 尿失禁/尿意急迫漏尿)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#30-SS-02",
+          "label": "#30 泌尿機能與尿失禁 (簽症: 頻尿/夜尿次數多 (響影響睡眠))",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#30-SS-03",
+          "label": "#30 泌尿機能與尿失禁 (簽症: 排尿疼痛/小便刺痛 (疑似尿路感染))",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        }
+      ],
+      "examples": [
+        "「我今天早上已經喝了三大杯溫開水，大概有 600c.c. 吧。」",
+        "「天氣好熱，快拿我的水壺過來，我想喝幾口常溫水。」"
+      ],
+      "synonyms": [
+        "喝水",
+        "飲水",
+        "喝茶",
+        "喝湯",
+        "喝飲料",
+        "拿取杯子"
+      ],
+      "own_properties": [
+        {
+          "name": "thickener_used",
+          "type": "boolean",
+          "nullable": true,
+          "description": "飲水是否加入流質增稠劑"
+        },
+        {
+          "name": "water_temperature",
+          "type": "enum",
+          "nullable": true,
+          "description": "水溫 (常溫/溫熱水)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.PhysicalActivityMobility",
+      "display_name": "身體活動與行動能力",
+      "display_name_en": "Physical Activity & Mobility",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "散步、姿態轉換、復健做操與日常生活照顧 (ADL)。",
+      "label_description_for_retrieval": "記錄長者散步、床上翻身移位、做復健操與盥洗穿衣 ADL 自理能力",
+      "parent": "UCO.BehavioralRecord",
+      "children": [
+        "UCO.BehavioralRecord.PhysicalActivityMobility.PersonalCareADL",
+        "UCO.BehavioralRecord.PhysicalActivityMobility.PositionalTransfer",
+        "UCO.BehavioralRecord.PhysicalActivityMobility.StructuredExercise",
+        "UCO.BehavioralRecord.PhysicalActivityMobility.WalkingAmbulation"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "activity_nature",
+          "type": "string",
+          "nullable": true,
+          "description": "活動或移動性質"
+        },
+        {
+          "name": "assistance_level",
+          "type": "enum",
+          "nullable": true,
+          "description": "照護協助等級 (獨立/提示/部分/完全)"
+        },
+        {
+          "name": "assistive_device",
+          "type": "enum",
+          "nullable": true,
+          "description": "使用行動輔具 (單拐/助行器/輪椅)"
+        },
+        {
+          "name": "gait_stability",
+          "type": "enum",
+          "nullable": true,
+          "description": "步態穩定度 (平穩/搖晃/步態蹣跚)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.PhysicalActivityMobility.PersonalCareADL",
+      "display_name": "日常生活自我照顧 (ADL)",
+      "display_name_en": "Personal Care & ADL",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "個人盥洗、沐浴、穿脫衣物與上廁所照顧。",
+      "label_description_for_retrieval": "長者自己刷牙洗臉、洗澡穿衣服或上廁所不需要幫忙",
+      "parent": "UCO.BehavioralRecord.PhysicalActivityMobility",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "d510",
+          "label": "洗澡與清潔",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d5100",
+          "label": "清洗身體部位",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.92
+        },
+        {
+          "source": "ICF",
+          "code": "d5101",
+          "label": "清洗全身",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d5102",
+          "label": "擦乾身體",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d520",
+          "label": "照顧身體部位",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d5200",
+          "label": "照顧皮膚",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.88
+        },
+        {
+          "source": "ICF",
+          "code": "d5201",
+          "label": "照顧牙齒與假牙",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d5202",
+          "label": "照顧頭髮",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d530",
+          "label": "如廁照顧",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d5300",
+          "label": "調節小便",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "d5301",
+          "label": "調節大便",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "d540",
+          "label": "穿脫衣物",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "d5400",
+          "label": "穿上衣服",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d5401",
+          "label": "脫下衣服",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d5402",
+          "label": "穿上鞋襪",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.92
+        },
+        {
+          "source": "ICF",
+          "code": "d5403",
+          "label": "脫下鞋襪",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.92
+        },
+        {
+          "source": "ICF",
+          "code": "d640",
+          "label": "執行家務清潔",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "ICF",
+          "code": "d6400",
+          "label": "洗碗清潔",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "ICF",
+          "code": "d6401",
+          "label": "洗滌衣物",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "ICF",
+          "code": "d6402",
+          "label": "清潔居住區域",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#29",
+          "label": "#29 腸道排泄與失禁控制",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#29-SS-01",
+          "label": "#29 腸道排泄與失禁控制 (簽症: 大便失禁/滲便)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#29-SS-02",
+          "label": "#29 腸道排泄與失禁控制 (簽症: 糞便嵌塞/嚴重便秘需人工挖便)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        }
+      ],
+      "examples": [
+        "「今天早上我自己完成刷牙洗臉跟梳頭，沒有叫照服員幫忙喔！」",
+        "「剛才在浴室裡我自己洗好澡並穿上乾淨的衣服了。」"
+      ],
+      "synonyms": [
+        "洗澡",
+        "沖涼",
+        "洗一身",
+        "擦澡",
+        "清洗身體部位",
+        "清洗全身",
+        "擦乾身體",
+        "照顧身體部位"
+      ],
+      "own_properties": [
+        {
+          "name": "adl_item",
+          "type": "enum",
+          "nullable": true,
+          "description": "ADL細項 (刷牙洗臉/沐浴/穿衣)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.PhysicalActivityMobility.PositionalTransfer",
+      "display_name": "姿態轉換",
+      "display_name_en": "Positional Transfer",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "床上翻身、坐起、床邊站立與輪椅移位。",
+      "label_description_for_retrieval": "長者自述從床上坐起來、站起來或移位到輪椅",
+      "parent": "UCO.BehavioralRecord.PhysicalActivityMobility",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b7",
+          "label": "神經肌肉骨骼機能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b735",
+          "label": "肌張力機能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "ICF",
+          "code": "d410",
+          "label": "變換基本體位",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "d4100",
+          "label": "躺下",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d4101",
+          "label": "蹲下",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d4102",
+          "label": "跪下",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d4103",
+          "label": "坐下",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "d4104",
+          "label": "站立",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "d4105",
+          "label": "彎腰",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d415",
+          "label": "維持體位",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d4150",
+          "label": "維持躺姿",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "d4151",
+          "label": "維持坐姿",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "d4152",
+          "label": "維持站姿",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "d420",
+          "label": "轉位",
+          "relation": "skos:broadMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d4200",
+          "label": "坐姿轉位",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "d4201",
+          "label": "臥姿轉位",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        }
+      ],
+      "examples": [
+        "「請扶我一下，我想從床上坐起來挪到床邊的輪椅上。」",
+        "「剛才我自己扶著床頭櫃慢慢站起來，感覺腳還算有力量。」"
+      ],
+      "synonyms": [
+        "神經肌肉骨骼機能",
+        "肌張力機能",
+        "起立",
+        "坐下",
+        "翻身",
+        "起身",
+        "躺下",
+        "蹲下"
+      ],
+      "own_properties": [
+        {
+          "name": "transfer_from_to",
+          "type": "string",
+          "nullable": true,
+          "description": "轉移起止點 (床上到輪椅/床邊站立)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.PhysicalActivityMobility.StructuredExercise",
+      "display_name": "復健做操與體能活動",
+      "display_name_en": "Structured Rehabilitation Exercise",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "執行長者健走操、拉筋伸展或復健運動。",
+      "label_description_for_retrieval": "長者著照服員做毛巾操、拉筋伸展或復健運動",
+      "parent": "UCO.BehavioralRecord.PhysicalActivityMobility",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b710",
+          "label": "關節活動度",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b730",
+          "label": "肌力機能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "schema.org",
+          "type": "ExerciseAction",
+          "label": "ExerciseAction",
+          "relation": "skos:exactMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "schema.org",
+          "type": "PhysicalActivity",
+          "label": "PhysicalActivity",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        }
+      ],
+      "examples": [
+        "「下午十點跟著電視上的老師一起做了 20 分鐘的長者毛巾伸展操。」",
+        "「職能治療師剛剛教我用彈力帶做手臂與腿部的復健抬腳運動。」"
+      ],
+      "synonyms": [
+        "關節活動度",
+        "肌力",
+        "腳沒力",
+        "站不起來",
+        "手沒力"
+      ],
+      "own_properties": [
+        {
+          "name": "exercise_program",
+          "type": "string",
+          "nullable": true,
+          "description": "復健做操項目 (毛巾操/彈力帶抬腳)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.PhysicalActivityMobility.WalkingAmbulation",
+      "display_name": "散步與輔具行走",
+      "display_name_en": "Walking & Ambulation",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "室內外散步、使用拐杖或助行器行走。",
+      "label_description_for_retrieval": "長者拿拐杖助行器在客廳中庭散步走的距離",
+      "parent": "UCO.BehavioralRecord.PhysicalActivityMobility",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b760",
+          "label": "自主運動控制機能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "d450",
+          "label": "行走",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "d4500",
+          "label": "短距離行走",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d4501",
+          "label": "長距離行走",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d4502",
+          "label": "在不同地面行走",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "d460",
+          "label": "在不同場所位移",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "d470",
+          "label": "搭乘交通工具",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "schema.org",
+          "type": "ArriveAction",
+          "label": "ArriveAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "schema.org",
+          "type": "DepartAction",
+          "label": "DepartAction",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "schema.org",
+          "type": "MoveAction",
+          "label": "MoveAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "schema.org",
+          "type": "TravelAction",
+          "label": "TravelAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.7
+        }
+      ],
+      "examples": [
+        "「我早上拿著單手拐杖，在社區花園裡慢慢散步走了大約 200 公尺。」",
+        "「推著四輪助行器在客廳繞了三圈，感覺腳步滿平穩的。」"
+      ],
+      "synonyms": [
+        "自主運動控制機能",
+        "走路",
+        "散步",
+        "走動",
+        "逛逛",
+        "短距離行走",
+        "長距離行走",
+        "在不同地面行走"
+      ],
+      "own_properties": [
+        {
+          "name": "distance_meters",
+          "type": "float",
+          "nullable": true,
+          "description": "行走距離 (公尺 m)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.SleepRestBehavior",
+      "display_name": "睡眠與休息行為",
+      "display_name_en": "Sleep & Rest Behavior",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "長者夜間入睡、睡眠中斷、日間打盹及睡眠品質評估。",
+      "label_description_for_retrieval": "記錄長者夜間睡眠、起夜次數、白天打盹與睡眠品質",
+      "parent": "UCO.BehavioralRecord",
+      "children": [
+        "UCO.BehavioralRecord.SleepRestBehavior.DaytimeNapping",
+        "UCO.BehavioralRecord.SleepRestBehavior.SleepMaintenance",
+        "UCO.BehavioralRecord.SleepRestBehavior.SleepOnset",
+        "UCO.BehavioralRecord.SleepRestBehavior.SleepQualityReport"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "sleep_duration_hours",
+          "type": "float",
+          "nullable": true,
+          "description": "睡著總時長 (小時)"
+        },
+        {
+          "name": "sleep_location",
+          "type": "enum",
+          "nullable": true,
+          "description": "睡眠地點 (床/沙發)"
+        },
+        {
+          "name": "sleep_posture",
+          "type": "string",
+          "nullable": true,
+          "description": "睡眠姿態"
+        },
+        {
+          "name": "sleep_aids",
+          "type": "string",
+          "nullable": true,
+          "description": "助眠措施 (安眠藥/音樂/枕頭墊高)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.SleepRestBehavior.DaytimeNapping",
+      "display_name": "日間打盹與小憩",
+      "display_name_en": "Daytime Napping",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "日間白天的打瞌睡、小憩與休息。",
+      "label_description_for_retrieval": "長者在客廳看電視打瞌睡或吃完午飯睡午覺",
+      "parent": "UCO.BehavioralRecord.SleepRestBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b1340",
+          "label": "睡眠總量",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        }
+      ],
+      "examples": [
+        "「吃完午飯後我在客廳沙發上小睡了大約半個小時。」",
+        "「剛才坐在輪椅上記者會看到一半，不小心就打瞌睡睡著了。」"
+      ],
+      "synonyms": [
+        "睡多久",
+        "睡眠時數",
+        "睡覺時間"
+      ],
+      "own_properties": [
+        {
+          "name": "nap_duration_minutes",
+          "type": "integer",
+          "nullable": true,
+          "description": "打盹分鐘數"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.SleepRestBehavior.SleepMaintenance",
+      "display_name": "夜間中斷與起夜",
+      "display_name_en": "Sleep Maintenance & Night Waking",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "夜間多次甦醒、頻尿起夜或過早醒來。",
+      "label_description_for_retrieval": "長者說半夜醒來好幾次去上廁所、醒來後就睡不回去",
+      "parent": "UCO.BehavioralRecord.SleepRestBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b1342",
+          "label": "睡眠維持",
+          "relation": "skos:broadMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#28-SS-03",
+          "label": "#28 消化腸胃與水分平衡 (簽症: 腹瀉/拉肚子)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        }
+      ],
+      "examples": [
+        "「我昨晚半夜起來跑了四次廁所，每次醒來後就很難再睡著。」",
+        "「凌晨四點我就醒過來了，之後就只能睜著眼睛躺到天亮。」"
+      ],
+      "synonyms": [
+        "半夜醒來",
+        "起夜",
+        "夜尿醒來",
+        "中途醒"
+      ],
+      "own_properties": [
+        {
+          "name": "waking_reason",
+          "type": "enum",
+          "nullable": true,
+          "description": "夜間甦醒原因 (夜尿起夜/做惡夢/關節疼痛)"
+        },
+        {
+          "name": "night_waking_count",
+          "type": "integer",
+          "nullable": true,
+          "description": "夜間起夜次數"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.SleepRestBehavior.SleepOnset",
+      "display_name": "入睡困難",
+      "display_name_en": "Sleep Onset Insomnia",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "夜間上床後無法順利入睡或入睡潛伏期過長。",
+      "label_description_for_retrieval": "長者說翻來覆去兩三個小時都睡不著",
+      "parent": "UCO.BehavioralRecord.SleepRestBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b1341",
+          "label": "入睡功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.95
+        }
+      ],
+      "examples": [
+        "「我昨晚十一點就躺在床上，結果翻來覆去到凌晨兩點都還睡不著…」",
+        "「最近腦子一直想事情，閉上眼睛很久都無法入睡。」"
+      ],
+      "synonyms": [
+        "入眠",
+        "躺下多久睡著",
+        "難入睡"
+      ],
+      "own_properties": [
+        {
+          "name": "sleep_latency_minutes",
+          "type": "integer",
+          "nullable": true,
+          "description": "入睡潛伏時間 (分鐘)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.BehavioralRecord.SleepRestBehavior.SleepQualityReport",
+      "display_name": "主觀睡眠品質評估",
+      "display_name_en": "Subjective Sleep Quality",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "長者或照顧者對睡眠品質的主觀評價與報告。",
+      "label_description_for_retrieval": "長者評價昨晚睡得很好或睡得很差做惡夢",
+      "parent": "UCO.BehavioralRecord.SleepRestBehavior",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b134",
+          "label": "睡眠功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "b1343",
+          "label": "睡眠品質",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        }
+      ],
+      "examples": [
+        "「昨晚一覺到天亮，睡得非常香甜，早上精神特別好！」",
+        "「昨晚一直做惡夢被嚇醒，感覺今天整天頭都很沉重。」"
+      ],
+      "synonyms": [
+        "睡覺",
+        "睡眠",
+        "歇息",
+        "入睡",
+        "睡得好不好",
+        "睡眠品質",
+        "睡得香",
+        "沒睡飽"
+      ],
+      "own_properties": [
+        {
+          "name": "morning_fatigue_level",
+          "type": "enum",
+          "nullable": true,
+          "description": "晨起疲憊感受 (精神充沛/頭重沉重)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.ExtendedDomain",
+      "display_name": "擴充與社會科技領域",
+      "display_name_en": "Extended Domain",
+      "level": 1,
+      "is_leaf": false,
+      "definition": "廣義商業、社會管理、系統操作與非臨床長者行為擴充面向。",
+      "label_description_for_retrieval": "記錄長者之商業消費、系統授權與科技產品使用行為",
+      "parent": "UCO",
+      "children": [
+        "UCO.ExtendedDomain.GeneralCommerce",
+        "UCO.ExtendedDomain.SystemManagement"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": []
+    },
+    {
+      "concept_id": "UCO.ExtendedDomain.GeneralCommerce",
+      "display_name": "廣義商業與消費行為",
+      "display_name_en": "General Commerce Behavior",
+      "level": 2,
+      "is_leaf": true,
+      "definition": "輔具購買、生活用品消費與服務交易。",
+      "label_description_for_retrieval": "記錄長者購買生活用品、輔具消費與服務交易",
+      "parent": "UCO.ExtendedDomain",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "schema.org",
+          "type": "BuyAction",
+          "label": "BuyAction",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "schema.org",
+          "type": "TradeAction",
+          "label": "TradeAction",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        }
+      ],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "commerce_item",
+          "type": "string",
+          "nullable": true,
+          "description": "消費標的物"
+        },
+        {
+          "name": "transaction_amount",
+          "type": "float",
+          "nullable": true,
+          "description": "交易金額 (NTD)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.ExtendedDomain.SystemManagement",
+      "display_name": "廣義科技與系統管理",
+      "display_name_en": "System & Device Management",
+      "level": 2,
+      "is_leaf": true,
+      "definition": "智慧裝置操作、權限設定與資源分配。",
+      "label_description_for_retrieval": "記錄系統資源分配、智慧裝置連線與操作權限管理",
+      "parent": "UCO.ExtendedDomain",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "schema.org",
+          "type": "AllocateAction",
+          "label": "AllocateAction",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "schema.org",
+          "type": "AssignAction",
+          "label": "AssignAction",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.92
+        },
+        {
+          "source": "schema.org",
+          "type": "AuthenticateAction",
+          "label": "AuthenticateAction",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "schema.org",
+          "type": "AuthorizeAction",
+          "label": "AuthorizeAction",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "schema.org",
+          "type": "ControlAction",
+          "label": "ControlAction",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "schema.org",
+          "type": "OrganizeAction",
+          "label": "OrganizeAction",
+          "relation": "skos:broadMatch",
+          "confidence": 0.88
+        },
+        {
+          "source": "schema.org",
+          "type": "UpdateAction",
+          "label": "UpdateAction",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        }
+      ],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "system_action",
+          "type": "string",
+          "nullable": true,
+          "description": "廣義系統操作類型"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.StatusOutcome",
+      "display_name": "狀態結果",
+      "display_name_en": "Status & Outcome",
+      "level": 1,
+      "is_leaf": false,
+      "definition": "長者發生的客觀事件、意外狀況、生理量測與功能評估結果。",
+      "label_description_for_retrieval": "記錄長者發生之客觀意外事件、生理量測數據與健康狀態結果",
+      "parent": "UCO",
+      "children": [
+        "UCO.StatusOutcome.PhysiologicalMeasurement",
+        "UCO.StatusOutcome.SafetyIncident"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": []
+    },
+    {
+      "concept_id": "UCO.StatusOutcome.PhysiologicalMeasurement",
+      "display_name": "生理量測與體徵症狀",
+      "display_name_en": "Physiological Measurement & Symptoms",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "血壓/血糖量測數據、疼痛自述、頭暈胸悶等生理體徵。",
+      "label_description_for_retrieval": "記錄長者血壓血糖量測數值、頭暈痛風胸悶自述與身體不適",
+      "parent": "UCO.StatusOutcome",
+      "children": [
+        "UCO.StatusOutcome.PhysiologicalMeasurement.PhysicalSymptomReport",
+        "UCO.StatusOutcome.PhysiologicalMeasurement.VitalSignRecord"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "measurement_type",
+          "type": "string",
+          "nullable": false,
+          "description": "量測或症狀類別 (血壓/血糖/體溫/體徵症狀)"
+        },
+        {
+          "name": "measurement_unit",
+          "type": "string",
+          "nullable": true,
+          "description": "量測單位 (mmHg, mg/dL, °C)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.StatusOutcome.PhysiologicalMeasurement.PhysicalSymptomReport",
+      "display_name": "生理體徵與症狀自述",
+      "display_name_en": "Physical Symptom Report",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "疼痛部位與程度自述、頭暈、胸悶、喘不過氣或下肢水腫。",
+      "label_description_for_retrieval": "長者自述左邊膝蓋關節痛、覺得胸口很悶喘不過氣來",
+      "parent": "UCO.StatusOutcome.PhysiologicalMeasurement",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b2",
+          "label": "感官功能與疼痛",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b210",
+          "label": "視覺功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "ICF",
+          "code": "b230",
+          "label": "聽覺功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "ICF",
+          "code": "b235",
+          "label": "前庭功能",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "b250",
+          "label": "味覺功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.5
+        },
+        {
+          "source": "ICF",
+          "code": "b255",
+          "label": "嗅覺功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.5
+        },
+        {
+          "source": "ICF",
+          "code": "b265",
+          "label": "觸覺功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "ICF",
+          "code": "b280",
+          "label": "疼痛感",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "ICF",
+          "code": "b2800",
+          "label": "全身性疼痛",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "b2801",
+          "label": "局部部位疼痛",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "b410",
+          "label": "心臟功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "ICF",
+          "code": "b440",
+          "label": "呼吸功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "ICF",
+          "code": "b6",
+          "label": "泌尿生殖機能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "ICF",
+          "code": "b610",
+          "label": "排尿過濾機能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "ICF",
+          "code": "b620",
+          "label": "排尿動作機能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#16",
+          "label": "#16 自我忽視與照顧忽視",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#17",
+          "label": "#17 聽力機能與溝通",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#17-SS-01",
+          "label": "#17 聽力機能與溝通 (簽症: 聽力減退/重聽)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#17-SS-02",
+          "label": "#17 聽力機能與溝通 (簽症: 耳鳴/耳朵異音)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#18",
+          "label": "#18 視力機能與感官",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#18-SS-01",
+          "label": "#18 視力機能與感官 (簽症: 視力模糊/老花/視力減退)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#19",
+          "label": "#19 言語表達與溝通能力",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#19-SS-01",
+          "label": "#19 言語表達與溝通能力 (簽症: 口齒不清/發音含糊 (中風後))",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#19-SS-02",
+          "label": "#19 言語表達與溝通能力 (簽症: 失語症/找字困難/表達不連貫)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#20",
+          "label": "#20 口腔衛生與假牙狀況",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#20-SS-01",
+          "label": "#20 口腔衛生與假牙狀況 (簽症: 蛀牙/缺牙影響咬合)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#20-SS-02",
+          "label": "#20 口腔衛生與假牙狀況 (簽症: 假牙不合適/鬆脫/疼痛)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#20-SS-03",
+          "label": "#20 口腔衛生與假牙狀況 (簽症: 口腔潰瘍/牙齦發炎疼痛)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#21",
+          "label": "#21 神經系統與運動協調",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#21-SS-01",
+          "label": "#21 神經系統與運動協調 (簽症: 手腳顫抖/不自主運動 (巴金森))",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#21-SS-02",
+          "label": "#21 神經系統與運動協調 (簽症: 單側肢體無力/偏癱 (中風))",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#21-SS-03",
+          "label": "#21 神經系統與運動協調 (簽症: 動作不協調/步態不穩)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#22",
+          "label": "#22 疼痛感與身體不適",
+          "relation": "skos:broadMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#22-SS-01",
+          "label": "#22 疼痛感與身體不適 (簽症: 關節痛/腰痠背痛/關節退化痛)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#22-SS-02",
+          "label": "#22 疼痛感與身體不適 (簽症: 頭痛/偏頭痛)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#22-SS-03",
+          "label": "#22 疼痛感與身體不適 (簽症: 胸痛/腹痛/消化道不適主訴)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#23",
+          "label": "#23 意識狀態與清醒度",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#23-SS-01",
+          "label": "#23 意識狀態與清醒度 (簽症: 嗜睡/精神萎靡/不快活)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#23-SS-02",
+          "label": "#23 意識狀態與清醒度 (簽症: 意識不清/回應遲鈍/暈厥)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#24",
+          "label": "#24 皮膚完整性與傷口",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#24-SS-01",
+          "label": "#24 皮膚完整性與傷口 (簽症: 壓瘡/褥瘡/皮膚壓傷)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#24-SS-02",
+          "label": "#24 皮膚完整性與傷口 (簽症: 皮膚搔癢/乾燥/紅疹)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#24-SS-03",
+          "label": "#24 皮膚完整性與傷口 (簽症: 術後傷口/撕裂傷/擦傷)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#25",
+          "label": "#25 肌肉骨骼與關節活動度",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#25-SS-01",
+          "label": "#25 肌肉骨骼與關節活動度 (簽症: 關節活動受限/晨間僵硬)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#25-SS-02",
+          "label": "#25 肌肉骨骼與關節活動度 (簽症: 肌力減退/肌少症/站立無力)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#25-SS-03",
+          "label": "#25 肌肉骨骼與關節活動度 (簽症: 脊椎駝背/關節變形)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#26",
+          "label": "#26 呼吸機能與徵候",
+          "relation": "skos:broadMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#26-SS-01",
+          "label": "#26 呼吸機能與徵候 (簽症: 呼吸急促/喘/活動後喘)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.98
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#26-SS-02",
+          "label": "#26 呼吸機能與徵候 (簽症: 咳嗽/有痰/痰液黏稠)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#26-SS-03",
+          "label": "#26 呼吸機能與徵候 (簽症: 呼吸喘鳴音/肺部囉音)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#32-SS-01",
+          "label": "#32 飲食營養與進食行為 (簽症: 食慾下降/進食量減少)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#33-SS-01",
+          "label": "#33 身體活動與日常運動 (簽症: 久坐少動/缺乏身體活動)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#33-SS-02",
+          "label": "#33 身體活動與日常運動 (簽症: 抗拒活動/不願下床走動)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#34-SS-01",
+          "label": "#34 睡眠與休息型態 (簽症: 入睡困難/失眠/躺很久睡不著)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#34-SS-02",
+          "label": "#34 睡眠與休息型態 (簽症: 夜間頻繁甦醒/起夜多)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#34-SS-03",
+          "label": "#34 睡眠與休息型態 (簽症: 白天嗜睡/日間小憩時間過長)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "schema.org",
+          "type": "MedicalCondition",
+          "label": "MedicalCondition",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        }
+      ],
+      "examples": [
+        "「這兩天變天，我的左邊膝蓋關節好痛，連站起來都很吃力…」",
+        "「我突然覺得胸口很悶、氣喘不過來，頭也有點暈眩的感覺。」"
+      ],
+      "synonyms": [
+        "感官功能與疼痛",
+        "視覺功能",
+        "聽覺功能",
+        "前庭功能",
+        "味覺功能",
+        "嗅覺功能",
+        "觸覺功能",
+        "痛"
+      ],
+      "own_properties": [
+        {
+          "name": "symptom_body_part",
+          "type": "string",
+          "nullable": true,
+          "description": "症狀部位 (左膝蓋/胸口/頭部)"
+        },
+        {
+          "name": "symptom_description",
+          "type": "string",
+          "nullable": true,
+          "description": "症狀描述 (關節疼痛/胸悶喘不過氣)"
+        },
+        {
+          "name": "pain_score_0_10",
+          "type": "integer",
+          "nullable": true,
+          "description": "疼痛量表評分 (0-10)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.StatusOutcome.PhysiologicalMeasurement.VitalSignRecord",
+      "display_name": "生理數據量測紀錄",
+      "display_name_en": "Vital Sign Measurement Record",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "血壓、血糖、脈搏、體溫或體重之客觀量測紀錄。",
+      "label_description_for_retrieval": "長者量血壓數值收縮壓140舒張壓90、測飯前血糖數值",
+      "parent": "UCO.StatusOutcome.PhysiologicalMeasurement",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b4",
+          "label": "循環與呼吸機能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.88
+        },
+        {
+          "source": "ICF",
+          "code": "b420",
+          "label": "血壓功能",
+          "relation": "skos:exactMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "b4200",
+          "label": "血壓升高",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "ICF",
+          "code": "b4201",
+          "label": "血壓降低",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#16-SS-02",
+          "label": "#16 自我忽視與照顧忽視 (簽症: 照顧者未及時提供所需協助或給藥)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "schema.org",
+          "type": "VitalSign",
+          "label": "VitalSign",
+          "relation": "skos:exactMatch",
+          "confidence": 0.98
+        }
+      ],
+      "examples": [
+        "「我剛才用壓帶量了血壓，收縮壓是 138，舒張壓是 85，心跳 72 下。」",
+        "「早上記錄飯前空腹血糖是 115 mg/dL，體溫量起來是 36.5 度。」"
+      ],
+      "synonyms": [
+        "循環與呼吸機能",
+        "血壓",
+        "收縮壓",
+        "舒張壓",
+        "頭暈",
+        "血壓升高",
+        "血壓降低"
+      ],
+      "own_properties": [
+        {
+          "name": "systolic_bp",
+          "type": "float",
+          "nullable": true,
+          "description": "收縮壓 (mmHg)"
+        },
+        {
+          "name": "diastolic_bp",
+          "type": "float",
+          "nullable": true,
+          "description": "舒張壓 (mmHg)"
+        },
+        {
+          "name": "pulse_rate",
+          "type": "float",
+          "nullable": true,
+          "description": "心跳脈搏 (次/分)"
+        },
+        {
+          "name": "blood_glucose_mg_dl",
+          "type": "float",
+          "nullable": true,
+          "description": "血糖 (mg/dL)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.StatusOutcome.SafetyIncident",
+      "display_name": "安全與意外事件",
+      "display_name_en": "Safety Incident",
+      "level": 2,
+      "is_leaf": false,
+      "definition": "軀體跌倒、走失迷路、居家電熱危害與詐騙事件。",
+      "label_description_for_retrieval": "記錄長者跌倒近跌、外出走失、居家用電燙傷與疑似受詐騙事故",
+      "parent": "UCO.StatusOutcome",
+      "children": [
+        "UCO.StatusOutcome.SafetyIncident.DomesticHazard",
+        "UCO.StatusOutcome.SafetyIncident.ElopementWandering",
+        "UCO.StatusOutcome.SafetyIncident.FraudScamIncident",
+        "UCO.StatusOutcome.SafetyIncident.PhysicalFall"
+      ],
+      "source_mappings": [],
+      "examples": [],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "incident_nature",
+          "type": "enum",
+          "nullable": true,
+          "description": "意外事件性質 (跌倒/走失/燙傷/詐騙)"
+        },
+        {
+          "name": "incident_location",
+          "type": "string",
+          "nullable": true,
+          "description": "事故發生地點"
+        },
+        {
+          "name": "injury_severity",
+          "type": "enum",
+          "nullable": true,
+          "description": "傷害嚴重程度 (無傷害/擦傷/骨折)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.StatusOutcome.SafetyIncident.DomesticHazard",
+      "display_name": "居家用電與燙傷危害",
+      "display_name_en": "Domestic Electrical & Burn Hazard",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "居家用火用電安全隱患、燙傷或意外受傷。",
+      "label_description_for_retrieval": "長者煮湯忘記關火燒焦、舀熱水被燙傷手指",
+      "parent": "UCO.StatusOutcome.SafetyIncident",
+      "children": [],
+      "source_mappings": [],
+      "examples": [
+        "「糟糕！我剛才在廚房燒開水忘記關火，壺底都燒焦冒黑煙了！」",
+        "「舀熱湯的時候手不小心抖了一下，滾水淋到右手上起了個大水泡。」"
+      ],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "hazard_type",
+          "type": "enum",
+          "nullable": true,
+          "description": "危害類型 (忘記關火燒焦/熱水燙傷)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.StatusOutcome.SafetyIncident.ElopementWandering",
+      "display_name": "走失與迷路事件",
+      "display_name_en": "Elopement & Wandering Event",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "離開居住區域走失、找不到回家路或外出迷路。",
+      "label_description_for_retrieval": "長者獨自出門後迷路找不回家的路被好心人帶到警察局",
+      "parent": "UCO.StatusOutcome.SafetyIncident",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "OmahaSystem",
+          "code": "#4",
+          "label": "#4 社區與周邊環境安全",
+          "relation": "skos:broadMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#4-SS-02",
+          "label": "#4 社區與周邊環境安全 (簽症: 周邊車流量大/交通危險)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#5",
+          "label": "#5 社區資源聯繫與運用",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#5-SS-03",
+          "label": "#5 社區資源聯繫與運用 (簽症: 就醫或使用資源之交通困難)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#6",
+          "label": "#6 社交互動與社會連結",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#6-SS-03",
+          "label": "#6 社交互動與社會連結 (簽症: 社交互動行為不當或退縮)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#9-SS-02",
+          "label": "#9 哀傷與喪親反應 (簽症: 反覆思念已故親友或過往健康狀況)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#12",
+          "label": "#12 性格特質與行為表現",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#12-SS-01",
+          "label": "#12 性格特質與行為表現 (簽症: 躁動不安/遊走行為/重複詢問)",
+          "relation": "skos:narrowMatch",
+          "confidence": 0.95
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#13",
+          "label": "#13 認知與智力功能",
+          "relation": "skos:broadMatch",
+          "confidence": 0.85
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#13-SS-01",
+          "label": "#13 認知與智力功能 (簽症: 記憶力衰退/健忘/物品放錯位置)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        }
+      ],
+      "examples": [
+        "「我早上想出門去買菜，結果走著走著就迷路了，完全找不到回家的路…」",
+        "「長者下午趁門沒鎖好獨自溜出門，在社區公園附近遊蕩被熱心鄰居發現。」"
+      ],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "wandering_location",
+          "type": "string",
+          "nullable": true,
+          "description": "走失或迷路地點"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.StatusOutcome.SafetyIncident.FraudScamIncident",
+      "display_name": "詐騙與疑似受詐事件",
+      "display_name_en": "Fraud & Scam Incident",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "接獲疑似詐騙電話、購買不實保健品或財務詐欺事故。",
+      "label_description_for_retrieval": "長者接獲假冒警察檢察官電話要匯款或被推銷買昂貴神藥",
+      "parent": "UCO.StatusOutcome.SafetyIncident",
+      "children": [],
+      "source_mappings": [],
+      "examples": [
+        "「剛才有人打電話自稱是檢察官，說我的銀行帳戶涉嫌洗錢要我把錢匯過去…」",
+        "「昨天路邊有人向我推銷一罐好幾萬塊的神藥，說吃了癱瘓都能站起來。」"
+      ],
+      "synonyms": [],
+      "own_properties": [
+        {
+          "name": "scam_type",
+          "type": "string",
+          "nullable": true,
+          "description": "詐騙態樣 (假冒檢警/保健品詐欺)"
+        }
+      ]
+    },
+    {
+      "concept_id": "UCO.StatusOutcome.SafetyIncident.PhysicalFall",
+      "display_name": "軀體跌倒與近跌事故",
+      "display_name_en": "Physical Fall & Near-Miss",
+      "level": 3,
+      "is_leaf": true,
+      "definition": "長者跌倒、絆倒或近跌 (near-miss) 事故。",
+      "label_description_for_retrieval": "長者在浴室地板濕滑跌倒屁股撞到、絆到門檻險些跌倒",
+      "parent": "UCO.StatusOutcome.SafetyIncident",
+      "children": [],
+      "source_mappings": [
+        {
+          "source": "ICF",
+          "code": "b8",
+          "label": "皮膚機能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "ICF",
+          "code": "b820",
+          "label": "皮膚修復功能",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#2-SS-01",
+          "label": "#2 居住衛生與環境清潔 (簽症: 居住區域污濁髒亂)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.75
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#2-SS-03",
+          "label": "#2 居住衛生與環境清潔 (簽症: 垃圾處置不當/囤積廢棄物)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.8
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#3",
+          "label": "#3 居住場所與結構安全",
+          "relation": "skos:broadMatch",
+          "confidence": 0.88
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#3-SS-01",
+          "label": "#3 居住場所與結構安全 (簽症: 住宅結構危害/階梯陡峭無扶手)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#3-SS-03",
+          "label": "#3 居住場所與結構安全 (簽症: 樓梯陡峭/缺乏安全扶手)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.9
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#4-SS-03",
+          "label": "#4 社區與周邊環境安全 (簽症: 環境物理性危害 (照明不足/地面不平))",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.92
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#7-SS-03",
+          "label": "#7 角色轉變與適應 (簽症: 角色負荷過重/照顧者負荷與壓力)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#10-SS-01",
+          "label": "#10 心智健康與情緒狀態 (簽症: 心情低落/憂鬱情緒/失落感)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#10-SS-02",
+          "label": "#10 心智健康與情緒狀態 (簽症: 焦慮/擔憂/緊張不安)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#10-SS-03",
+          "label": "#10 心智健康與情緒狀態 (簽症: 易怒/情緒起伏大/煩躁)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.6
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#12-SS-02",
+          "label": "#12 性格特質與行為表現 (簽症: 言語或肢體攻擊性行為)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.65
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#12-SS-03",
+          "label": "#12 性格特質與行為表現 (簽症: 抗拒照護/拒絕配合照服員或藥物)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.7
+        },
+        {
+          "source": "OmahaSystem",
+          "code": "#15-SS-01",
+          "label": "#15 不當對待與安全威脅 (簽症: 肢體傷害/不明原因瘀傷受傷)",
+          "relation": "skos:relatedMatch",
+          "confidence": 0.85
+        }
+      ],
+      "examples": [
+        "「剛才從浴室出來的時候地板太濕滑，我不小心摔了一跤屁股撞到好痛！」",
+        "「剛才在客廳差點被電線絆倒，還好及時扶住了沙發靠背才沒有倒下去。」"
+      ],
+      "synonyms": [
+        "皮膚機能",
+        "皮膚修復功能"
+      ],
+      "own_properties": [
+        {
+          "name": "fall_cause",
+          "type": "string",
+          "nullable": true,
+          "description": "跌倒原因 (地面濕滑/絆到)"
+        },
+        {
+          "name": "near_miss_flag",
+          "type": "boolean",
+          "nullable": true,
+          "description": "是否為近跌驚險事故 (near-miss)"
+        }
+      ]
+    }
+  ]
+}
