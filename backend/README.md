@@ -4,7 +4,7 @@
 
 ```
 src/
-├── handlers/     # chat / elders / summaries / events / routines / stats / summary_generator
+├── handlers/     # chat / elders / summaries / events / routines / stats / summary_generator / pre_token_generation（Cognito trigger）
 └── shared/       # auth（token 授權）、db（DynamoDB 六表）、responses（統一回應格式）
 tests/            # pytest
 ```
