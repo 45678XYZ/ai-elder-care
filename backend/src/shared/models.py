@@ -5,8 +5,20 @@
 供 API Handlers (Request/Response DTO Validation) 與 shared/db.py 共同引用。
 """
 
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from pydantic import BaseModel, Field
+
+
+# -----------------------------------------------------------------------------
+# 共用 enum 型別
+# -----------------------------------------------------------------------------
+
+# 對外的高階事件類別，契約見 docs/api.md 的 EventType。
+# 細分類節點（concept_id）由 extraction 的可抽換分類體系資產決定，不在此列舉。
+EventType = Literal["diet", "activity", "sleep", "medication", "wellbeing", "safety", "other"]
+
+# daily_summaries.sections 與 EventType 一一對應，順序即為呈現順序。
+SUMMARY_SECTION_KEYS: tuple[str, ...] = get_args(EventType)
 
 
 # -----------------------------------------------------------------------------
@@ -135,7 +147,9 @@ class EventCreate(BaseModel):
     """建立生活事件 Request Body。"""
     elder_id: str = Field(..., description="長者 ID")
     ts: str = Field(..., description="事件發生的 ISO 8601 時間戳記")
-    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] = Field(..., description="事件分類")
+    type: EventType = Field(..., description="高階事件分類")
+    concept_id: str | None = Field(default=None, description="分類體系的細分類節點；自動萃取事件必填，API 不暴露")
+    taxonomy_version: str | None = Field(default=None, description="寫入當時的分類體系版本；自動萃取事件必填")
     detail: str = Field(..., description="事件自然語言描述")
     structured_detail: dict[str, Any] | None = Field(default=None, description="JSON 結構化細節資訊")
     source: Literal["conversation", "manual"] = Field(default="conversation", description="資料來源")
@@ -174,7 +188,7 @@ class DailySummaryResponse(BaseModel):
     elder_id: str = Field(..., description="長者 ID")
     date: str = Field(..., description="日期 (YYYY-MM-DD)")
     overview: str = Field(..., description="當日總覽")
-    sections: dict[str, str | None] = Field(..., description="六大分類區塊 (diet/activity/sleep/medication/wellbeing/other)")
+    sections: dict[str, str | None] = Field(..., description="固定分類區塊，key 與 EventType 一一對應，見 SUMMARY_SECTION_KEYS")
     routines: dict[str, Any] = Field(..., description="例行公事完成統計與清單 (completed, missed, items)")
     alerts: list[str] = Field(default_factory=list, description="警訊清單")
     interaction_count: int = Field(default=0, description="當日對話輪數")
@@ -200,7 +214,7 @@ class RoutineCreate(BaseModel):
     client_request_id: str = Field(..., description="冪等識別 UUID")
     elder_id: str = Field(..., description="長者 ID")
     title: str = Field(..., description="行程標題 (如：吃血壓藥)")
-    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] = Field(default="other", description="分類")
+    type: EventType = Field(default="other", description="分類")
     schedule: RoutineSchedule = Field(..., description="排程設定")
     remind: bool = Field(default=True, description="是否發送提醒通知")
 
@@ -209,7 +223,7 @@ class RoutineUpdate(BaseModel):
     """更新/停用例行公事 Request Body (PATCH /routines/{id})。"""
     client_request_id: str = Field(..., description="冪等識別 UUID")
     title: str | None = Field(default=None, description="行程標題")
-    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] | None = Field(default=None, description="分類")
+    type: EventType | None = Field(default=None, description="分類")
     schedule: RoutineSchedule | None = Field(default=None, description="排程設定")
     remind: bool | None = Field(default=None, description="是否發送提醒")
     active: bool | None = Field(default=None, description="是否啟用")
