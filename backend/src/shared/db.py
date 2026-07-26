@@ -5,7 +5,6 @@
 - conversations: 對話紀錄
 - events: 結構化生活事件（「實際發生」的唯一紀錄，含例行公事完成）
 - daily_summaries: AI 每日摘要
-- memories: 長期記憶
 - routines: 例行公事計畫與當日動態行程計算
 
 技術重點：
@@ -19,9 +18,11 @@
 import base64
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
 import json
 import os
 from typing import Any
+import uuid
 
 import boto3
 from botocore.exceptions import ClientError
@@ -34,7 +35,6 @@ TABLE_ELDERS = os.environ.get("TABLE_ELDERS", "elders")
 TABLE_CONVERSATIONS = os.environ.get("TABLE_CONVERSATIONS", "conversations")
 TABLE_EVENTS = os.environ.get("TABLE_EVENTS", "events")
 TABLE_DAILY_SUMMARIES = os.environ.get("TABLE_DAILY_SUMMARIES", "daily_summaries")
-TABLE_MEMORIES = os.environ.get("TABLE_MEMORIES", "memories")
 TABLE_ROUTINES = os.environ.get("TABLE_ROUTINES", "routines")
 
 # 全域 Boto3 資源初始化（連線重用）
@@ -117,24 +117,48 @@ def get_elder(elder_id: str) -> dict[str, Any] | None:
 
 
 def create_elder(elder_data: dict[str, Any]) -> dict[str, Any]:
-    """新增長者資料。"""
+    """新增長者資料。自動補充 elder_id（若無）、created_at 與 updated_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_ELDERS)
+    
+    # 複製資料避免改動原始帶入字典
+    data = dict(elder_data)
+    
+    # 自動補全 elder_id (前綴 eld_)
+    if not data.get("elder_id"):
+        data["elder_id"] = f"eld_{uuid.uuid4().hex[:12]}"
+        
+    # 自動補全 ISO 8601 台灣時間戳記 (+08:00)
+    now_str = datetime.now(TZ_TAIPEI).isoformat()
+    if not data.get("created_at"):
+        data["created_at"] = now_str
+    if not data.get("updated_at"):
+        data["updated_at"] = now_str
+        
+    # 預設 List 欄位
+    for list_key in ("health_notes", "family", "caregiver_ids"):
+        if data.get(list_key) is None:
+            data[list_key] = []
+            
     try:
-        table.put_item(Item=elder_data)
-        return convert_decimals(elder_data)
+        table.put_item(Item=data)
+        return convert_decimals(data)
     except ClientError as e:
         raise DBError(f"建立長者資料失敗: {e.response['Error']['Message']}")
 
 
 def update_elder(elder_id: str, patch_data: dict[str, Any]) -> dict[str, Any]:
-    """更新長者資料（部分更新）。"""
+    """更新長者資料（部分更新）。自動刷新 updated_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_ELDERS)
+
+    # 複製 patch_data 並注入/更新 updated_at
+    data = dict(patch_data)
+    data["updated_at"] = datetime.now(TZ_TAIPEI).isoformat()
 
     # 動態建構 UpdateExpression
     update_parts = []
     expr_names = {}
     expr_values = {}
-    for k, v in patch_data.items():
+    for k, v in data.items():
         if k in ("elder_id", "created_at"):
             continue
         attr_key = f"#{k}"
@@ -182,26 +206,55 @@ def list_elders(caregiver_id: str = None) -> list[dict[str, Any]]:
 # -----------------------------------------------------------------------------
 
 def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
-    """儲存對話紀錄。"""
+    """儲存對話紀錄。自動補充 conversation_id（若無）與 created_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
+    
+    data = dict(conversation_data)
+    
+    # 自動補全 conversation_id (前綴 cnv_)
+    if not data.get("conversation_id"):
+        data["conversation_id"] = f"cnv_{uuid.uuid4().hex[:12]}"
+        
+    # 自動補全 created_at 時間戳記 (+08:00)
+    if not data.get("created_at"):
+        data["created_at"] = datetime.now(TZ_TAIPEI).isoformat()
+        
+    # 設定預設欄位
+    data.setdefault("source", "elder_initiated")
+    data.setdefault("user_status", "replied")
+    data.setdefault("system_status", "success")
+    data.setdefault("lang", "zh-TW")
+    data.setdefault("input_type", "text")
+    data.setdefault("routines_updated", False)
+
     try:
-        table.put_item(Item=conversation_data)
-        return convert_decimals(conversation_data)
+        table.put_item(Item=data)
+        return convert_decimals(data)
     except ClientError as e:
         raise DBError(f"儲存對話紀錄失敗: {e.response['Error']['Message']}")
 
 
-def get_recent_conversations(elder_id: str, limit: int = 10) -> list[dict[str, Any]]:
-    """查詢長者近期對話紀錄。"""
+def get_recent_conversations(
+    elder_id: str, limit: int = 10, next_token: str = None
+) -> tuple[list[dict[str, Any]], str | None]:
+    """分頁查詢長者近期對話紀錄（按 created_at 時間倒序）。"""
     table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
+    
+    query_kwargs: dict[str, Any] = {
+        "KeyConditionExpression": "elder_id = :eid",
+        "ExpressionAttributeValues": {":eid": elder_id},
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    if next_token:
+        query_kwargs["ExclusiveStartKey"] = decode_next_token(next_token)
+
     try:
-        resp = table.query(
-            KeyConditionExpression="elder_id = :eid",
-            ExpressionAttributeValues={":eid": elder_id},
-            ScanIndexForward=False,
-            Limit=limit,
-        )
-        return convert_decimals(resp.get("Items", []))
+        resp = table.query(**query_kwargs)
+        items = convert_decimals(resp.get("Items", []))
+        last_key = resp.get("LastEvaluatedKey")
+        new_next_token = encode_next_token(last_key) if last_key else None
+        return items, new_next_token
     except ClientError as e:
         raise DBError(f"查詢對話紀錄失敗: {e.response['Error']['Message']}")
 
@@ -211,11 +264,32 @@ def get_recent_conversations(elder_id: str, limit: int = 10) -> list[dict[str, A
 # -----------------------------------------------------------------------------
 
 def create_event(event_data: dict[str, Any]) -> dict[str, Any]:
-    """新增生活事件。"""
+    """新增生活事件。支援依據 canonical_event_key 自動計算穩定 event_id 與產生 event_time_key。"""
     table = get_dynamodb_resource().Table(TABLE_EVENTS)
+    data = dict(event_data)
+    
+    elder_id = data.get("elder_id", "")
+    canonical_key = data.get("canonical_event_key")
+    
+    if not data.get("event_id"):
+        if canonical_key:
+            stable_sig = f"{elder_id}:{canonical_key}".encode("utf-8")
+            data["event_id"] = f"evt_{hashlib.sha256(stable_sig).hexdigest()[:12]}"
+        else:
+            data["event_id"] = f"evt_{uuid.uuid4().hex[:12]}"
+            
+    ts = data.get("ts") or datetime.now(TZ_TAIPEI).isoformat()
+    data["ts"] = ts
+    data["event_time_key"] = f"{ts}#{data['event_id']}"
+    data.setdefault("revision", 1)
+    data.setdefault("schema_version", 1)
+    data.setdefault("evidence_conversation_ids", [])
+    data.setdefault("source", "conversation")
+    data.setdefault("extraction_track", "batch")
+
     try:
-        table.put_item(Item=event_data)
-        return convert_decimals(event_data)
+        table.put_item(Item=data)
+        return convert_decimals(data)
     except ClientError as e:
         raise DBError(f"建立事件紀錄失敗: {e.response['Error']['Message']}")
 
@@ -515,7 +589,6 @@ def get_daily_summaries(elder_id: str, from_date: str, to_date: str) -> list[dic
         return convert_decimals(resp.get("Items", []))
     except ClientError as e:
         raise DBError(f"查詢每日摘要失敗: {e.response['Error']['Message']}")
-
 
 # -----------------------------------------------------------------------------
 # Memories 表操作

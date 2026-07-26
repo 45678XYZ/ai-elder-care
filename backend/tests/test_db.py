@@ -49,11 +49,43 @@ def test_get_and_create_elder(mock_get_resource):
     assert elder["elder_id"] == "eld_001"
     assert elder["birth_year"] == 1948
 
-    # Test create_elder
-    data = {"elder_id": "eld_002", "name": "王大同"}
+    # Test create_elder (explicit ID)
+    data = {"elder_id": "eld_002", "name": "王大同", "address_region": "台北市大安區"}
     created = db.create_elder(data)
     assert created["name"] == "王大同"
-    mock_table.put_item.assert_called_once_with(Item=data)
+    assert created["elder_id"] == "eld_002"
+    assert created["address_region"] == "台北市大安區"
+    assert "created_at" in created
+    assert "updated_at" in created
+
+    # Test create_elder (auto-generated ID with eld_ prefix)
+    auto_data = {"name": "李小花"}
+    auto_created = db.create_elder(auto_data)
+    assert auto_created["name"] == "李小花"
+    assert auto_created["elder_id"].startswith("eld_")
+    assert "created_at" in auto_created
+    assert "updated_at" in auto_created
+
+
+@patch("src.shared.db.get_dynamodb_resource")
+def test_update_elder(mock_get_resource):
+    """測試 Elders 表之 PATCH 更新與 updated_at 自動刷新。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+
+    mock_table.update_item.return_value = {
+        "Attributes": {
+            "elder_id": "eld_001",
+            "name": "陳阿蘭",
+            "nickname": "阿蘭姊",
+            "updated_at": "2026-07-24T15:30:00+08:00",
+        }
+    }
+
+    updated = db.update_elder("eld_001", {"nickname": "阿蘭姊"})
+    assert updated["nickname"] == "阿蘭姊"
+    assert "updated_at" in updated
+    mock_table.update_item.assert_called_once()
 
 
 @patch("src.shared.db.get_dynamodb_resource")
@@ -118,9 +150,52 @@ def test_get_daily_routines_status_calculation(mock_get_resource):
     assert item1["status"] == "done"
     assert item1["completed_by"] == "conversation"
 
-    # rtn_002 應為 pending (19:00 > 12:00)
+    # rtn_002 應為 pending
     item2 = next(i for i in items if i["routine_id"] == "rtn_002")
     assert item2["status"] == "pending"
+
+
+@patch("src.shared.db.get_dynamodb_resource")
+def test_save_and_get_recent_conversations(mock_get_resource):
+    """測試 Conversations 表之儲存、自動帶入 cnv_ ID/時間戳記與分頁查詢。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+
+    # 1. 測試 save_conversation 自動帶入 ID 與 created_at
+    data = {
+        "elder_id": "eld_001",
+        "source": "system_routine_inquiry",
+        "routine_id": "rtn_001",
+        "ai_prompt_text": "吃藥時間到囉！",
+        "elder_transcript": "我吃過了",
+        "ai_respond_text": "好棒！幫你記下來了。",
+    }
+    saved = db.save_conversation(data)
+    assert saved["elder_id"] == "eld_001"
+    assert saved["conversation_id"].startswith("cnv_")
+    assert "created_at" in saved
+    assert saved["user_status"] == "replied"
+    assert saved["system_status"] == "success"
+    mock_table.put_item.assert_called_once()
+
+    # 2. 測試 get_recent_conversations (分頁 next_token)
+    mock_table.query.return_value = {
+        "Items": [
+            {
+                "conversation_id": "cnv_001",
+                "elder_id": "eld_001",
+                "created_at": "2026-07-24T17:00:00+08:00",
+                "elder_transcript": "今天心情好",
+            }
+        ],
+        "LastEvaluatedKey": {"elder_id": "eld_001", "created_at": "2026-07-24T17:00:00+08:00"},
+    }
+
+    items, next_token = db.get_recent_conversations("eld_001", limit=1)
+    assert len(items) == 1
+    assert items[0]["conversation_id"] == "cnv_001"
+    assert next_token is not None
+    mock_table.query.assert_called_once()
 
 
 @patch("src.shared.db.get_dynamodb_client")
