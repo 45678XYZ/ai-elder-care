@@ -5,9 +5,12 @@
 ```
 src/
 ├── handlers/     # chat / elders / summaries / events / routines / stats / summary_generator / pre_token_generation（Cognito trigger）
-└── shared/       # auth（token 授權）、db（DynamoDB 六表）、responses（統一回應格式）
+├── extraction/   # 生活記錄（Module B）萃取 pipeline：分類體系、分塊、分類、萃取、canonical identity、去重
+└── shared/       # auth（token 授權）、db（DynamoDB 六表）、responses（統一回應格式）、bedrock（模型呼叫）
 tests/            # pytest
 ```
+
+`extraction/` 只由 batch 相關 Lambda 使用，不進 realtime `/chat` 路徑；設計與移植步驟見 [docs/feature_events-extraction.md](../docs/feature_events-extraction.md)。
 
 ## 開發
 
