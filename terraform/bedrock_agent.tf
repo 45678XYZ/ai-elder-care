@@ -203,3 +203,13 @@ resource "aws_lambda_permission" "allow_bedrock_to_invoke_tools" {
 
 # 取得目前 AWS 帳號 ID 以利字串拼接
 data "aws_caller_identity" "current" {}
+
+# 6. 條件式將 Bedrock Knowledge Base (衛教知識庫) 綁定至 Agent
+resource "aws_bedrockagent_agent_knowledge_base_association" "health_kb" {
+  count                = var.health_knowledge_base_id != "" ? 1 : 0
+  agent_id             = aws_bedrockagent_agent.elder_companion_agent.id
+  agent_version        = "DRAFT"
+  description          = "長者衛教與健康照護知識庫，包含血壓與慢性病照護、口腔清潔與用藥規範注意事項"
+  knowledge_base_id    = var.health_knowledge_base_id
+  knowledge_base_state = "ENABLED"
+}
