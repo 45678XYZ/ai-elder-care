@@ -32,6 +32,8 @@ dependencies:
   go_router: ^14.2.0
   # 照護者統計圖表（折線／長條／Waffle）
   fl_chart: ^0.68.0
+  # 農曆換算（今日畫面的農民曆牌面）。輸出為簡體，一律經 lunar_date.dart 轉繁再顯示
+  lunar: ^1.7.8
   # TODO: Cognito 登入 SDK（amplify_flutter + amplify_auth_cognito）
   # TODO: 本地通知（flutter_local_notifications，routines 提醒用）
 

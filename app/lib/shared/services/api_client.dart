@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
@@ -8,7 +8,7 @@ import '../models/chat_reply.dart';
 import '../models/daily_summary.dart';
 import '../models/elder.dart';
 import '../models/life_event.dart';
-import '../models/page.dart';
+import '../models/api_page.dart';
 import '../models/routine.dart';
 import '../models/session_close.dart';
 import '../models/stats.dart';
@@ -126,11 +126,11 @@ class ApiClient {
 
   /// `GET /elders` — 長者列表（一頁）。
   ///
-  /// 續頁把上一頁的 [Page.nextToken] 原樣帶進 [nextToken]；[getAllElders] 是自動翻完的版本。
-  Future<Page<Elder>> getElders({int? limit, String? nextToken}) async {
+  /// 續頁把上一頁的 [ApiPage.nextToken] 原樣帶進 [nextToken]；[getAllElders] 是自動翻完的版本。
+  Future<ApiPage<Elder>> getElders({int? limit, String? nextToken}) async {
     final json = await _request('GET', '/elders',
         query: _pageQuery(limit: limit, nextToken: nextToken));
-    return Page.fromJson(json, Elder.fromJson);
+    return ApiPage.fromJson(json, Elder.fromJson);
   }
 
   /// 翻完所有頁的長者列表。照護者綁定的長者數量有限，一次載齊比讓 UI 處理分頁單純。
@@ -161,7 +161,7 @@ class ApiClient {
   ///
   /// 回傳的摘要可能是 partial（見 [DailySummary.isPartial]）——當日仍有對話未整理完，
   /// UI 要據此提示，不可當成當日全貌。
-  Future<Page<DailySummary>> getSummaries({
+  Future<ApiPage<DailySummary>> getSummaries({
     required String elderId,
     String? from,
     String? to,
@@ -174,7 +174,7 @@ class ApiClient {
       if (to != null) 'to': to,
       ..._pageQuery(limit: limit, nextToken: nextToken),
     });
-    return Page.fromJson(json, DailySummary.fromJson);
+    return ApiPage.fromJson(json, DailySummary.fromJson);
   }
 
   /// `POST /summaries/generate` — 手動觸發生成（Demo 用）。
@@ -193,11 +193,11 @@ class ApiClient {
 
   /// `GET /events` — 生活事件（一頁）。[from]/[to] 為日期（預設今天），[type] 選填過濾。
   ///
-  /// 按 `ts` 最新優先、跨頁順序穩定；時間軸捲到底時把 [Page.nextToken] 帶進 [nextToken] 續拉。
+  /// 按 `ts` 最新優先、跨頁順序穩定；時間軸捲到底時把 [ApiPage.nextToken] 帶進 [nextToken] 續拉。
   ///
   /// 注意可見時機（api.md）：例行公事完成與高風險事件在 `/chat` 回應前就查得到，
   /// **一般生活事件要等 session 關閉且批次整理完成**才會出現。
-  Future<Page<LifeEvent>> getEvents({
+  Future<ApiPage<LifeEvent>> getEvents({
     required String elderId,
     String? from,
     String? to,
@@ -212,7 +212,7 @@ class ApiClient {
       if (type != null) 'type': type,
       ..._pageQuery(limit: limit, nextToken: nextToken),
     });
-    return Page.fromJson(json, LifeEvent.fromJson);
+    return ApiPage.fromJson(json, LifeEvent.fromJson);
   }
 
   // ---- 例行公事 ----
@@ -227,7 +227,7 @@ class ApiClient {
           'elder_id': elderId,
           ..._pageQuery(nextToken: token),
         });
-        return Page.fromJson(json, Routine.fromJson);
+        return ApiPage.fromJson(json, Routine.fromJson);
       });
 
   /// `GET /routines?elder_id=&date=` — 當日行程視圖（展開該日 occurrence 與完成狀態）。
@@ -369,7 +369,7 @@ class ApiClient {
   /// 只用於「總量本來就有限、UI 需要完整資料」的列表（如長者清單、排通知用的行程定義）；
   /// 事件時間軸這種會長大的資料請讓 UI 自己一頁一頁拉。
   Future<List<T>> _drain<T>(
-    Future<Page<T>> Function(String? nextToken) fetchPage,
+    Future<ApiPage<T>> Function(String? nextToken) fetchPage,
   ) async {
     final all = <T>[];
     String? token;

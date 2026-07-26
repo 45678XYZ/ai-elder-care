@@ -60,6 +60,13 @@ class _ChatScreenState extends State<ChatScreen>
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
     _initSpeech();
+    _loadElder();
+  }
+
+  /// 載入長輩資料後重畫，問候語才叫得出名字而不是「阿公／阿嬤」。
+  Future<void> _loadElder() async {
+    await AppSession.instance.ensureEldersLoaded();
+    if (mounted) setState(() {});
   }
 
   @override

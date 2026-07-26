@@ -175,7 +175,7 @@ abstract final class AppTypography {
       fontSize: size, fontWeight: w, height: 1.55, color: AppColors.ink);
 
   static final textTheme = TextTheme(
-    // 農民曆巨大日期（§7.2）— 行高 .78
+    // 大數字（麥克風狀態等）— 行高 .78
     displayLarge: GoogleFonts.notoSerifTc(
         fontSize: 66,
         fontWeight: FontWeight.w900,
@@ -198,6 +198,48 @@ abstract final class AppTypography {
     labelMedium: _sans(14, FontWeight.w700),
     labelSmall: _sans(13, FontWeight.w700),
   );
+}
+
+/// 農民曆牌面專用字級（來自設計 v3 原檔）。
+///
+/// 牌面是單一用途的視覺單元，六個元素的字級是一整組互相依賴的比例——
+/// 拆進一般 textTheme 級距會失去這層關係，也會讓 66/200 這種只服務牌面的
+/// 級距污染其他畫面。集中在此，對應 MASTER.md 的牌面段落。
+///
+/// 顏色一律 [AppColors.accentText]（牌面全朱紅單色，靠字級與位置分層次）。
+abstract final class AlmanacTypography {
+  static TextStyle _serif(double size, FontWeight w,
+          {double? height, double? letterSpacing}) =>
+      GoogleFonts.notoSerifTc(
+        fontSize: size,
+        fontWeight: w,
+        height: height,
+        letterSpacing: letterSpacing,
+        color: AppColors.accentText,
+      );
+
+  /// 國曆年「2026」
+  static TextStyle get year => _serif(28, FontWeight.w900);
+
+  /// 干支「歲次丙午年」
+  static TextStyle get ganZhi => _serif(24, FontWeight.w900);
+
+  /// 月份數字「7」
+  static TextStyle get monthNumber => _serif(40, FontWeight.w900, height: 1.0);
+
+  /// 月份的「月」字
+  static TextStyle get monthLabel => _serif(24, FontWeight.w900, height: 1.0);
+
+  /// 直排農曆。字距 8 在直排是**字與字的垂直間隔**，由排版加 gap 實作，不是 letterSpacing。
+  static TextStyle get lunar => _serif(30, FontWeight.w900, height: 1.0);
+  static const double lunarGap = 8;
+
+  /// 大日期「19」
+  static TextStyle get day => _serif(200, FontWeight.w900, height: 0.72);
+
+  /// 星期「星期日」——靠字距撐開
+  static TextStyle get weekday =>
+      _serif(42, FontWeight.w900, letterSpacing: 16);
 }
 
 /// §10 強制淺色，不提供深色模式。

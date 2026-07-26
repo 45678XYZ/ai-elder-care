@@ -105,8 +105,8 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
                 const SizedBox(height: AppSpacing.xl),
 
-                // 語言單選（輸入方式）
-                Text('長輩使用的語言', style: text.labelLarge),
+                // 語言單選。只決定語音路徑（ASR／TTS），不是介面語言。
+                Text('長輩說話的語言', style: text.labelLarge),
                 const SizedBox(height: AppSpacing.sm),
                 _LangCard(
                   title: '華語',
@@ -124,7 +124,8 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
                 const SizedBox(height: AppSpacing.md),
                 Text(
-                  '長者畫面只會出現這一種語言，不顯示切換按鈕；日後可在照護者 › 管理 › 長輩偏好調整。',
+                  '這只影響長輩跟 AI 說話與聽回覆時使用的語言；App 畫面文字一律是華語。'
+                  '長者端不顯示切換按鈕，日後要改請到「管理」頁。',
                   style:
                       text.bodySmall?.copyWith(color: AppColors.inkSecondary),
                 ),
