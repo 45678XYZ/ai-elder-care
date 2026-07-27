@@ -25,6 +25,31 @@ class LabelHit(BaseModel):
 
 
 @dataclass(frozen=True)
+class CandidateConcept:
+    """檢索出的候選細分類節點，供分類器組 prompt 與收斂 enum。"""
+
+    concept_id: str
+    display_name: str
+    definition: str
+    retrieval_description: str
+    synonyms: tuple[str, ...] = ()
+    similarity: float = 0.0
+
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    """分類器輸出。
+
+    `rationale` 只用於觀測與除錯，不落地到 events（決策 D：不複製逐字稿、PII 最小化）。
+    """
+
+    chunk_id: str
+    hits: tuple[LabelHit, ...]
+    rationale: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ComposedSchema:
     """動態 schema 組裝結果。
 
