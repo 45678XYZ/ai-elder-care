@@ -1,5 +1,9 @@
 # DynamoDB 五張表（依據 docs/framework.md 規格定義）：
 #   elders / conversations / events / daily_summaries / routines
+#
+# 註：aws provider 6.x 會對 hash_key／range_key 發出「請改用 key_schema」的 deprecation
+# 警告，但 6.56 尚未實作 key_schema（實測 `Unsupported argument`），因此暫時維持現寫法。
+# provider 提供 key_schema 後再遷移；屆時要注意 key 變更會觸發表重建，需先確認遷移路徑。
 
 # 1. elders 表
 resource "aws_dynamodb_table" "elders" {
