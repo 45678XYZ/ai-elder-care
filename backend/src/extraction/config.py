@@ -14,6 +14,7 @@ import os
 # 資產目錄預設隨部署包一起發佈，因此以本檔案位置推導而非工作目錄
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 TAXONOMY_ASSETS_DIR = ASSETS_DIR / "taxonomy"
+RETRIEVAL_ASSETS_DIR = ASSETS_DIR / "retrieval"
 SEGMENTER_ASSETS_DIR = ASSETS_DIR / "segmenter"
 
 # 分塊策略；llm_prompt 為預設（品質最好），encoder 系列供離線與降級使用
@@ -64,13 +65,16 @@ class ExtractionConfig:
 
     embedding_model_id: str = "amazon.titan-embed-text-v2:0"
     embedding_dim: int = 1024
+    # index 維度在建立時固定，因此名稱帶模型與維度；換模型是新建索引並存而非改舊的
     concept_vector_index: str = "uco-concepts-titan-v2-1024"
+    concept_vector_bucket: str = ""
 
     # 寫入 session／turn 的版本戳記，供重跑與稽核比對
     chunk_planner_version: str = "chunk-planner-1"
     batch_extractor_version: str = "batch-extractor-1"
 
     taxonomy_assets_dir: Path = field(default=TAXONOMY_ASSETS_DIR)
+    retrieval_assets_dir: Path = field(default=RETRIEVAL_ASSETS_DIR)
     segmenter_assets_dir: Path = field(default=SEGMENTER_ASSETS_DIR)
 
     @classmethod
@@ -86,6 +90,7 @@ class ExtractionConfig:
             embedding_model_id=_env_str("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0"),
             embedding_dim=_env_int("EMBEDDING_DIM", 1024),
             concept_vector_index=_env_str("CONCEPT_VECTOR_INDEX", "uco-concepts-titan-v2-1024"),
+            concept_vector_bucket=_env_str("CONCEPT_VECTOR_BUCKET", ""),
             chunk_planner_version=_env_str("CHUNK_PLANNER_VERSION", "chunk-planner-1"),
             batch_extractor_version=_env_str("BATCH_EXTRACTOR_VERSION", "batch-extractor-1"),
         )
