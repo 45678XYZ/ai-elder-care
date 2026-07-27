@@ -93,7 +93,11 @@ locals {
     TABLE_ROUTINES        = aws_dynamodb_table.routines.name
     TABLE_DAILY_SUMMARIES = aws_dynamodb_table.daily_summaries.name
 
-    BEDROCK_MODEL_ID      = var.bedrock_model_id
+    BEDROCK_MODEL_ID            = var.bedrock_model_id
+    BEDROCK_CLASSIFIER_MODEL_ID = var.bedrock_classifier_model_id
+    BEDROCK_EXTRACTOR_MODEL_ID  = var.bedrock_extractor_model_id
+    BEDROCK_CHUNKER_MODEL_ID    = var.bedrock_chunker_model_id
+
     EMBEDDING_MODEL_ID    = var.embedding_model_id
     EMBEDDING_DIM         = tostring(var.embedding_dim)
     CONCEPT_VECTOR_BUCKET = var.concept_vector_bucket

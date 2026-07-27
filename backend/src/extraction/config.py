@@ -63,6 +63,15 @@ class ExtractionConfig:
     # 候選細分類節點數；hackathon 消融實驗以 14 為最佳
     rac_top_k: int = 14
 
+    # 對話模型；空字串代表沿用 shared.bedrock 的預設（目前是 Claude Opus 4.6 global profile）
+    model_id: str = ""
+
+    # 分階段覆寫：分類與分塊的 schema 固定、輸出短，可以換較便宜的模型；
+    # 萃取是品質瓶頸，預設沿用主模型。空字串代表 fallback 到 `model_id`。
+    classifier_model_id: str = ""
+    extractor_model_id: str = ""
+    chunker_model_id: str = ""
+
     embedding_model_id: str = "amazon.titan-embed-text-v2:0"
     embedding_dim: int = 1024
     # index 維度在建立時固定，因此名稱帶模型與維度；換模型是新建索引並存而非改舊的
@@ -77,6 +86,18 @@ class ExtractionConfig:
     retrieval_assets_dir: Path = field(default=RETRIEVAL_ASSETS_DIR)
     segmenter_assets_dir: Path = field(default=SEGMENTER_ASSETS_DIR)
 
+    def model_for(self, stage: str) -> str | None:
+        """取某個階段要用的模型；回 None 代表交給 `shared.bedrock` 的預設。
+
+        階段：`classifier`、`extractor`、`chunker`。未特別指定時沿用 `model_id`。
+        """
+        specific = {
+            "classifier": self.classifier_model_id,
+            "extractor": self.extractor_model_id,
+            "chunker": self.chunker_model_id,
+        }.get(stage, "")
+        return specific or self.model_id or None
+
     @classmethod
     def from_env(cls) -> "ExtractionConfig":
         """由環境變數建立設定。"""
@@ -87,6 +108,10 @@ class ExtractionConfig:
             extraction_mode=_env_str("EXTRACTION_MODE", EXTRACTION_PROMPT_GUIDED),
             disaggregation_mode=_env_str("DISAGGREGATION_MODE", DISAGGREGATION_SINGLE_PASS),
             rac_top_k=_env_int("RAC_TOP_K", 14),
+            model_id=_env_str("BEDROCK_MODEL_ID", ""),
+            classifier_model_id=_env_str("BEDROCK_CLASSIFIER_MODEL_ID", ""),
+            extractor_model_id=_env_str("BEDROCK_EXTRACTOR_MODEL_ID", ""),
+            chunker_model_id=_env_str("BEDROCK_CHUNKER_MODEL_ID", ""),
             embedding_model_id=_env_str("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0"),
             embedding_dim=_env_int("EMBEDDING_DIM", 1024),
             concept_vector_index=_env_str("CONCEPT_VECTOR_INDEX", "uco-concepts-titan-v2-1024"),

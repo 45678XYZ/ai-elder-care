@@ -27,10 +27,14 @@ from botocore.exceptions import ClientError, ParamValidationError
 
 logger = logging.getLogger(__name__)
 
-# 對話模型；Converse API 的 modelId，可為 inference profile ARN
-BEDROCK_MODEL_ID = os.environ.get(
-    "BEDROCK_MODEL_ID", "apac.anthropic.claude-sonnet-4-5-20250929-v1:0"
-)
+# 對話模型的 modelId。預設用 Anthropic 目前在 Bedrock 上的旗艦模型，並走 global
+# cross-Region inference profile（`global.` 前綴）：台灣沒有 Bedrock 區域，global CRIS
+# 會把請求路由到可服務的區域，可用性與吞吐都比綁單一區域好。
+#
+# 想固定區域時把前綴換掉即可，例如 `us.anthropic.claude-opus-4-6-v1:0`；
+# 想省成本時換 Sonnet／Haiku。一律由環境變數決定，程式不寫死。
+DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-6-v1:0"
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID)
 
 # 呼叫層的重試次數（含首次）；boto3 內建重試只處理連線層，模型層的節流另外算
 MAX_ATTEMPTS = int(os.environ.get("BEDROCK_MAX_ATTEMPTS", "4"))

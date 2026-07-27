@@ -475,7 +475,9 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 | `CHUNKER_TYPE` | 分塊策略 |
 | `EXTRACTION_MODE`、`DISAGGREGATION_MODE` | 萃取的 schema 約束與分裂策略 |
 | `RAC_TOP_K` | 候選細分類節點數 |
-| `EMBEDDING_MODEL_ID`、`EMBEDDING_DIM`、`CONCEPT_VECTOR_INDEX` | embedding 供應者、維度與概念向量索引 |
+| `BEDROCK_MODEL_ID` | 對話模型（Converse modelId 或 inference profile）；預設為 Anthropic 在 Bedrock 的旗艦模型加 global cross-Region inference profile |
+| `BEDROCK_CLASSIFIER_MODEL_ID`、`BEDROCK_EXTRACTOR_MODEL_ID`、`BEDROCK_CHUNKER_MODEL_ID` | 分階段覆寫；留空沿用主模型。分類與分塊的 schema 固定、輸出短，可換較便宜的模型；萃取是品質瓶頸不建議降級 |
+| `EMBEDDING_MODEL_ID`、`EMBEDDING_DIM`、`CONCEPT_VECTOR_INDEX`、`CONCEPT_VECTOR_BUCKET` | embedding 供應者、維度與概念向量索引 |
 | `CHUNK_PLANNER_VERSION`、`BATCH_EXTRACTOR_VERSION` | 寫入 session／turn 的版本戳記 |
 
 ## Repo 結構

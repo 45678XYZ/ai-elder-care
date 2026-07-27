@@ -125,6 +125,7 @@ class ExtractionPipeline:
             embedder=self.embedder,
             client=self.client,
             segmenter=self.segmenter,
+            model_id=self.config.model_for("chunker"),
         )
         return plan_chunks(
             session_id,
@@ -154,7 +155,11 @@ class ExtractionPipeline:
 
         candidates = self.retriever.retrieve(transcript, self.config.rac_top_k)
         classification = classify_chunk(
-            chunk.chunk_id, transcript, candidates, model_id=None, client=self.client
+            chunk.chunk_id,
+            transcript,
+            candidates,
+            model_id=self.config.model_for("classifier"),
+            client=self.client,
         )
         hits = prune_label_hits(classification.hits, self.taxonomy)
         if not hits:
@@ -175,6 +180,7 @@ class ExtractionPipeline:
             predicate_candidates=self.lexicon.candidates_for_prompt(composed.concept_ids),
             elder=elder,
             extraction_mode=self.config.extraction_mode,
+            model_id=self.config.model_for("extractor"),
             client=self.client,
         )
 

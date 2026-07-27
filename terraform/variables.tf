@@ -13,9 +13,32 @@ variable "aws_region" {
 # --- 生活記錄事件萃取（Module B）---
 
 variable "bedrock_model_id" {
-  description = "萃取與分類使用的 Bedrock 對話模型（Converse modelId 或 inference profile）"
+  description = <<-EOT
+    萃取 pipeline 的主對話模型（Converse modelId 或 inference profile）。
+    預設走 Anthropic 在 Bedrock 的旗艦模型 + global cross-Region inference profile：
+    台灣沒有 Bedrock 區域，global CRIS 的可用性與吞吐優於綁單一區域。
+    要固定區域改成 us./apac. 前綴；要省成本改 Sonnet／Haiku。
+  EOT
   type        = string
-  default     = "apac.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  default     = "global.anthropic.claude-opus-4-6-v1:0"
+}
+
+variable "bedrock_classifier_model_id" {
+  description = "RAC 分類階段的模型；留空沿用 bedrock_model_id。schema 固定、輸出短，可換便宜模型"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_extractor_model_id" {
+  description = "single-pass 萃取階段的模型；留空沿用 bedrock_model_id。品質瓶頸在這一段，不建議降級"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_chunker_model_id" {
+  description = "llm_prompt 分塊模式的模型；留空沿用 bedrock_model_id"
+  type        = string
+  default     = ""
 }
 
 variable "embedding_model_id" {
