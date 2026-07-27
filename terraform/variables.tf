@@ -106,3 +106,15 @@ variable "session_sweep_minutes" {
   type        = number
   default     = 5
 }
+
+variable "api_throttle_rate_limit" {
+  description = "API Gateway stage 的每秒請求上限（防呆與成本上限，非效能調校）"
+  type        = number
+  default     = 50
+}
+
+variable "api_throttle_burst_limit" {
+  description = "API Gateway stage 的突發請求上限"
+  type        = number
+  default     = 100
+}

@@ -291,3 +291,24 @@ resource "aws_lambda_event_source_mapping" "dlq_reconciler" {
   function_name    = aws_lambda_function.dlq_reconciler.arn
   batch_size       = 10
 }
+
+# 照護者端資料 API：目前只有 GET /events 實作完成（見 backend/src/handlers/events.py）。
+# 其餘 handler（chat/elders/summaries/routines/stats）由各模組補上自己的 Lambda 與路由，
+# 共用同一個部署包與同一組資料表環境變數。
+resource "aws_lambda_function" "api_events" {
+  function_name = "${var.project_name}-api-events"
+  role          = aws_iam_role.extraction.arn
+  handler       = "src.handlers.events.handler"
+  runtime       = "python3.11"
+
+  filename         = data.archive_file.backend.output_path
+  source_code_hash = data.archive_file.backend.output_base64sha256
+
+  # 只做一次 GSI Query 與投影，不呼叫模型
+  timeout     = 15
+  memory_size = 512
+
+  environment {
+    variables = local.extraction_env
+  }
+}
