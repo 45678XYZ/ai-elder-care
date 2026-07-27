@@ -399,9 +399,10 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 | `pending_session_count` | Number | 是 | 生成時尚可能缺少 batch materialization 的相關 sessions 數 |
 | `input_through_at` | String | 是 | 本摘要承諾納入來源資料的時間上限 |
 | `generated_at` | String | 是 | 生成完成時間 |
+| `completeness_rank` | Number | 是 | `complete=1`、`partial=0`；覆寫規則需要可比較的完整度 |
 | `generator_version`, `schema_version` | String/Number | 是 | pipeline/schema 版本 |
 
-`input_through_at`、`generator_version`、`schema_version` 是後端內部欄位；API 在既有摘要欄位之外公開新增 `data_status` 與 `pending_session_count`。
+`input_through_at`、`completeness_rank`、`generator_version`、`schema_version` 是後端內部欄位；API 在既有摘要欄位之外公開新增 `data_status` 與 `pending_session_count`。`completeness_rank` 存在的唯一理由是讓「同一 cutoff 下 `complete` 優先於 `partial`」成為條件式寫入可比較的條件，而不是讀後判斷再寫；並行的排程與手動生成因此不會互相覆蓋。
 
 - 生成前必須檢查摘要日期內有 turn 的 session：`active`、`closing`，或 `closed` 但 `batch_status=pending|processing|failed` 都計入 `pending_session_count`。只有 `pending_session_count=0`，且所有相關 closed session 的 batch 均為 `completed`，`data_status` 才能是 `complete`；否則為 `partial`。
 - `routines.items` 每個 `routine_id + date` 最多一項，固定為 `{routine_id,title,status}`。每筆 occurrence 的 `occurrence_cutoff=min(input_through_at, routine_date 的台灣日界結束 23:59:59.999+08:00)`；canonical completion event 已存在時，`status=done`，`title` 優先取 event 所記 `routine_version` 的不可變定義，完成資料取該 event，不受 cutoff 後或同日後續版本影響；未完成時才以 `occurrence_cutoff` 前最新有效版本衍生唯一 occurrence。`routines.completed` 計算 `status=done`，`routines.missed` 計算 `status=missed`；pending 不納入兩者，摘要不回寫 routine 狀態。
@@ -482,6 +483,10 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 | `METRICS_NAMESPACE`、`METRICS_ENABLED` | EMF 指標的 namespace 與開關；指標寫 stdout 由 CloudWatch Logs 解析，不需額外 IAM |
 | `BATCH_LEASE_SECONDS`、`SESSION_IDLE_MINUTES`、`SESSION_SWEEP_LIMIT` | batch lease 長度、idle close 門檻與單次 sweep 上限 |
 | `BATCH_ALERT_TOPIC_ARN` | batch 收斂為 `failed` 時的告警 topic |
+| `SUMMARY_GENERATOR_VERSION` | 寫入 `daily_summaries.generator_version` 的版本戳記 |
+| `BEDROCK_SUMMARY_MODEL_ID` | 摘要階段模型覆寫；留空沿用主模型 |
+| `SUMMARY_ALERT_LOOKBACK_DAYS`、`SUMMARY_MAX_EVENTS` | alerts 的跨日觀察窗與進 prompt 的事件數上限 |
+| `SUMMARY_WAIT_MINUTES`、`SUMMARY_BACKFILL_DAYS`、`SUMMARY_SWEEP_LIMIT` | partial 重算的等待窗口、backfill 掃描天數與單次 sweep 長者數上限 |
 
 ## Repo 結構
 
