@@ -109,6 +109,10 @@ locals {
     RAC_TOP_K          = tostring(var.rac_top_k)
 
     BATCH_QUEUE_URL = aws_sqs_queue.batch.id
+
+    # 指標走 EMF（寫 stdout 由 CloudWatch Logs 解析），因此不需要額外的 IAM 權限
+    METRICS_NAMESPACE = var.metrics_namespace
+    METRICS_ENABLED   = "true"
   }
 }
 

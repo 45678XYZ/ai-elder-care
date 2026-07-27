@@ -479,6 +479,9 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 | `BEDROCK_CLASSIFIER_MODEL_ID`、`BEDROCK_EXTRACTOR_MODEL_ID`、`BEDROCK_CHUNKER_MODEL_ID` | 分階段覆寫；留空沿用主模型。分類與分塊的 schema 固定、輸出短，可換較便宜的模型；萃取是品質瓶頸不建議降級 |
 | `EMBEDDING_MODEL_ID`、`EMBEDDING_DIM`、`CONCEPT_VECTOR_INDEX`、`CONCEPT_VECTOR_BUCKET` | embedding 供應者、維度與概念向量索引 |
 | `CHUNK_PLANNER_VERSION`、`BATCH_EXTRACTOR_VERSION` | 寫入 session／turn 的版本戳記 |
+| `METRICS_NAMESPACE`、`METRICS_ENABLED` | EMF 指標的 namespace 與開關；指標寫 stdout 由 CloudWatch Logs 解析，不需額外 IAM |
+| `BATCH_LEASE_SECONDS`、`SESSION_IDLE_MINUTES`、`SESSION_SWEEP_LIMIT` | batch lease 長度、idle close 門檻與單次 sweep 上限 |
+| `BATCH_ALERT_TOPIC_ARN` | batch 收斂為 `failed` 時的告警 topic |
 
 ## Repo 結構
 

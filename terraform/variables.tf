@@ -118,3 +118,9 @@ variable "api_throttle_burst_limit" {
   type        = number
   default     = 100
 }
+
+variable "metrics_namespace" {
+  description = "EMF 指標的 CloudWatch namespace"
+  type        = string
+  default     = "AiElderCare/Extraction"
+}
