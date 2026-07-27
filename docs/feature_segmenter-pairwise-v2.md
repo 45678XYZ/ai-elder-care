@@ -4,8 +4,13 @@
 本專案只放**執行期推論**與**artifact 契約**。這份文件是兩邊的接合說明與完整操作指示。
 
 - 執行期推論：[`backend/src/extraction/segmenter.py`](../backend/src/extraction/segmenter.py)
-- 離線工作流：`aws-hackathon/segmenter_v2/` 與 `aws-hackathon/scripts/segmenter_v2_*.py`
+- 離線工作流：[`backend/training/segmenter_v2/`](../backend/training/segmenter_v2/) 與 `backend/scripts/segmenter_v2_*.py`
 - 移植決策脈絡：[feature_events-extraction.md](feature_events-extraction.md) §6、§7
+
+工作流住在本 repo 的 `backend/training/`，不隨 Lambda 部署包出貨（`pyproject.toml` 的
+`packages.find` 只收 `src*`），訓練依賴走 `pip install -e ".[training]"`。第三方語料
+（Def-DTS 的 TIAGE／DialSeg711、SeniorTalk 衍生語料）**不複製進本 repo**，路徑由
+`training/segmenter_v2/paths.py` 決定，可用環境變數覆寫。
 
 ## 1. 為什麼不是直接沿用舊模型
 
@@ -24,10 +29,15 @@
 ## 2. 契約：feature spec 與 artifact 格式
 
 特徵定義只有一份實作，在 `backend/src/extraction/segmenter.py` 的 `FEATURE_SPEC` 與
-`extract_features()`。離線工作流透過 `segmenter_v2/contract.py` **匯入**這份實作（把
-`ai-elder-care/backend` 推到 `sys.path` 最前面），而不是複製一份——訓練與推論抽的特徵必須
-逐位相同，否則模型在線上等於用錯座標系。這也是兩個 repo 的頂層套件都叫 `src`，卻把工作流
-套件放在 `aws-hackathon/` 根目錄的原因：`src` 一律解析到本專案後端。
+`extract_features()`。離線工作流透過 `training/segmenter_v2/contract.py` **匯入**這份實作，
+而不是複製一份——訓練與推論抽的特徵必須逐位相同，否則模型在線上等於用錯座標系。工作流與
+執行期同在 `backend/` 之下，`src.*` 直接可解析，不需要任何 `sys.path` 手術。
+
+**這條路線完全沒有 TF-IDF。** 特徵一律建立在 Bedrock embedding（預設 Titan Text Embeddings V2
+`amazon.titan-embed-text-v2:0` / 1024 維，可換 Cohere Embed Multilingual v3）之上，執行期與訓練
+共用 `src/shared/bedrock.py` 的同一個 provider。TF-IDF 只存在於 `aws-hackathon` 的舊研究腳本裡，
+那些腳本已標明是英文語料的歷史產物，不在本專案的執行路徑上。Lambda 也不裝
+sentence-transformers：那需要打包 PyTorch，且 embedding 已由 Bedrock 提供。
 
 13 個特徵都是尺度不變的統計量，換 embedding 模型只要重抽特徵重訓，`FEATURE_SPEC` 不用動：
 
@@ -136,45 +146,47 @@ Test-Real 用詞是大陸普通話而非台灣用語。對「話題邊界偵測�
 
 ## 5. 操作步驟
 
-前置：`aws-hackathon` 的 venv 需有 `boto3`、`scikit-learn`、`numpy`；
-`AI_ELDER_CARE_BACKEND` 未設時預設同層的 `ai-elder-care/backend`。
+前置：`cd backend; pip install -e ".[training]"`（多裝 scikit-learn 與 numpy，只在本機用）。
+所有路徑由 `training/segmenter_v2/paths.py` 從 repo 根目錄推導，可用環境變數覆寫：
+
+| 變數 | 預設 | 用途 |
+|---|---|---|
+| `SEGMENTER_V2_WORK_DIR` | `<repo>/data/segmenter_v2` | 語料、embedding 快取、標註檔（已 gitignore） |
+| `SEGMENTER_V2_RESULTS_DIR` | `<work>/results` | 訓練與評測輸出 |
+| `DTS_SESSION_DATASETS` | `../aws-hackathon/Def-DTS/data/DTS_session_datasets` | TIAGE／DialSeg711 來源 |
+| `SEGMENTER_V2_UPSTREAM_DATA` | `../aws-hackathon/data` | localized／scenario 層的既有語料 |
 
 ```bash
-cd aws-hackathon
+cd backend
+export WORK=../data/segmenter_v2   # 下面用得到；實際預設值就是這個位置
 
 # 1. 語料正規化（英文真標 → 本工作流格式）
 python scripts/segmenter_v2_prepare_corpora.py
 
 # 2. 逐 turn 翻譯成繁中，標籤位置沿用（含機械稽核；建議先 --limit 20 抽查語感）
-python scripts/segmenter_v2_translate.py \
-    --input data/segmenter_v2/train_en.jsonl --output data/segmenter_v2/train_zh.jsonl
-python scripts/segmenter_v2_translate.py \
-    --input data/segmenter_v2/dev_en.jsonl --output data/segmenter_v2/dev_zh.jsonl
+python scripts/segmenter_v2_translate.py --input $WORK/train_en.jsonl --output $WORK/train_zh.jsonl
+python scripts/segmenter_v2_translate.py --input $WORK/dev_en.jsonl   --output $WORK/dev_zh.jsonl
 
 # 3. 抽 turn embedding 並落地快取（重訓不再付費；中斷可續跑）
-python scripts/segmenter_v2_embed.py \
-    data/segmenter_v2/train_zh.jsonl data/segmenter_v2/dev_zh.jsonl \
+python scripts/segmenter_v2_embed.py $WORK/train_zh.jsonl $WORK/dev_zh.jsonl \
     --model amazon.titan-embed-text-v2:0 --dim 1024
 
 # 4. 訓練 + 導出 artifact（GroupKFold by dialogue_id、門檻在開發集上選）
-python scripts/segmenter_v2_train.py \
-    --train data/segmenter_v2/train_zh.jsonl --dev data/segmenter_v2/dev_zh.jsonl \
-    --model amazon.titan-embed-text-v2:0 --dim 1024 --out results/segmenter_v2
+python scripts/segmenter_v2_train.py --train $WORK/train_zh.jsonl --dev $WORK/dev_zh.jsonl \
+    --model amazon.titan-embed-text-v2:0 --dim 1024
 
 # 5. 產生人工標註檔（三層各跑一次），標完後 --finalize
 python scripts/segmenter_v2_prepare_annotation.py --tier real --count 20
 python scripts/segmenter_v2_prepare_annotation.py --tier real \
-    --finalize data/segmenter_v2/annotation/real_to_annotate.jsonl
+    --finalize $WORK/annotation/real_to_annotate.jsonl
 
 # 6. 評測與 gate 判定
-python scripts/segmenter_v2_evaluate.py \
-    --test data/segmenter_v2/test_real_zh.jsonl \
-    --artifact results/segmenter_v2/pairwise_v2.json \
+python scripts/segmenter_v2_evaluate.py --test $WORK/test_real_zh.jsonl \
+    --artifact $WORK/results/pairwise_v2.json \
     --model amazon.titan-embed-text-v2:0 --dim 1024
 
 # 7. gate 通過才上線
-cp results/segmenter_v2/pairwise_v2.json \
-   ../ai-elder-care/backend/src/extraction/assets/segmenter/pairwise_v2.json
+cp $WORK/results/pairwise_v2.json src/extraction/assets/segmenter/pairwise_v2.json
 # 並把 terraform 的 chunker_type 改為 pairwise_v2
 ```
 
