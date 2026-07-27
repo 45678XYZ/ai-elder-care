@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+import 'auth_backend.dart';
+import 'demo_auth_backend.dart';
+
 /// 使用者角色。判定方式與後端 `backend/src/shared/auth.py` 一致：
 /// ID token 帶 `elder_id` → 長者，否則照護者。
 enum UserRole { elder, caregiver }
@@ -30,10 +33,45 @@ class CognitoIdentity {
 /// 目前只實作「解析 ID token → 身分／角色」這段純邏輯（不需後端或 User Pool）；實際登入
 /// 需接上 Cognito SDK 與 pool 設定，見檔尾 TODO。
 class AuthService {
+  AuthService();
+
+  /// 全域單例。登入狀態是整個 App 共用的（router 分流、ApiClient 取 token 都要），
+  /// 不該讓各畫面各持一份。
+  static final AuthService instance = AuthService();
+
+  /// 實際跟 Cognito 講話的實作。目前是 [DemoAuthBackend]，
+  /// User Pool 部署後換成 Cognito 實作即可，畫面不用改。
+  AuthBackend backend = DemoAuthBackend();
+
   String? _idToken;
 
   /// 目前的 Cognito ID token；未登入為 null。供 [ApiClient] 的 `tokenProvider` 取用。
   String? get idToken => _idToken;
+
+  bool get isSignedIn => _idToken != null;
+
+  /// 登入並記住 token。回傳解析後的身分，讓呼叫端據此決定進哪個模式。
+  ///
+  /// token 解不出身分時視為未登入——寧可讓使用者重試，也不要帶著一個
+  /// 讀不出角色的 token 進到某個模式。
+  Future<CognitoIdentity> signIn({
+    required String email,
+    required String password,
+  }) async {
+    final token = await backend.signIn(email: email, password: password);
+    final parsed = parseIdentity(token);
+    if (parsed == null) {
+      _idToken = null;
+      throw AuthException.of(AuthErrorCode.unknown);
+    }
+    _idToken = token;
+    return parsed;
+  }
+
+  Future<void> signOut() async {
+    await backend.signOut();
+    _idToken = null;
+  }
 
   /// 目前登入者的身分（角色 + sub + elderId）；未登入或 token 格式不對為 null。
   CognitoIdentity? get identity {

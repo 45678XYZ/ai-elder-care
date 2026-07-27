@@ -23,6 +23,7 @@ class AppSession {
   static const _kNickname = 'elder_nickname';
   static const _kLang = 'elder_lang';
   static const _kSelectedElder = 'selected_elder_id';
+  static const _kLinkedCaregivers = 'linked_caregiver_ids';
 
   String elderName = '';
   String elderNickname = '';
@@ -38,6 +39,14 @@ class AppSession {
 
   /// 目前在看哪一位長者；所有照護者畫面的 `elder_id` 都取自這裡。
   String? selectedElderId;
+
+  /// 已連結到這個長者帳號的照護者 ID。長者端「連結家人」頁的資料來源。
+  ///
+  /// 可以有多位（子女各自一組），所以是清單而非單一值。
+  List<String> linkedCaregiverIds = const [];
+
+  /// 這台長者手機是否已經有家人連結。決定今天頁要不要顯示連結入口。
+  bool get hasLinkedCaregiver => linkedCaregiverIds.isNotEmpty;
 
   /// 目前選定的長者物件；清單還沒載入或該 id 已不存在時為 null。
   Elder? get selectedElder {
@@ -74,6 +83,17 @@ class AppSession {
     elderNickname = p.getString(_kNickname) ?? '';
     lang = p.getString(_kLang) ?? 'zh-TW';
     selectedElderId = p.getString(_kSelectedElder);
+    linkedCaregiverIds = p.getStringList(_kLinkedCaregivers) ?? const [];
+  }
+
+  /// 連結一位照護者到這個長者帳號。已連結過的回 false，讓畫面能給出不同回饋。
+  Future<bool> linkCaregiver(String caregiverId) async {
+    final id = caregiverId.trim();
+    if (id.isEmpty || linkedCaregiverIds.contains(id)) return false;
+    linkedCaregiverIds = [...linkedCaregiverIds, id];
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(_kLinkedCaregivers, linkedCaregiverIds);
+    return true;
   }
 
   /// 確保長者清單已載入；已有資料就直接返回。
