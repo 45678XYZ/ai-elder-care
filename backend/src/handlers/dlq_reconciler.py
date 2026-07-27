@@ -18,7 +18,7 @@ import os
 
 import boto3
 
-from src.shared import sessions
+from src.shared import metrics, sessions
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ def handler(event, context):
             # 連收斂都失敗時仍然 ack：訊息留在 DLQ 只會反覆炸同一個錯
             logger.exception("DLQ 收斂失敗：message_id=%s", message_id)
             outcome = "error"
+        metrics.emit_dlq_outcome(outcome)
         outcomes.append({"message_id": message_id, "outcome": outcome})
     return {"outcomes": outcomes}
 

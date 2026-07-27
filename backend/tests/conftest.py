@@ -60,6 +60,12 @@ def no_bedrock_backoff(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def quiet_metrics(monkeypatch):
+    """預設關掉 EMF 輸出，避免測試輸出被指標 JSON 淹掉；test_metrics 自行開啟。"""
+    monkeypatch.setenv("METRICS_ENABLED", "false")
+
+
+@pytest.fixture(autouse=True)
 def reset_bedrock_client():
     bedrock.reset_runtime_client()
     yield

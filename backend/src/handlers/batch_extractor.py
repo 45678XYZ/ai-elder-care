@@ -19,6 +19,7 @@ from typing import Any
 import json
 import logging
 import os
+import time
 import uuid
 
 from src.extraction.canonical import load_predicate_lexicon
@@ -29,7 +30,7 @@ from src.extraction.pipeline import ExtractionPipeline
 from src.extraction.retriever import ConceptRetriever
 from src.extraction.segmenter import load_segmenter
 from src.extraction.taxonomy import load_taxonomy
-from src.shared import bedrock, db, sessions
+from src.shared import bedrock, db, metrics, sessions
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ def _s3vectors_client():
 
 def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> str:
     """處理單一訊息；回傳處置結果字串供測試與觀測。"""
+    started = time.monotonic()
     elder_id, session_id, snapshot_hash = parse_message(record)
     owner = _lease_owner(context)
 
@@ -135,6 +137,7 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         logger.info(
             "batch 不需處理，直接 ack：session_id=%s outcome=%s", session_id, outcome
         )
+        metrics.emit_batch_outcome(outcome, session_id=session_id)
         return outcome
 
     config = ExtractionConfig.from_env()
@@ -146,15 +149,18 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         sessions.fail_batch(
             elder_id, session_id, owner=owner, code="PERMANENT_ERROR", message=str(exc)
         )
+        metrics.emit_batch_outcome("permanent_failure", session_id=session_id)
         raise
     except bedrock.PermanentBedrockError as exc:
         sessions.fail_batch(
             elder_id, session_id, owner=owner, code="MODEL_PERMANENT_ERROR", message=str(exc)
         )
+        metrics.emit_batch_outcome("model_permanent_failure", session_id=session_id)
         raise PermanentBatchError(str(exc)) from exc
     except Exception:
         # 暫時性失敗放掉 lease，讓重投或 recovery sweep 立刻能接手
         sessions.release_batch_lease(elder_id, session_id, owner=owner)
+        metrics.emit_batch_outcome("retryable_failure", session_id=session_id)
         raise
 
     written, conflicts = _write_events(result)
@@ -167,6 +173,7 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
             code="EVENT_CONFLICT",
             message=f"{len(conflicts)} 筆事件內容互斥：{conflicts[:3]}",
         )
+        metrics.emit_batch_outcome("event_conflict", session_id=session_id)
         raise PermanentBatchError(f"事件內容互斥：{conflicts[:3]}")
 
     sessions.mark_turns_batch_completed(
@@ -186,6 +193,18 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         session_id,
         written,
         json.dumps(result.metrics, ensure_ascii=False),
+    )
+    metrics.emit_pipeline_metrics(
+        result.metrics,
+        elder_id=elder_id,
+        session_id=session_id,
+        chunker_type=config.chunker_type,
+    )
+    metrics.emit_batch_outcome(
+        sessions.CLAIM_ACQUIRED,
+        attempts=int(session.get("batch_attempts") or 0),
+        duration_ms=int((time.monotonic() - started) * 1000),
+        session_id=session_id,
     )
     return sessions.CLAIM_ACQUIRED
 

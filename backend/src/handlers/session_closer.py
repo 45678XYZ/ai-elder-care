@@ -20,7 +20,7 @@ import os
 import boto3
 
 from src.extraction.temporal import TZ_TAIPEI, format_ts, parse_ts
-from src.shared import auth, db, responses, sessions
+from src.shared import auth, db, metrics, responses, sessions
 
 logger = logging.getLogger(__name__)
 
@@ -175,11 +175,13 @@ def enqueue_batch(session: dict[str, Any], *, client=None) -> bool:
 def run_sweep(event: dict[str, Any] | None = None, *, sqs_client=None) -> dict[str, Any]:
     """三種 sweep 一次跑完，回報各自處理的數量供觀測。"""
     now = parse_ts(format_ts(_now()))
-    return {
+    results = {
         "idle_closed": sweep_idle_sessions(now=now, sqs_client=sqs_client),
         "pending_requeued": sweep_pending_batches(sqs_client=sqs_client),
         "processing_requeued": sweep_expired_leases(now=now, sqs_client=sqs_client),
     }
+    metrics.emit_sweep_result(results)
+    return results
 
 
 def _now():

@@ -35,7 +35,7 @@ from .chunk_planner import (
 )
 from .chunker import Turn, plan_boundaries
 from .classifier import classify_chunk
-from .config import ExtractionConfig
+from .config import EXTRACTION_STRUCTURED_OUTPUT, ExtractionConfig
 from .dedup import deduplicate
 from .extractor import extract_events
 from .models import CanonicalEvent, DedupStats
@@ -60,6 +60,10 @@ class ChunkOutcome:
     unmatched_predicates: int = 0
     candidate_count: int = 0
     hit_count: int = 0
+    # structured outputs 被降級的次數（模型或 SDK 不支援硬約束時）；持續 > 0 代表
+    # 分類其實一直靠 prompt 指引在跑，enum 約束沒有生效
+    structured_output_degraded: int = 0
+    model_latency_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,10 @@ class PipelineResult:
             "dedup_key_merged": self.dedup.key_merged,
             "dedup_alias_merged": self.dedup.alias_merged,
             "chunker_fallback_used": self.manifest.fallback_used,
+            "structured_output_degraded": sum(
+                outcome.structured_output_degraded for outcome in self.chunk_outcomes
+            ),
+            "model_latency_ms": sum(outcome.model_latency_ms for outcome in self.chunk_outcomes),
             "type_distribution": type_distribution,
         }
 
@@ -162,12 +170,17 @@ class ExtractionPipeline:
             client=self.client,
         )
         hits = prune_label_hits(classification.hits, self.taxonomy)
+        degraded = 0 if classification.metadata.get("structured_output", True) else 1
+        latency = int(classification.metadata.get("latency_ms") or 0)
+
         if not hits:
             logger.info("chunk 無命中標籤，不產生事件：chunk_id=%s", chunk.chunk_id)
             return ChunkOutcome(
                 chunk_id=chunk.chunk_id,
                 events=(),
                 candidate_count=len(candidates),
+                structured_output_degraded=degraded,
+                model_latency_ms=latency,
             )
 
         composed = compose_multi_event(hits, self.taxonomy)
@@ -204,6 +217,11 @@ class ExtractionPipeline:
                 unmatched_predicates += 1
             events.append(event)
 
+        if self.config.extraction_mode == EXTRACTION_STRUCTURED_OUTPUT and not extraction.metadata.get(
+            "structured_output", True
+        ):
+            degraded += 1
+
         return ChunkOutcome(
             chunk_id=chunk.chunk_id,
             events=tuple(events),
@@ -211,6 +229,8 @@ class ExtractionPipeline:
             unmatched_predicates=unmatched_predicates,
             candidate_count=len(candidates),
             hit_count=len(hits),
+            structured_output_degraded=degraded,
+            model_latency_ms=latency + int(extraction.metadata.get("latency_ms") or 0),
         )
 
     def _build_canonical_event(
