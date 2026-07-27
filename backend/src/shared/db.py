@@ -48,8 +48,14 @@ TABLE_ROUTINES = os.environ.get("TABLE_ROUTINES", "routines")
 # 事件時間軸索引；events 的 Base table SK 是 event_id，時間範圍查詢一律走此 GSI
 EVENTS_BY_TIME_INDEX = "events-by-time"
 
-# event_time_key 為 `<ts>#<event_id>`；查詢上界要蓋過同一毫秒的所有 event_id
-EVENT_TIME_KEY_UPPER_BOUND_SUFFIX = "#\uffff"
+# 對話時間軸索引；摘要要算當日 turn 數與相關 session，只能走此 GSI
+CONVERSATIONS_BY_TIME_INDEX = "conversations-by-time"
+
+# 時間軸 sort key 都是 `<ts>#<id>`；查詢上界要蓋過同一毫秒的所有 id
+TIME_KEY_UPPER_BOUND_SUFFIX = "#\uffff"
+
+# 舊名保留：events 相關程式與測試沿用
+EVENT_TIME_KEY_UPPER_BOUND_SUFFIX = TIME_KEY_UPPER_BOUND_SUFFIX
 
 # 判斷「既有事件與這次寫入是否互斥」時比對的事實欄位。
 # 刻意不含 `ts`：canonical key 已經固定了日期與 Slot，同一件事在 Slot 內被再次提到、
@@ -326,6 +332,43 @@ def get_recent_conversations(
         raise DBError(f"查詢對話紀錄失敗: {e.response['Error']['Message']}")
 
 
+def list_turns_by_day(elder_id: str, date: str, *, page_size: int = 100) -> list[dict[str, Any]]:
+    """取某一天（台灣日界）的所有 turn，依時間正序。
+
+    走 GSI `conversations-by-time`：Base table 的 SK 是 `record_id`，用時間當範圍條件在
+    Base table 上不成立。上界補 `#\uffff` 讓落在 `23:59:59.999` 的 turn 不被排除。
+
+    一天的 turn 數有 session 上限撐著（每 session ≤ 100），因此這裡把分頁跑完再回傳，
+    呼叫端不必自己迴圈；摘要需要的是「當天全部」而不是一頁。
+    """
+    query_kwargs: dict[str, Any] = {
+        "IndexName": CONVERSATIONS_BY_TIME_INDEX,
+        "KeyConditionExpression": (
+            "elder_id = :eid AND conversation_time_key BETWEEN :start_key AND :end_key"
+        ),
+        "ExpressionAttributeValues": {
+            ":eid": elder_id,
+            ":start_key": day_start(date),
+            ":end_key": day_end(date) + TIME_KEY_UPPER_BOUND_SUFFIX,
+        },
+        "ScanIndexForward": True,
+        "Limit": page_size,
+    }
+
+    table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
+    turns: list[dict[str, Any]] = []
+    while True:
+        try:
+            resp = table.query(**query_kwargs)
+        except ClientError as e:
+            raise DBError(f"查詢當日對話失敗: {e.response['Error']['Message']}")
+        turns.extend(convert_decimals(resp.get("Items", [])))
+        last_key = resp.get("LastEvaluatedKey")
+        if not last_key:
+            return turns
+        query_kwargs["ExclusiveStartKey"] = last_key
+
+
 # -----------------------------------------------------------------------------
 # Events 表操作
 # -----------------------------------------------------------------------------
@@ -588,7 +631,12 @@ def get_daily_routines(
     current_iso_ts: str = None,
     grace_period_hours: float = 2.0,
 ) -> dict[str, Any]:
-    """展開指定日期的例行公事行程與動態完成狀態 (pending/done/missed)。
+    """DEPRECATED：展開指定日期的例行公事行程與動態完成狀態 (pending/done/missed)。
+
+    請改用 `src.shared.routines.list_occurrences()`。這支的假設與真實 schema 不符：
+    routines 表是 `routine_id + version` 複合鍵、定義列表走 `routines-current-by-elder`
+    GSI，而這裡用 `scan` 加單一 key；也沒有 `occurrence_cutoff` 與 routine 版本解析，
+    因此無法滿足 api.md 的 completion-first 規則。待 routines handler 實作時一併移除。
 
     判斷規則：
     1. 從 routines 讀取所有活躍項目，判斷該日期是否需排程 (daily / weekly / once)。
@@ -745,31 +793,104 @@ def complete_routine_with_event(
 # Daily Summaries 表操作
 # -----------------------------------------------------------------------------
 
-def save_daily_summary(summary_data: dict[str, Any]) -> dict[str, Any]:
-    """儲存/覆寫每日摘要。"""
+def put_daily_summary(summary_data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """以覆寫優先序為條件寫入每日摘要；回 `(目前生效的摘要, 是否由本次寫入)`。
+
+    優先序（docs/api.md）：較舊 `input_through_at` 不得覆寫較新 → 同一 cutoff 下
+    `complete` 優先於 `partial` → 完整度相同才由較新的 `generated_at` 勝出。
+
+    這必須是條件式寫入而不是「讀出來比一比再寫」：排程與手動生成會並行，讀後判斷會讓
+    較舊的結果覆蓋較新的。完整度因此需要可比較的數值 `completeness_rank`
+    （`complete=1`、`partial=0`），DynamoDB 的條件運算式只能比屬性值。
+
+    條件不成立不是錯誤，那正是規則生效的樣子（例如手動 partial 想蓋掉排程 complete）；
+    此時回傳既有摘要並把 `written=False` 交給呼叫端決定要不要記指標。
+    """
+    for field_name in ("elder_id", "date", "input_through_at", "generated_at", "data_status"):
+        if not summary_data.get(field_name):
+            raise DBError(f"儲存每日摘要需要 {field_name}")
+
+    data = dict(summary_data)
+    data["completeness_rank"] = 1 if data["data_status"] == "complete" else 0
+    data.setdefault("schema_version", 1)
+
     table = get_dynamodb_resource().Table(TABLE_DAILY_SUMMARIES)
     try:
-        table.put_item(Item=summary_data)
-        return convert_decimals(summary_data)
-    except ClientError as e:
-        raise DBError(f"儲存每日摘要失敗: {e.response['Error']['Message']}")
-
-
-def get_daily_summaries(elder_id: str, from_date: str, to_date: str) -> list[dict[str, Any]]:
-    """範圍查詢每日摘要。"""
-    table = get_dynamodb_resource().Table(TABLE_DAILY_SUMMARIES)
-    try:
-        resp = table.query(
-            KeyConditionExpression="elder_id = :eid AND #d BETWEEN :from_d AND :to_d",
-            ExpressionAttributeNames={"#d": "date"},
+        table.put_item(
+            Item=prepare_item(data),
+            ConditionExpression=(
+                "attribute_not_exists(elder_id) "
+                "OR input_through_at < :cutoff "
+                "OR (input_through_at = :cutoff AND completeness_rank < :rank) "
+                "OR (input_through_at = :cutoff AND completeness_rank = :rank "
+                "AND generated_at <= :generated_at)"
+            ),
             ExpressionAttributeValues={
-                ":eid": elder_id,
-                ":from_d": from_date,
-                ":to_d": to_date,
+                ":cutoff": data["input_through_at"],
+                ":rank": data["completeness_rank"],
+                ":generated_at": data["generated_at"],
             },
-            ScanIndexForward=True,
         )
-        return convert_decimals(resp.get("Items", []))
+        return convert_decimals(data), True
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise DBError(f"儲存每日摘要失敗: {e.response['Error']['Message']}")
+
+    existing = get_daily_summary(data["elder_id"], data["date"]) or {}
+    logger.info(
+        "既有摘要較新或完整度較高，保留不覆寫：elder_id=%s date=%s "
+        "incoming_cutoff=%s existing_cutoff=%s",
+        data["elder_id"],
+        data["date"],
+        data["input_through_at"],
+        existing.get("input_through_at"),
+    )
+    return existing, False
+
+
+def get_daily_summary(elder_id: str, date: str) -> dict[str, Any] | None:
+    """讀取單日摘要；不存在回 None。"""
+    table = get_dynamodb_resource().Table(TABLE_DAILY_SUMMARIES)
+    try:
+        resp = table.get_item(Key={"elder_id": elder_id, "date": date}, ConsistentRead=True)
+    except ClientError as e:
+        raise DBError(f"讀取每日摘要失敗: {e.response['Error']['Message']}")
+    item = resp.get("Item")
+    return convert_decimals(item) if item else None
+
+
+def list_daily_summaries(
+    elder_id: str,
+    from_date: str,
+    to_date: str,
+    limit: int = 50,
+    next_token: str | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """範圍查詢每日摘要，最新日期優先。
+
+    `date` 是 sort key 且格式固定為 `YYYY-MM-DD`，字串排序即日期排序，因此範圍條件與
+    倒序都由 DynamoDB 直接處理，不需要在程式端重排。只回已生成的日期。
+    """
+    query_kwargs: dict[str, Any] = {
+        "KeyConditionExpression": "elder_id = :eid AND #d BETWEEN :from_d AND :to_d",
+        "ExpressionAttributeNames": {"#d": "date"},
+        "ExpressionAttributeValues": {
+            ":eid": elder_id,
+            ":from_d": from_date,
+            ":to_d": to_date,
+        },
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    if next_token:
+        query_kwargs["ExclusiveStartKey"] = decode_next_token(next_token)
+
+    try:
+        resp = get_dynamodb_resource().Table(TABLE_DAILY_SUMMARIES).query(**query_kwargs)
     except ClientError as e:
         raise DBError(f"查詢每日摘要失敗: {e.response['Error']['Message']}")
+
+    items = convert_decimals(resp.get("Items", []))
+    last_key = resp.get("LastEvaluatedKey")
+    return items, encode_next_token(last_key) if last_key else None
 

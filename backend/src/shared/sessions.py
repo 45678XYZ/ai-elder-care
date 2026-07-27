@@ -119,6 +119,43 @@ def put_session(session: dict[str, Any]) -> dict[str, Any]:
     return db.convert_decimals(item)
 
 
+def is_pending_materialization(session: dict[str, Any]) -> bool:
+    """這個 session 是否仍可能產生尚未寫入的一般事件。
+
+    摘要的 `data_status` 完全建立在這個判斷上：`active`／`closing` 還會長出新 turn；
+    `closed` 但 batch 尚未 `completed` 表示一般事件還沒 materialize。`batch_status` 缺值
+    時保守視為未完成——寧可標成 `partial` 再重算，也不要對照護者宣稱資料已完整。
+    """
+    state = session.get("state")
+    if state in (STATE_ACTIVE, STATE_CLOSING):
+        return True
+    if state == STATE_CLOSED:
+        return (session.get("batch_status") or BATCH_PENDING) != BATCH_COMPLETED
+    # 未知狀態同樣保守處理
+    return True
+
+
+def list_pending_sessions(elder_id: str, session_ids: Sequence[str]) -> list[dict[str, Any]]:
+    """對候選 session 逐一強一致讀取，回仍待 materialize 的那些。
+
+    候選來自 `conversations-by-time` GSI（最終一致），因此狀態一律回 Base table 強一致讀，
+    符合 framework 的「GSI 只用來找候選」。
+    """
+    pending: list[dict[str, Any]] = []
+    for session_id in dict.fromkeys(session_ids):
+        session = get_session(elder_id, session_id)
+        if session is None:
+            # turn 指向不存在的 session：資料不一致，保守計入待處理並記錄
+            logger.warning(
+                "turn 指向不存在的 session：elder_id=%s session_id=%s", elder_id, session_id
+            )
+            pending.append({"session_id": session_id, "state": None})
+            continue
+        if is_pending_materialization(session):
+            pending.append(session)
+    return pending
+
+
 def list_sessions_by_state(
     state_key: str,
     *,
