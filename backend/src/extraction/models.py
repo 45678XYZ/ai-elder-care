@@ -50,6 +50,38 @@ class ClassificationResult:
 
 
 @dataclass(frozen=True)
+class ExtractedEvent:
+    """萃取出的單一事件（尚未算 canonical key、尚未去重）。
+
+    `attributes` 是通過驗證並剔除跨分類滲透後的結構化屬性，之後落到 `events.structured_detail`。
+    """
+
+    concept_id: str
+    subject: str
+    predicate: str
+    summary: str
+    attributes: dict[str, Any] = field(default_factory=dict)
+    raw_temporal_expression: str | None = None
+    observed_at: str | None = None
+    confidence: float | None = None
+    event_index: int = 0
+
+
+@dataclass(frozen=True)
+class ExtractionResult:
+    """單一 chunk 的萃取輸出。
+
+    `dropped_events` 是驗證失敗後被丟棄的事件數（決策 I）；它是告警與品質觀測的訊號，
+    不是錯誤——單一事件壞掉不該讓整個 chunk 變 failed。
+    """
+
+    chunk_id: str
+    events: tuple[ExtractedEvent, ...]
+    dropped_events: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ComposedSchema:
     """動態 schema 組裝結果。
 
