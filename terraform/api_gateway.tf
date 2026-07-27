@@ -4,7 +4,7 @@
 #   POST  /chat                                             → chat（待實作）
 #   POST  /chat/sessions/{session_id}/close                 → session_closer ✅
 #   GET/POST /elders、GET/PATCH /elders/{elder_id}          → elders（待實作）
-#   GET   /summaries、POST /summaries/generate              → summaries（待實作）
+#   GET   /summaries、POST /summaries/generate              → api_summaries ✅
 #   GET   /events                                           → events ✅
 #   GET/POST /routines、PATCH /routines/{routine_id}、
 #   POST  /routines/{routine_id}/complete                   → routines（待實作）
@@ -87,6 +87,82 @@ resource "aws_lambda_permission" "get_events" {
   source_arn = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/events"
 }
 
+# --- GET /summaries、POST /summaries/generate（照護者每日摘要）---
+# 兩條路由掛同一支 Lambda，handler 內依 httpMethod 分派。
+
+resource "aws_api_gateway_resource" "summaries" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "summaries"
+}
+
+resource "aws_api_gateway_method" "get_summaries" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.summaries.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+
+  request_parameters = {
+    "method.request.querystring.elder_id"   = true
+    "method.request.querystring.from"       = false
+    "method.request.querystring.to"         = false
+    "method.request.querystring.limit"      = false
+    "method.request.querystring.next_token" = false
+  }
+}
+
+resource "aws_api_gateway_integration" "get_summaries" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  resource_id = aws_api_gateway_resource.summaries.id
+  http_method = aws_api_gateway_method.get_summaries.http_method
+
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.api_summaries.invoke_arn
+}
+
+resource "aws_api_gateway_resource" "summaries_generate" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.summaries.id
+  path_part   = "generate"
+}
+
+resource "aws_api_gateway_method" "generate_summary" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.summaries_generate.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "generate_summary" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  resource_id = aws_api_gateway_resource.summaries_generate.id
+  http_method = aws_api_gateway_method.generate_summary.http_method
+
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.api_summaries.invoke_arn
+}
+
+# 一支 Lambda 兩條路由，因此兩個 permission 各自收斂到自己的 method
+resource "aws_lambda_permission" "get_summaries" {
+  statement_id  = "AllowApiGatewayGetSummaries"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.api_summaries.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/summaries"
+}
+
+resource "aws_lambda_permission" "generate_summary" {
+  statement_id  = "AllowApiGatewayGenerateSummary"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.api_summaries.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/summaries/generate"
+}
+
 # --- POST /chat/sessions/{session_id}/close（長者端明確關閉）---
 
 resource "aws_api_gateway_resource" "chat" {
@@ -154,6 +230,10 @@ resource "aws_api_gateway_deployment" "api" {
     redeployment = sha1(jsonencode([
       aws_api_gateway_method.get_events,
       aws_api_gateway_integration.get_events,
+      aws_api_gateway_method.get_summaries,
+      aws_api_gateway_integration.get_summaries,
+      aws_api_gateway_method.generate_summary,
+      aws_api_gateway_integration.generate_summary,
       aws_api_gateway_method.close_session,
       aws_api_gateway_integration.close_session,
       aws_api_gateway_authorizer.cognito,

@@ -183,11 +183,48 @@ data "aws_iam_policy_document" "extraction_data" {
     ]
   }
 
+  # Scan 是排程摘要用的：sweep 要逐一長者產生摘要，而 elders 表沒有「列出全部」的索引。
+  # 表很小（數十筆），Scan 的成本遠低於為此另建一個 GSI。
   statement {
-    sid       = "EldersRead"
-    effect    = "Allow"
-    actions   = ["dynamodb:GetItem"]
+    sid    = "EldersRead"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:Scan",
+    ]
+
     resources = [aws_dynamodb_table.elders.arn]
+  }
+
+  # 摘要：條件式覆寫需要 PutItem，列表與重算 sweep 需要 Query／GetItem
+  statement {
+    sid    = "DailySummariesWrite"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [aws_dynamodb_table.daily_summaries.arn]
+  }
+
+  # occurrence 衍生只讀：版本清單走 routine-versions-by-elder，完成當時的定義走 GetItem
+  statement {
+    sid    = "RoutinesRead"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [
+      aws_dynamodb_table.routines.arn,
+      "${aws_dynamodb_table.routines.arn}/index/*",
+    ]
   }
 
   statement {
@@ -296,8 +333,8 @@ resource "aws_lambda_event_source_mapping" "dlq_reconciler" {
   batch_size       = 10
 }
 
-# 照護者端資料 API：目前只有 GET /events 實作完成（見 backend/src/handlers/events.py）。
-# 其餘 handler（chat/elders/summaries/routines/stats）由各模組補上自己的 Lambda 與路由，
+# 照護者端資料 API：目前 GET /events 與 /summaries 已實作。
+# 其餘 handler（chat/elders/routines/stats）由各模組補上自己的 Lambda 與路由，
 # 共用同一個部署包與同一組資料表環境變數。
 resource "aws_lambda_function" "api_events" {
   function_name = "${var.project_name}-api-events"
@@ -314,5 +351,59 @@ resource "aws_lambda_function" "api_events" {
 
   environment {
     variables = local.extraction_env
+  }
+}
+
+# --- 每日摘要（見 docs/feature_daily-summarization.md）---
+
+# 摘要相關 Lambda 共用的環境變數；模型呼叫與等待窗口都可調，不寫死在程式碼
+locals {
+  summary_env = {
+    SUMMARY_GENERATOR_VERSION   = var.summary_generator_version
+    BEDROCK_SUMMARY_MODEL_ID    = var.bedrock_summary_model_id
+    SUMMARY_ALERT_LOOKBACK_DAYS = tostring(var.summary_alert_lookback_days)
+    SUMMARY_MAX_EVENTS          = tostring(var.summary_max_events)
+    SUMMARY_WAIT_MINUTES        = tostring(var.summary_wait_minutes)
+    SUMMARY_BACKFILL_DAYS       = tostring(var.summary_backfill_days)
+    SUMMARY_SWEEP_LIMIT         = tostring(var.summary_sweep_limit)
+    ROUTINE_GRACE_MINUTES       = tostring(var.routine_grace_minutes)
+  }
+}
+
+# GET /summaries 與 POST /summaries/generate 同一支 handler（依 httpMethod 分派）。
+# POST 會同步呼叫模型，因此 timeout 比純查詢的 api_events 長。
+resource "aws_lambda_function" "api_summaries" {
+  function_name = "${var.project_name}-api-summaries"
+  role          = aws_iam_role.extraction.arn
+  handler       = "src.handlers.summaries.handler"
+  runtime       = "python3.11"
+
+  filename         = data.archive_file.backend.output_path
+  source_code_hash = data.archive_file.backend.output_base64sha256
+
+  timeout     = var.summary_lambda_timeout
+  memory_size = 512
+
+  environment {
+    variables = merge(local.extraction_env, local.summary_env)
+  }
+}
+
+# 排程生成：nightly 與 backfill 兩種 mode 由 EventBridge 的 input 指定
+resource "aws_lambda_function" "summary_generator" {
+  function_name = "${var.project_name}-summary-generator"
+  role          = aws_iam_role.extraction.arn
+  handler       = "src.handlers.summary_generator.handler"
+  runtime       = "python3.11"
+
+  filename         = data.archive_file.backend.output_path
+  source_code_hash = data.archive_file.backend.output_base64sha256
+
+  # 一次要跑多位長者 × 一次模型呼叫；單次處理量另受 SUMMARY_SWEEP_LIMIT 約束
+  timeout     = var.summary_generator_timeout
+  memory_size = 1024
+
+  environment {
+    variables = merge(local.extraction_env, local.summary_env)
   }
 }
