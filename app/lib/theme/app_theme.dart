@@ -29,6 +29,10 @@ abstract final class AppColors {
   static const chevron = Color(0xFFC9B8A3);
   static const divider = Color(0xFFEFE8DB);
 
+  /// 佔位文字。對欄位底 4.9:1，過 4.5:1。
+  /// [chevron] 是裝飾用的淡色，拿來當文字色一律不合格。
+  static const hint = Color(0xFF7A6A55);
+
   // §2.4 朱紅 accent
   static const accentText = Color(0xFFAF3723); // 供 >=24sp 文字、白字實心底
   static const accent = Color(0xFFD15640); // 非文字：外框、外環、進度
@@ -170,7 +174,15 @@ abstract final class AppShadows {
   ];
 }
 
-/// §3 字體家族依字級分工：>=24sp 用 Noto Serif TC，<24sp 用 Noto Sans TC。
+/// §3 字體家族依**用途**分工，不是依字級：
+///
+/// - **襯線（Noto Serif TC）** — 標題與大數字。品牌記憶點，也是農民曆牌面的來源。
+/// - **黑體（Noto Sans TC）** — 內文、按鈕、輸入框等所有 UI 元件，含長者模式的 24sp 內文。
+///
+/// 原本的規則是「>=24sp 一律襯線」，但長者模式內文全在 24sp 以上，等於整個 App
+/// 都是明體。明體橫畫細，對比敏感度下降的長輩讀起來是實質負擔；西文（如 email）
+/// 用襯線渲染也跟中文不搭。標題留襯線就足以維持手帳感。
+///
 /// 永遠走 Theme.of(context).textTheme，不要寫死 fontSize。
 abstract final class AppTypography {
   static TextStyle _serif(double size, FontWeight w) => GoogleFonts.notoSerifTc(
@@ -186,11 +198,12 @@ abstract final class AppTypography {
         height: .78,
         color: AppColors.accentText),
     displayMedium: _serif(46, FontWeight.w900),
-    // 長者模式標題／狀態大字
+    // 長者模式標題——襯線只留在這一階與更大的數字
     headlineLarge: _serif(32, FontWeight.w900),
-    headlineMedium: _serif(26, FontWeight.w900),
-    // 長者模式內文下限（§3 硬性 24）
-    headlineSmall: _serif(24, FontWeight.w700),
+    // 狀態大字（麥克風狀態等）：是 UI 而非標題，走黑體
+    headlineMedium: _sans(26, FontWeight.w900),
+    // 長者模式內文下限（§3 硬性 24）：內文與按鈕、輸入框都用這階，走黑體
+    headlineSmall: _sans(24, FontWeight.w700),
     // 照護者模式
     titleLarge: _sans(22, FontWeight.w700),
     titleMedium: _sans(18, FontWeight.w700),

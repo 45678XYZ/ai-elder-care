@@ -203,17 +203,16 @@ class _SetupScreenState extends State<SetupScreen> {
 
   InputDecoration _fieldDecoration({required String hint}) => InputDecoration(
         hintText: hint,
-        hintStyle: const TextStyle(color: AppColors.chevron),
+        hintStyle: const TextStyle(color: AppColors.hint),
         filled: true,
-        fillColor: AppColors.card,
+        fillColor: AppColors.cardAlt,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         // 錯誤訊息在欄位下方，色 #7D281F（承 theme error）
         errorStyle: const TextStyle(color: Color(0xFF7D281F), fontSize: 13),
-        enabledBorder: const OutlineInputBorder(
-          borderRadius: BorderRadius.all(AppRadius.field),
-          borderSide: BorderSide(color: AppColors.border),
-        ),
+        // 平常不畫框，靠近白的填色與紙底區分；框只在聚焦與錯誤時出現——
+        // 這兩種狀態一定要看得見，前者是鍵盤操作的位置線索，後者要指出是哪一欄有問題。
+        enabledBorder: InputBorder.none,
         focusedBorder: const OutlineInputBorder(
           borderRadius: BorderRadius.all(AppRadius.field),
           borderSide: BorderSide(color: AppColors.accent, width: 2),

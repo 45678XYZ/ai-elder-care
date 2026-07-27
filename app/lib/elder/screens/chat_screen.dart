@@ -236,24 +236,32 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _buildHeader(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
           // 問候語依時段變化；不放語言切換（§5.1）。
-          Text('${AppSession.instance.displayName}，${_greeting()}！',
+          // 不放日期——今日頁的農民曆牌面已經是日期的來源，這裡重複只是雜訊。
+          child: Text('${AppSession.instance.displayName}，${_greeting()}！',
               style: text.headlineLarge),
-          const SizedBox(height: 4),
-          Text(_todayLabel(),
-              style: text.bodyLarge?.copyWith(color: AppColors.inkSecondary)),
-        ],
-      ),
+        ),
+        // 橫線把問候語與對話區切開，讓下方看得出來是一個「聊天室」而不是同一段內容。
+        const Divider(
+            height: 1, thickness: 1.5, color: AppColors.borderDashed),
+      ],
     );
   }
 
   Widget _buildConversation(BuildContext context) {
     final text = Theme.of(context).textTheme;
+
+    // 還沒講過話時這塊是空的——一整片留白會讓長輩不確定自己是不是按錯了。
+    // 放範例句而不是插圖：它同時回答「這裡能做什麼」和「我該說什麼」。
+    if (_question.isEmpty && _result == null && _error == null) {
+      return const _ConversationHint();
+    }
+
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       children: [
@@ -287,7 +295,7 @@ class _ChatScreenState extends State<ChatScreen>
         borderRadius: AppRadius.voicePanel,
         boxShadow: AppShadows.voicePanel,
       ),
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -346,10 +354,46 @@ class _ChatScreenState extends State<ChatScreen>
     return '晚安';
   }
 
-  String _todayLabel() {
-    final now = DateTime.now();
-    const week = ['一', '二', '三', '四', '五', '六', '日'];
-    return '${now.month}月${now.day}日 星期${week[now.weekday - 1]}';
+}
+
+/// 開始對話前的引導。純顯示，不可互動——長者模式的三個互動額度要留給
+/// 麥克風、打字、底部分頁。
+class _ConversationHint extends StatelessWidget {
+  const _ConversationHint();
+
+  /// 挑日常會用到的三句：一句回報、一句身體狀況、一句閒聊，
+  /// 讓長輩看得出「什麼都可以說」而不只是查資料。
+  static const _examples = [
+    '我今天吃過藥了',
+    '我有點頭暈',
+    '今天天氣怎麼樣',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+      children: [
+        Text('你可以這樣說',
+            style: text.headlineSmall?.copyWith(color: AppColors.inkSecondary)),
+        const SizedBox(height: AppSpacing.lg),
+        for (final line in _examples) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg, vertical: AppSpacing.lg),
+            decoration: const BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.all(AppRadius.card),
+              boxShadow: AppShadows.card,
+            ),
+            child: Text('「$line」', style: text.headlineSmall),
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
+      ],
+    );
   }
 }
 
@@ -367,7 +411,8 @@ class _MicOrb extends StatelessWidget {
   final bool reduceMotion;
   final VoidCallback onTap;
 
-  static const double _size = 104;
+  /// 圓球直徑。仍遠大於 60dp 觸控下限，縮小是為了把畫面留給對話內容。
+  static const double _size = 84;
 
   @override
   Widget build(BuildContext context) {
@@ -384,8 +429,9 @@ class _MicOrb extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: SizedBox(
-          width: 150,
-          height: 150,
+          // 比圓球大一圈，容納脈動外環的最大半徑。
+          width: 124,
+          height: 124,
           child: Center(
             child: Stack(
               alignment: Alignment.center,
@@ -394,8 +440,8 @@ class _MicOrb extends StatelessWidget {
                   AnimatedBuilder(
                     animation: pulse,
                     builder: (_, __) => Container(
-                      width: _size + 46 * pulse.value,
-                      height: _size + 46 * pulse.value,
+                      width: _size + 38 * pulse.value,
+                      height: _size + 38 * pulse.value,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: AppColors.accent
@@ -425,8 +471,8 @@ class _MicOrb extends StatelessWidget {
         ),
         alignment: Alignment.center,
         child: Container(
-          width: 46,
-          height: 46,
+          width: 40,
+          height: 40,
           decoration: BoxDecoration(
             color: AppColors.accentText,
             borderRadius: BorderRadius.circular(10),
@@ -461,7 +507,7 @@ class _MicOrb extends StatelessWidget {
               border: Border.all(color: AppColors.accentPressed, width: 5),
             ),
       alignment: Alignment.center,
-      child: Icon(icon, size: 52, color: Colors.white),
+      child: Icon(icon, size: 42, color: Colors.white),
     );
   }
 }
@@ -563,13 +609,11 @@ class _TextInputSheetState extends State<_TextInputSheet> {
             style: text.headlineSmall,
             decoration: const InputDecoration(
               hintText: '想問什麼都可以',
-              hintStyle: TextStyle(color: AppColors.chevron),
+              hintStyle: TextStyle(color: AppColors.hint),
               filled: true,
-              fillColor: AppColors.card,
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.all(AppRadius.field),
-                borderSide: BorderSide(color: AppColors.border),
-              ),
+              fillColor: AppColors.cardAlt,
+              // 不畫框，與其他輸入欄一致；框只在聚焦時出現。
+              enabledBorder: InputBorder.none,
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.all(AppRadius.field),
                 borderSide: BorderSide(color: AppColors.accent, width: 2),

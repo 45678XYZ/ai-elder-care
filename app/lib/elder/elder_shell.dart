@@ -17,28 +17,35 @@ class ElderShell extends StatelessWidget {
       body: navigationShell,
       bottomNavigationBar: Container(
         decoration: const BoxDecoration(
-          color: AppColors.card,
+          color: AppColors.cardAlt,
+          border: Border(
+            top: BorderSide(color: AppColors.border, width: 1),
+          ),
           boxShadow: AppShadows.voicePanel,
         ),
         child: SafeArea(
           top: false,
-          child: Row(
-            children: [
-              _ElderTab(
-                icon: Icons.chat_bubble_outline,
-                selectedIcon: Icons.chat_bubble,
-                label: '聊天',
-                selected: navigationShell.currentIndex == 0,
-                onTap: () => navigationShell.goBranch(0),
-              ),
-              _ElderTab(
-                icon: Icons.today_outlined,
-                selectedIcon: Icons.today,
-                label: '今日',
-                selected: navigationShell.currentIndex == 1,
-                onTap: () => navigationShell.goBranch(1),
-              ),
-            ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
+            child: Row(
+              children: [
+                _ElderTab(
+                  icon: Icons.chat_bubble_outline,
+                  selectedIcon: Icons.chat_bubble,
+                  label: '聊天',
+                  selected: navigationShell.currentIndex == 0,
+                  onTap: () => navigationShell.goBranch(0),
+                ),
+                _ElderTab(
+                  icon: Icons.event_note_outlined,
+                  selectedIcon: Icons.event_note,
+                  label: '今日行程',
+                  selected: navigationShell.currentIndex == 1,
+                  onTap: () => navigationShell.goBranch(1),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -63,7 +70,8 @@ class _ElderTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? AppColors.accentText : AppColors.inkSecondary;
+    final text = Theme.of(context).textTheme;
+    final color = selected ? Colors.white : AppColors.inkSecondary;
     return Expanded(
       child: Semantics(
         selected: selected,
@@ -71,32 +79,30 @@ class _ElderTab extends StatelessWidget {
         label: label,
         child: InkWell(
           onTap: onTap,
+          borderRadius: const BorderRadius.all(AppRadius.card),
           child: Container(
-            constraints: const BoxConstraints(minHeight: 72), // >=60dp 觸控
-            padding: const EdgeInsets.symmetric(vertical: 10),
+            constraints: const BoxConstraints(minHeight: 68), // >=60dp 觸控
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.sm, vertical: AppSpacing.md),
+            // 選中的那一格整塊上朱紅、白字白 icon：對長輩來說「我現在在哪裡」
+            // 要一眼看得出來，細線或淡底色的差異在老花與強光下都容易失守。
+            // 形狀（實心／空心 icon）另外承載一次，不只靠顏色（§9）。
             decoration: BoxDecoration(
-              color: selected ? AppColors.chipSurface : Colors.transparent,
-              border: Border(
-                top: BorderSide(
-                  color: selected ? AppColors.accent : Colors.transparent,
-                  width: 3,
-                ),
-              ),
+              color: selected ? AppColors.accentText : Colors.transparent,
+              borderRadius: const BorderRadius.all(AppRadius.card),
             ),
-            child: Column(
-              // min：底部列高度限制是鬆的（可到滿版），不設 min 會讓 tab 撐滿整個
-              // 畫面、把 body（聊天畫面）壓成 0 高度。
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(selected ? selectedIcon : icon, size: 34, color: color),
-                const SizedBox(height: 2),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 24, // 長者字級下限
-                    fontWeight: FontWeight.w700,
-                    color: color,
+                Icon(selected ? selectedIcon : icon, size: 30, color: color),
+                const SizedBox(width: AppSpacing.sm),
+                // Flexible：兩倍字級時「今日行程」會換行而不是撐破格子。
+                Flexible(
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: text.headlineSmall?.copyWith(color: color),
                   ),
                 ),
               ],

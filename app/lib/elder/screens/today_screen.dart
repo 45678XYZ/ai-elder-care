@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../shared/models/routine.dart';
 import '../../shared/services/demo_data.dart';
 import '../../shared/services/lunar_date.dart';
+import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
 import '../../shared/widgets/status_chip.dart';
@@ -129,9 +131,66 @@ class _TodayScreenState extends State<TodayScreen> {
                   ),
                   const SizedBox(height: AppSpacing.md),
                 ],
+                // 還沒有家人連結時才出現，連上之後就消失——這是一次性的設定，
+                // 不該天天佔著長輩每日要看的畫面。放在最後，不跟「接下來要做什麼」搶注意力。
+                if (!AppSession.instance.hasLinkedCaregiver) ...[
+                  const SizedBox(height: AppSpacing.xl),
+                  _LinkCaregiverEntry(
+                    onTap: () async {
+                      await context.push('/elder/link');
+                      // 從連結頁回來要重畫：連上了這張卡就該不見。
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                ],
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// 「連結家人」入口。只在還沒有任何家人連結時出現。
+///
+/// 用外框而非實心卡：它不是今天要做的事，視覺上要退到行程後面，
+/// 但仍維持 60dp 以上的觸控範圍與 >=24sp 的字。
+class _LinkCaregiverEntry extends StatelessWidget {
+  const _LinkCaregiverEntry({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: const BorderRadius.all(AppRadius.card),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 60),
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          decoration: const BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.all(AppRadius.card),
+            boxShadow: AppShadows.card,
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.group_add_outlined,
+                  size: 32, color: AppColors.inkSecondary),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Text('連結家人',
+                    style: text.headlineSmall
+                        ?.copyWith(color: AppColors.inkSecondary)),
+              ),
+              const Icon(Icons.chevron_right,
+                  size: 32, color: AppColors.chevron),
+            ],
+          ),
         ),
       ),
     );
