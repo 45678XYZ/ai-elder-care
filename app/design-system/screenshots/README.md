@@ -18,11 +18,40 @@
 
 本目錄下的 [built/](built/) 放的是**目前 App 實際跑出來的樣子**，與上面的設計原型分開：原型是規格來源，`built/` 是現況紀錄。兩者不一致時以原型與 MASTER.md 為準。
 
-產生方式（390×844，iPhone 尺寸）：
+目前收錄（390×844）：
+
+**認證**（長者與照護者共用，登入後才由 token 分流）
+- `auth-sign-in.png`（登入）
+- `auth-sign-up.png`（註冊）
+- `auth-verify.png`（信箱驗證碼）
+
+**長者模式**
+- `elder-today.png`（今日：農民曆牌面 + 行程）
+- `elder-today-link-entry.png`（同頁捲到底，未連結家人時的入口）
+- `elder-chat-idle.png`（聊天待機）
+- `elder-link-caregiver.png` / `elder-link-caregiver-done.png`（連結家人：初始與連結成功）
+
+**照護者模式**
+- `caregiver-summaries.png` / `caregiver-timeline.png` / `caregiver-stats.png` / `caregiver-elders.png`
+
+**共用**
+- `setup.png`（初次設定）、`role-select.png`（角色選擇）
+
+### 產生方式
 
 ```
 flutter build web --release
-# 用靜態 server 提供 build/web，再以 Chrome 逐一截圖各路由
+# 靜態 server 提供 build/web，再用 Playwright（viewport 390×844）逐一截圖
 ```
 
-注意 `flutter run -d web-server` 的 debug build 起不來（DDC 載完但 engine 不啟動，畫面全白），要用 release build；Chrome 截圖需強制軟體渲染（`--use-gl=swiftshader`），否則 WebGL canvas 截出來是空白。
+幾個踩過的雷：
+
+- `flutter run -d web-server` 的 debug build 起不來（DDC 載完但 engine 不啟動，畫面全白），**要用 release build**。
+- 截圖需強制軟體渲染（`--use-gl=swiftshader --disable-gpu-compositing`），否則 WebGL canvas 截出來是空白。
+- **不要用 `chrome --headless --screenshot --window-size=390,844`**：Chrome 有最小視窗寬度，實際會渲染成約 500 寬卻只截 390，右側元素看起來像被裁掉，會誤判成版面 overflow。要模擬手機寬度只能用 Playwright 之類能明確設 viewport 的工具。
+- 需要前一頁帶狀態的畫面（如驗證碼頁的信箱）得走完流程才截得到，直接開網址會被導走。
+- 首次設定與連結家人的狀態存在 localStorage，每一組截圖要用乾淨的 browser context，否則入口卡會消失。
+
+### 桌機上看手機比例
+
+`app/web/phone.html` 是開發用的預覽外框，把 App 裝進手機尺寸的 iframe，可切畫面與尺寸（360×800／412×915／390×844／320×700）。`flutter build web` 會自動帶進 `build/web`。
