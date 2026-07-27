@@ -47,3 +47,39 @@ variable "event_slot_minutes" {
   type        = number
   default     = 30
 }
+
+variable "chunker_type" {
+  description = "分塊策略：llm_prompt | embedding_depth | pairwise_v2"
+  type        = string
+  default     = "llm_prompt"
+}
+
+variable "extraction_mode" {
+  description = "萃取階段是否啟用硬約束 schema：prompt_guided | structured_output"
+  type        = string
+  default     = "prompt_guided"
+}
+
+variable "rac_top_k" {
+  description = "概念檢索回傳的候選節點數"
+  type        = number
+  default     = 14
+}
+
+variable "batch_lambda_timeout" {
+  description = "batch extractor 的 timeout（秒）；SQS visibility timeout 由此推導"
+  type        = number
+  default     = 300
+}
+
+variable "session_idle_minutes" {
+  description = "active session 閒置多久後由週期性 closer 收斂"
+  type        = number
+  default     = 30
+}
+
+variable "session_sweep_minutes" {
+  description = "session sweep 的執行間隔（分鐘）；應短於 batch lease"
+  type        = number
+  default     = 5
+}
