@@ -35,7 +35,7 @@
 | D | `context_snippet`／`evidence_span`／`rationale` 不落地，只存 `evidence_conversation_ids` |
 | E | 無既有 events 資料（`data/seed.py` 未實作、handlers 皆 `not_implemented`），不需 migration 或清表 |
 | F | 萃取走 `single_pass`；`two_stage` 以 config 保留 |
-| G | 分塊器兩模式：`embedding_depth`（先行）與 `pairwise_v2`（帶上線 gate）；不移植任何 `.pkl` |
+| G | 分塊器兩模式都進 MVP：`embedding_depth`（先行、無訓練依賴）與 `pairwise_v2`（有監督，帶上線 gate）；不移植任何 `.pkl`。離線訓練與評測工作流見 [feature_segmenter-pairwise-v2.md](feature_segmenter-pairwise-v2.md) |
 | H | 萃取階段用 prompt 承載動態 schema 規則 + Pydantic 後驗證；分類與分塊用 Bedrock structured outputs |
 | I | 單一事件驗證失敗 → 丟棄該事件 + 計數告警，chunk 其餘照寫 |
 | J | 上游（`aws-hackathon`）的修補與評測補齊納入待辦，commit 進該 repo |
@@ -182,7 +182,7 @@ Bedrock Structured outputs 是伺服器端 grammar 約束解碼（Converse 的 `
 |---|---|---|---|
 | `llm_prompt`（預設） | Refined EST + QA Pair Closure prompt → Bedrock structured outputs | Bedrock | hackathon 評為最佳臨床切法 |
 | `encoder` → `embedding_depth` | 每 turn 取 Bedrock embedding，算相鄰餘弦相似度 + TextTiling depth score + **自適應門檻**（`mean + k·std`） | Bedrock + numpy | 無監督基線，無訓練資料需求，換 embedding 模型不失效 |
-| `encoder` → `pairwise_v2`（選配，帶 gate） | 離線以 Bedrock embedding + 精簡特徵重訓 GradientBoosting，導出決策樹 JSON + model card，Lambda 端 numpy 推論 | numpy | 有監督，須通過上線 gate 才設為預設 |
+| `encoder` → `pairwise_v2`（帶 gate） | 離線以 Bedrock embedding + 精簡特徵重訓 GradientBoosting，導出決策樹 JSON + model card，Lambda 端純 Python 推論 | 無（artifact 內含） | 有監督，須通過上線 gate 才設為預設 |
 
 **不移植 `pairwise_segmenter_model.pkl` 的理由**分兩段，避免日後誤會：
 
@@ -257,7 +257,9 @@ embedding 抽取成本：dialseg711 約 19k 條 utterance；Cohere 一次可送 
 
 ### 上線 gate
 
-`pairwise_v2` 只有在**人工 Test-Real** 上同時勝過「`embedding_depth` 無監督」與「每 3 輪機械切分」兩個基線，才設為 `encoder` 模式預設；否則預設留在 `embedding_depth`。基線裡放機械切分是為了證明非退化。
+`pairwise_v2` 只有在**人工 Test-Real** 上同時勝過「`embedding_depth` 無監督」與「每 3 輪機械切分」兩個基線（micro F1 更高且 Pk 更低），才設為 `CHUNKER_TYPE` 預設；否則預設留在 `embedding_depth`。基線裡放機械切分是為了證明非退化。判定由 `segmenter_v2_evaluate.py` 自動輸出，不靠人工判斷。
+
+完整操作步驟、artifact 契約與資料政策見 [feature_segmenter-pairwise-v2.md](feature_segmenter-pairwise-v2.md)；工作流腳本在 `aws-hackathon/scripts/segmenter_v2_*.py`，共用特徵實作在 `aws-hackathon/segmenter_v2/contract.py`（匯入本專案的 `FEATURE_SPEC`，避免訓練與推論漂移）。
 
 model card 欄位（隨 artifact 進 `backend/src/extraction/assets/segmenter/`）：embedding model id 與維度、feature spec、訓練／開發／測試集來源與筆數、標籤來源（human）、文本來源（native／machine-translated／LLM-generated）、split 方式、held-out 指標（邊界 P/R/F1、Pk、WindowDiff）、兩個基線對照數字、決策門檻、`min_turns` 設定。
 
