@@ -173,16 +173,29 @@ Base table Query 就夠，加索引的儲存與寫入成本換不到東西。
 
 ## 11. 任務拆解
 
-| # | 內容 | Commit |
-|---|---|---|
-| 1 | 本文件與 framework 欄位／env 同步 | `docs(summaries): plan daily summarization` |
-| 2 | 資料層：條件式覆寫、倒序分頁、當日 turn／session 盤點 | `feat(summaries): add daily summary data layer` |
-| 3 | `shared/routines.py` occurrence 衍生 | `feat(routines): derive occurrences with cutoff and versions` |
-| 4 | `shared/summarizer.py` 生成邏輯 | `feat(summaries): generate daily summary content` |
-| 5 | `GET /summaries`、`POST /summaries/generate` | `feat(summaries): implement summary api` |
-| 6 | 排程 handler（nightly + backfill） | `feat(summaries): add scheduled generator` |
-| 7 | terraform：Lambda、EventBridge、IAM、路由 | `chore(terraform): wire summary lambdas and routes` |
-| 8 | 測試補齊與回歸 | 併入各步 |
+| # | 內容 | Commit | 狀態 |
+|---|---|---|---|
+| 1 | 本文件與 framework 欄位／env 同步 | `docs(summaries): plan daily summarization` | 完成 |
+| 2 | 資料層：條件式覆寫、倒序分頁、當日 turn／session 盤點 | `feat(summaries): add daily summary data layer` | 完成 |
+| 3 | `shared/routines.py` occurrence 衍生 | `feat(routines): derive occurrences with cutoff and versions` | 完成 |
+| 4 | `shared/summarizer.py` 生成邏輯 | `feat(summaries): generate daily summary content` | 完成 |
+| 5 | `GET /summaries`、`POST /summaries/generate` | `feat(summaries): implement summary api` | 完成 |
+| 6 | 排程 handler（nightly + backfill） | `feat(summaries): add scheduled generator` | 完成 |
+| 7 | terraform：Lambda、EventBridge、IAM、路由 | `chore(terraform): wire summary lambdas and routes` | 完成 |
+| 8 | 整合驗收（moto，只有模型是假的） | `test(summaries): cover partial to complete recovery` | 完成 |
+
+實作後的檔案位置：
+
+| 檔案 | 內容 |
+|---|---|
+| `backend/src/shared/db.py` | `put_daily_summary`（覆寫優先序）、`get_daily_summary`、`list_daily_summaries`、`list_turns_by_day` |
+| `backend/src/shared/sessions.py` | `is_pending_materialization`、`list_pending_sessions` |
+| `backend/src/shared/routines.py` | occurrence 衍生與 `summary_snapshot` |
+| `backend/src/shared/summarizer.py` | `build_summary`、`generate_and_store`、prompt 與 schema |
+| `backend/src/handlers/summaries.py` | `GET /summaries`、`POST /summaries/generate` |
+| `backend/src/handlers/summary_generator.py` | nightly 與 backfill 兩種排程 mode |
+| `terraform/{lambda,eventbridge,api_gateway,cloudwatch,variables,outputs}.tf` | 兩支 Lambda、兩條排程、IAM、路由、告警 |
+| `backend/tests/test_summar*.py`、`test_routine_occurrences.py`、`test_session_pending.py` | 單元與整合測試 |
 
 ## 12. Verification 對照
 
