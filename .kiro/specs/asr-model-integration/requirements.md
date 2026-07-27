@@ -147,7 +147,7 @@
 #### 驗收條件
 
 1. THE ASR-only 測試套件 SHALL 將 `pytest==8.3.5` 與 `hypothesis==6.122.3` 列為精確釘選的後端開發期依賴。
-2. THE ASR-only 測試套件 SHALL 以 `python -m pip install -e ".[dev]"` 安裝開發期依賴，並以 `python -m pytest tests/asr -q` 執行 ASR-only 測試。
+2. THE ASR-only 測試套件 SHALL 在 `asr-lambda/environment.yml` 建立並啟用的 `asr-model` conda 環境中，以 `python -m pip install -e ".[dev]"` 安裝開發期依賴，並以 `python -m pytest tests/asr -q` 執行 ASR-only 測試。
 3. THE ASR-only 測試套件 SHALL 包含 ASR 領域型別、後端 ASR 設定、ASR Router、Provider Contract、hak Mock Provider、AWS `zh-TW` Adapter Contract、結構化證據紀錄 schema 與 ADR 範本 schema 的單元測試。
 4. THE ASR-only 測試套件 SHALL 包含短 WAV、有效 M4A、損壞音訊、Input Format 與內容不符音訊、59.999 秒音訊、60.000 秒音訊與 60.001 秒音訊的 Canonical Audio fixture。
 5. WHEN ASR-only 測試套件執行 Canonical Audio fixture，THE ASR-only 測試套件 SHALL 驗證短 WAV、有效 M4A、59.999 秒音訊與 60.000 秒音訊成功產生 Canonical Audio。

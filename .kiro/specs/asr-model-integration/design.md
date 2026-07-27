@@ -371,9 +371,11 @@ pytest==8.3.5
 hypothesis==6.122.3
 ```
 
-兩者都必須在 `backend` 的 `[dev]` dependencies 中，沒有 optional marker、extra gate 或 skip fallback。唯一支援的必要執行序列是：
+兩者都必須在 `backend` 的 `[dev]` dependencies 中，沒有 optional marker、extra gate 或 skip fallback。ASR-only 本機執行必須使用 `asr-lambda/environment.yml` 建立的 `asr-model` conda 環境，以取得已封裝的 Python、音訊解碼與 ASR 推論相依套件。唯一支援的必要執行序列是：
 
 ```bash
+conda env create -f ../asr-lambda/environment.yml  # 首次建立
+conda activate asr-model
 python -m pip install -e ".[dev]"
 python -m pytest tests/asr -q
 ```

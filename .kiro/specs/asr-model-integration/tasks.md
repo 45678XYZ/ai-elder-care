@@ -10,7 +10,7 @@
   - [ ] 1.1 更新 `backend/pyproject.toml` 的 `[project.optional-dependencies].dev`，並建立 `backend/tests/asr/` 的必要測試設定
     - 將 `pytest==8.3.5` 與 `hypothesis==6.122.3` 設為精確、無 marker、無 fallback 的 `[dev]` 開發期依賴；保留 editable install 可解析的後端套件設定。
     - 在 `backend/tests/asr/` 建立共用測試設定，將 Hypothesis profile 固定為每項 property 至少 100 iterations，並提供不建立網路連線的測試防護與共用假件。
-    - 將唯一必要安裝與執行指令寫入測試設定註解／helper：`python -m pip install -e ".[dev]"` 與 `python -m pytest tests/asr -q`。
+    - 將唯一必要安裝與執行指令寫入測試設定註解／helper：先以 `asr-lambda/environment.yml` 建立並啟用 `asr-model` conda 環境，再執行 `python -m pip install -e ".[dev]"` 與 `python -m pytest tests/asr -q`。
     - _Requirements: 8.1, 8.2, 8.12, 8.13_
 
 - [ ] 2. 建立領域型別、錯誤、呼叫 context、deadline/cancel 與受控設定
