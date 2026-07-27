@@ -44,10 +44,18 @@ EVENTS_BY_TYPE = "EventsByType"
 DLQ_OUTCOME = "DlqOutcome"
 SESSION_SWEEP = "SessionSweep"
 
+# 每日摘要：partial 比例與重算次數是 framework 成本章節明列要觀測的項目
+SUMMARY_GENERATED = "SummaryGenerated"
+SUMMARY_PENDING_SESSIONS = "SummaryPendingSessions"
+SUMMARY_MODEL_LATENCY = "SummaryModelLatencyMs"
+SUMMARY_WRITE_REJECTED = "SummaryWriteRejected"
+SUMMARY_REGENERATED = "SummaryRegenerated"
+
 # 單位不是 Count 的指標；其餘預設 Count
 _UNITS: dict[str, str] = {
     MODEL_LATENCY: "Milliseconds",
     BATCH_DURATION: "Milliseconds",
+    SUMMARY_MODEL_LATENCY: "Milliseconds",
     DEDUP_MERGE_RATE: "Percent",
 }
 
