@@ -243,7 +243,7 @@ repo 裡沒有「未經 LLM 動過」的繁中長者對話：`seniortalk_tw_bala
 | Test-Localized | 10 | 現有 `seniortalk_tw_balanced_corpus.jsonl`（真實結構 + LLM 在地化用詞） | 輔助，指標分開報 |
 | Test-Scenario | 10–15 | 生成的長照場景對話，涵蓋 routine 完成、safety 事件、多話題交織、QA pair closure、長者跳題 | 輔助，**不列入 gate** |
 
-Test-Real 用詞是大陸普通話而非台灣用語，對「話題邊界偵測」可接受（判的是語意流轉，不是詞彙在地性；用詞在地化對事件萃取影響大得多）。**待查**：`BAAI/SeniorTalk` 授權條款是否允許本次用途（尤其 NC 條款），列為 Task 14 檢查項。
+Test-Real 用詞是大陸普通話而非台灣用語，對「話題邊界偵測」可接受（判的是語意流轉，不是詞彙在地性；用詞在地化對事件萃取影響大得多）。授權**已於 Task 14 查證**：CC BY-NC-SA 4.0 + 僅限學術非商業、禁止再識別、衍生須同授權；結論是可作評測、不進訓練、不可用於商業版本，詳見 [feature_segmenter-pairwise-v2.md](feature_segmenter-pairwise-v2.md)。
 
 標註產出物：每段一個 JSONL item（`turns` 已編號、`boundary_after` 留空）＋純文字版；標註指引寫死判準（照護目標轉移／時間場景切換算邊界；同話題細節追問、寒暄回應不算；QA pair closure 原則是新話題起點為提問那一輪）；標完隔一段時間重標 5 段算 self-agreement；污染檢查腳本確保評測對話未出現在訓練集或翻譯集（n-gram overlap + near-duplicate）。
 
@@ -399,16 +399,30 @@ Commit：`feat(observability): add extraction metrics`
 
 ### Task 14 — 上游（aws-hackathon）修補與評測補齊
 
-commit 進 `aws-hackathon` repo，不在本分支：
+commit 進 `aws-hackathon` repo，不在本分支。執行結果：
 
-- `translate_tiage.py` 拿掉 `[:3]`、改逐 turn 翻譯 + 程式化重組 marker、改用 Bedrock，並附翻譯稽核腳本
-- 所有訓練腳本的交叉驗證改 `GroupKFold`（by dialogue_id），重新回報修正後指標
-- `ChunkingResult.metadata` 補 `probabilities`（`verify_pairwise_flaws.py` 第 3 項目前讀不到此 key，靜默跳過）
-- `build_augmented_clean_dataset.py` 的 `(i+1) % 4 == 0` 假標加警語，訓練時排除
-- 修 README「772 維多語言句向量」措辭（772 是特徵維度、句向量是 384 維）
-- `train_on_raw_dialseg711.py` 與 `train_pairwise_segmenter.py` 改用各自輸出檔名，避免互相覆蓋
-- 補 held-out 評測：dialseg711 5-fold（by dialogue）＋ 繁中零樣本，回報邊界 P/R/F1、Pk、WindowDiff，並列「每 3 輪機械切分」與「depth score」兩基線
-- 確認 `BAAI/SeniorTalk` 授權允許本次用途；抽樣原始轉錄並產生標註檔
+- **`translate_tiage.py` 標為 deprecated**（未加 `--force` 直接退出），指向 `scripts/segmenter_v2_translate.py`。原本計畫是改這支，改成保留追溯用：新腳本已是逐 turn 翻譯 + 程式化重組 marker + Bedrock + 稽核，兩份同功能腳本並存只會漂移。
+- **交叉驗證改 `GroupKFold`（by dialogue_id）**：`train_on_raw_dialseg711.py`（`parse_raw_dialseg711` 回傳 groups）與 `train_pairwise_segmenter.py`（讀 dataset 的 `dialogue_id`）。
+- **`ChunkingResult.metadata` 補 `probabilities`**：`PairwiseRoBERTaChunker` 三條路徑（embedding proba / tfidf proba / depth score）都填分數，另加 `score_kind` 與 `degenerate_scores`。`verify_pairwise_flaws.py` 第 3 項不再靜默跳過。
+- **機械假標加警語並排除**：`build_augmented_clean_dataset.py` 每筆補 `dialogue_id` 與 `label_source`（`mechanical-pseudo` / `human-annotated`）；訓練腳本以 `EXCLUDED_LABEL_SOURCES` 過濾。
+- **README 措辭修正**：384 維句向量 → 串接成 772 維 pairwise 特徵（4 純量 + 384 絕對差 + 384 乘積）；並標明 99.58% 是 9 樣本 in-sample 示範、不是評測數字。
+- **artifact 檔名分開**：`pairwise_segmenter_dialseg711_en.pkl` / `pairwise_segmenter_clean_zh.pkl`，不再互相覆蓋；`PairwiseRoBERTaChunker.FALLBACK_MODEL_PATHS` 依序尋找並保留舊檔名相容。
+- **`BAAI/SeniorTalk` 授權已查證**：CC BY-NC-SA 4.0 + 學術非商業限定，結論見上方第 8 節與 pairwise-v2 文件。抽樣與標註檔產出留在 `segmenter_v2_prepare_annotation.py` 的工作流，需人工執行（授權要求下不 vendored 進 repo）。
+
+修正後實測指標（`aws-hackathon`，2026-07-27）：
+
+| 訓練腳本 | 資料 | CV | Mean P / R / F1 |
+|---|---|---|---|
+| `train_on_raw_dialseg711.py` | dialseg711 原始人標，18639 對 / 711 段 | GroupKFold(5) by dialogue | 0.901 / 0.573 / **0.700** |
+| 同上（修正前） | 同上 | StratifiedKFold(5) | 0.901 / 0.568 / 0.696 |
+| `train_pairwise_segmenter.py` | clean_zh，排除假標後剩 45 對 / 3 段 | GroupKFold(3) by dialogue | 0.000 / 0.000 / **0.000** |
+
+兩點結論：
+
+1. dialseg711 上 GroupKFold 與 StratifiedKFold 幾乎相同（0.700 vs 0.696）——TF-IDF 詞彙特徵不會記住 dialogue 身分，這批資料原本就沒有明顯洩漏。改成 GroupKFold 是為了正確性，不是為了修分數。
+2. 繁中那支在移除洩漏與假標後**完全失效**（F1 = 0，從不預測邊界）：可用資料只剩 3 段對話 / 8 個正例。先前看起來可用的分數來自 pair 層級隨機切分 + 每 4 輪機械假標。因此 `train_pairwise_segmenter.py` 加了 `MIN_ACCEPTABLE_F1 = 0.30` 閘門，未達標**不導出 artifact**（否則 `PairwiseRoBERTaChunker` 會自動載入這個從不切分的模型，推論階段安靜退化成整段不切）。繁中路線改由 `segmenter_v2_*.py` 承接。
+
+Pk／WindowDiff 與兩條基線（`every_3_turns`、`embedding_depth`）的比較不在此處補：那需要人工標註的段落級評測集，已是 `segmenter_v2_evaluate.py` 的職責，pair 層級 CV 算不出段落指標。
 
 ## 10. 新增環境變數
 
