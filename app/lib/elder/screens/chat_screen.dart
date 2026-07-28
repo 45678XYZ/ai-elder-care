@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -246,9 +247,11 @@ class _ChatScreenState extends State<ChatScreen>
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-          // 問候語依時段變化；不放語言切換（§5.1）。
-          // 不放日期——今日頁的農民曆牌面已經是日期的來源，這裡重複只是雜訊。
-          child: Text('${AppSession.instance.displayName}，${_greeting()}！',
+          // 標題是「這是誰的聊天室」，不是問候語——問候語每次進來都一樣，
+          // 放在最上面等於用最大的字重複一句沒有資訊的話。時段問候移到下方
+          // 開場那一句（見 [_ConversationHint]），講完就被對話取代。
+          // 不放語言切換（§5.1）；不放日期（今日頁的農民曆牌面才是日期的來源）。
+          child: Text('${AppSession.instance.displayName}的溫馨聊天室',
               style: text.headlineLarge),
         ),
         // 橫線把問候語與對話區切開，讓下方看得出來是一個「聊天室」而不是同一段內容。
@@ -283,7 +286,9 @@ class _ChatScreenState extends State<ChatScreen>
     // 還沒講過話時這塊是空的——一整片留白會讓長輩不確定自己是不是按錯了。
     // 放範例句而不是插圖：它同時回答「這裡能做什麼」和「我該說什麼」。
     if (_messages.isEmpty && _question.isEmpty) {
-      return const _ConversationHint();
+      return _ConversationHint(
+        greeting: '${AppSession.instance.displayName}，${_greeting()}！',
+      );
     }
 
     // 最後一項是正在辨識中、還沒定案的那句（如果有）。
@@ -385,10 +390,17 @@ class _Message {
   final String text;
 }
 
-/// 開始對話前的引導。純顯示，不可互動——長者模式的三個互動額度要留給
-/// 麥克風、打字、底部分頁。
+/// 開始對話前的引導：時段問候 + 三句範例，整組置中。純顯示，不可互動——
+/// 長者模式的三個互動額度要留給麥克風、打字、底部分頁。
+///
+/// 每一句前面一顆朱紅星芒、整組置中在空白的對話區裡。原本是三張靠左的卡片，
+/// 看起來像「可以點的選項」，但它們不能點；改成置中的文字就只是**示範**，
+/// 不會被誤認成按鈕，也不跟下面真正能按的麥克風搶。
 class _ConversationHint extends StatelessWidget {
-  const _ConversationHint();
+  const _ConversationHint({required this.greeting});
+
+  /// 例：「阿蘭嬤，早安！」——依時段變化，講完就被對話取代。
+  final String greeting;
 
   /// 挑日常會用到的三句：一句回報、一句身體狀況、一句閒聊，
   /// 讓長輩看得出「什麼都可以說」而不只是查資料。
@@ -401,29 +413,100 @@ class _ConversationHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-      children: [
-        Text('你可以這樣說',
-            style: text.headlineSmall?.copyWith(color: AppColors.inkSecondary)),
-        const SizedBox(height: AppSpacing.lg),
-        for (final line in _examples) ...[
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.lg, vertical: AppSpacing.lg),
-            decoration: const BoxDecoration(
-              color: AppColors.card,
-              borderRadius: BorderRadius.all(AppRadius.card),
-              boxShadow: AppShadows.card,
-            ),
-            child: Text('「$line」', style: text.headlineSmall),
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        // 置中在整片空對話區裡，但字級放大到兩倍時仍要捲得動——
+        // 所以是「至少滿一頁高」的可捲置中，而不是會被撐爆的 Center。
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg, vertical: AppSpacing.xl),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              minHeight:
+                  math.max(constraints.maxHeight - AppSpacing.xl * 2, 0)),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _HintLine(text: greeting, style: text.headlineLarge),
+              const SizedBox(height: AppSpacing.xl),
+              Text('你可以這樣說',
+                  textAlign: TextAlign.center,
+                  style: text.headlineSmall
+                      ?.copyWith(color: AppColors.inkSecondary)),
+              const SizedBox(height: AppSpacing.lg),
+              for (final line in _examples) ...[
+                _HintLine(text: line, style: text.headlineSmall),
+                const SizedBox(height: AppSpacing.md),
+              ],
+            ],
           ),
-          const SizedBox(height: AppSpacing.md),
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 引導的一行：朱紅星芒 + 置中的字。
+///
+/// 星芒用畫的不用字元——`✳` 這類符號不在 Noto Serif/Sans TC 的字集裡，
+/// 打包字體後會變成缺字方框。
+class _HintLine extends StatelessWidget {
+  const _HintLine({required this.text, required this.style});
+
+  final String text;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = (style?.fontSize ?? 24) * 0.8;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          // 對齊第一行文字的視覺中線，而不是整段文字的頂端
+          padding: EdgeInsets.only(top: size * 0.35),
+          child: CustomPaint(
+            size: Size.square(size),
+            painter: const _AsteriskPainter(),
+          ),
+        ),
+        SizedBox(width: size * 0.45),
+        Flexible(
+          child: Text(text, textAlign: TextAlign.center, style: style),
+        ),
       ],
     );
   }
+}
+
+/// 八芒星，朱紅。手繪而非圖示字型：只有八條從中心放射的線，
+/// 換字體、換平台都長一樣。
+class _AsteriskPainter extends CustomPainter {
+  const _AsteriskPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    final radius = size.width / 2;
+    final paint = Paint()
+      ..color = AppColors.accentText
+      ..strokeWidth = size.width * 0.12
+      ..strokeCap = StrokeCap.round;
+
+    for (var i = 0; i < 8; i++) {
+      final angle = i * math.pi / 4;
+      // 斜的四條短一點，八芒星才有長短交錯的節奏，不會看起來像一團毛球
+      final len = radius * (i.isEven ? 1.0 : 0.72);
+      canvas.drawLine(
+        center,
+        center + Offset(math.cos(angle) * len, math.sin(angle) * len),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AsteriskPainter oldDelegate) => false;
 }
 
 /// 四狀態麥克風。每態外形／內容不同（§5.3），不只靠顏色。
