@@ -217,46 +217,63 @@ abstract final class AppTypography {
   );
 }
 
-/// 農民曆牌面專用字級（來自設計 v3 原檔）。
+/// 農民曆牌面字級（MASTER.md「農民曆牌面」那張表）。
 ///
-/// 牌面是單一用途的視覺單元，六個元素的字級是一整組互相依賴的比例——
-/// 拆進一般 textTheme 級距會失去這層關係，也會讓 66/200 這種只服務牌面的
-/// 級距污染其他畫面。集中在此，對應 MASTER.md 的牌面段落。
+/// 這裡放的是**比例**，不是最終尺寸：表上的數值是牌面寬度等於 [refWidth] 時的
+/// 渲染尺寸，實際渲染由 `AlmanacFace` 整組乘上 `牌面寬度 / refWidth`。
+/// 六個元素是一組互相依賴的比例，缺一個或單獨改一個就不是撕曆的樣子了——
+/// 之前小卡／過場／放大檢視各寫一套絕對字級，三個地方的版面才會各長各的。
 ///
-/// 顏色一律 [AppColors.accentText]（牌面全朱紅單色，靠字級與位置分層次）。
+/// 字體沿用「大字襯線、小字黑體」的分工，但**農曆與干支是刻意的例外**：
+/// 它們是曆書的一部分，維持襯線才有黃曆的樣子，即使字級小於 24。
+///
+/// 顏色由呼叫端決定（台灣日曆慣例：假日朱紅、平日藍），此處不預設。
 abstract final class AlmanacTypography {
-  static TextStyle _serif(double size, FontWeight w,
+  static TextStyle serif(double size, FontWeight weight,
           {double? height, double? letterSpacing}) =>
       GoogleFonts.notoSerifTc(
         fontSize: size,
-        fontWeight: w,
+        fontWeight: weight,
         height: height,
         letterSpacing: letterSpacing,
-        color: AppColors.accentText,
       );
 
+  /// 比例的基準寬度：390 螢幕扣掉頁面 16 邊距與卡片 16 內距後的牌面內寬。
+  /// v3 原檔的字級就是照這個寬度定的。
+  static const double refWidth = 326;
+
   /// 國曆年「2026」
-  static TextStyle get year => _serif(28, FontWeight.w900);
+  static const double year = 28;
 
-  /// 干支「歲次丙午年」
-  static TextStyle get ganZhi => _serif(24, FontWeight.w900);
+  /// 干支「歲次丙午年」；節氣膠囊也用這一級。
+  static const double ganZhi = 24;
 
-  /// 月份數字「7」
-  static TextStyle get monthNumber => _serif(40, FontWeight.w900, height: 1.0);
+  /// 月份數字「7」與底下的「月」
+  static const double monthNumber = 40;
+  static const double monthLabel = 24;
 
-  /// 月份的「月」字
-  static TextStyle get monthLabel => _serif(24, FontWeight.w900, height: 1.0);
-
-  /// 直排農曆。字距 8 在直排是**字與字的垂直間隔**，由排版加 gap 實作，不是 letterSpacing。
-  static TextStyle get lunar => _serif(30, FontWeight.w900, height: 1.0);
+  /// 直排農曆「農曆六月十五」。字距在直排是**字與字的垂直間隔**，
+  /// 由排版加 gap 實作，不是 letterSpacing。
+  static const double lunar = 30;
   static const double lunarGap = 8;
 
-  /// 大日期「19」
-  static TextStyle get day => _serif(200, FontWeight.w900, height: 0.72);
+  /// 大日期「28」。行高壓過 1，數字才不會在中段裡浮著。
+  static const double day = 200;
+  static const double dayHeight = 0.78;
 
-  /// 星期「星期日」——靠字距撐開
-  static TextStyle get weekday =>
-      _serif(42, FontWeight.w900, letterSpacing: 16);
+  /// 大日期往上推的比例（字級的幾成）。文字框下緣留著降部空間、數字用不到，
+  /// 框置中會讓數字看起來偏下、貼著「星期」，往上推才是視覺置中。
+  static const double dayLift = 0.08;
+
+  /// 星期「星期二」——靠字距撐開。
+  static const double weekday = 42;
+  static const double weekdaySpacing = 16;
+
+  /// 首頁小卡是半版寬，等比縮下去會掉到讀不出來，這幾個是縮不下去的下限。
+  /// 只影響字級，不影響版面——所有尺寸的牌面長得一模一樣。
+  static const double minHeader = 12;
+  static const double minLunar = 11;
+  static const double minWeekday = 15;
 }
 
 /// §10 強制淺色，不提供深色模式。

@@ -27,6 +27,7 @@
 
 **長者模式**
 - `elder-today.png`（今日：農民曆牌面 + 行程）
+- `elder-calendar-enlarged.png`（點開日曆的放大檢視：同一套牌面、同比例放大）
 - `elder-today-link-entry.png`（同頁捲到底，未連結家人時的入口）
 - `elder-chat-idle.png`（聊天待機）
 - `elder-link-caregiver.png` / `elder-link-caregiver-done.png`（連結家人：初始與連結成功）
@@ -41,16 +42,25 @@
 
 ```
 flutter build web --release
-# 靜態 server 提供 build/web，再用 Playwright（viewport 390×844）逐一截圖
+# 靜態 server 提供 build/web，再用能明確指定視窗大小的 headless 瀏覽器逐一截圖
 ```
+
+沒有 Playwright 也可以：用 `chrome --headless=new --window-size=390,844
+--remote-debugging-port=9222` 起一個瀏覽器，再用 CDP（`Page.navigate` →
+`Page.captureScreenshot`）截。狀態直接寫 localStorage 佈好——`shared_preferences`
+在 web 上就是 localStorage，key 前面加 `flutter.`、值是 JSON
+（例：`localStorage.setItem('flutter.linked_caregiver_ids', '["care-1"]')`）。
 
 幾個踩過的雷：
 
 - `flutter run -d web-server` 的 debug build 起不來（DDC 載完但 engine 不啟動，畫面全白），**要用 release build**。
 - 截圖需強制軟體渲染（`--use-gl=swiftshader --disable-gpu-compositing`），否則 WebGL canvas 截出來是空白。
-- **不要用 `chrome --headless --screenshot --window-size=390,844`**：Chrome 有最小視窗寬度，實際會渲染成約 500 寬卻只截 390，右側元素看起來像被裁掉，會誤判成版面 overflow。要模擬手機寬度只能用 Playwright 之類能明確設 viewport 的工具。
+- **視窗大小要在啟動時就給**（`--window-size=390,844`）。`Emulation.setDeviceMetricsOverride` 對 Flutter 的 canvas 無效，會截到一個尺寸不對的畫面。
+- 只有 hash 不同的網址**不會重新載入**，會拿到上一輪的畫面與舊 build。先導到 `about:blank` 再導回去。
+- 字體是 google_fonts 執行期下載的，截太早會看到系統預設字或缺字方框——載入後至少等 6 秒。
+- 進到今日畫面會播 2.2 秒的撕曆過場，要等它播完再截（或反過來，趁那段時間截過場本身）。
 - 需要前一頁帶狀態的畫面（如驗證碼頁的信箱）得走完流程才截得到，直接開網址會被導走。
-- 首次設定與連結家人的狀態存在 localStorage，每一組截圖要用乾淨的 browser context，否則入口卡會消失。
+- 首次設定與連結家人的狀態存在 localStorage，每一組截圖前先 `localStorage.clear()`，否則入口卡會消失。
 
 ### 桌機上看手機比例
 

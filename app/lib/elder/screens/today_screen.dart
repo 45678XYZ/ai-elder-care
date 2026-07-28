@@ -10,15 +10,17 @@ import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
 import '../../shared/widgets/status_chip.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/almanac_face.dart';
+import '../widgets/calendar_tear.dart';
+import 'calendar_enlarged.dart';
 
 /// S4 `/elder/today` — 長者模式今日畫面。
 ///
-/// 上半農民曆牌面（傳統撕曆版面：國曆年、歲次、月份直排、農曆直排、巨大日期），下半當日行程
+/// 頁首是一張撕曆（左日期、右早安圖，見 [_CalendarSheet]），下半當日行程
 /// （`GET /routines?elder_id=&date=`），可手動確認完成（`POST /routines/{id}/complete`）。
 ///
-/// 長者規格：內文 >=24sp、觸控 >=60dp、**單頁可互動元素 <=3**。
-/// 為了守住最後一條，只有「接下來那一件」給確認按鈕，其餘行程純顯示不可點——
-/// 長者不必在一整列按鈕裡挑，要做的事永遠只有畫面上最大的那一個。
+/// 長者規格：內文 >=24sp、觸控 >=60dp。可互動元素上限 3 在這一頁刻意放寬，
+/// 理由見 [_RoutineRow]。
 ///
 /// 不放語言切換：語言由照護者在初次設定決定，長者端不切換（見 setup_screen §5.1）。
 class TodayScreen extends StatefulWidget {
@@ -97,29 +99,12 @@ class _TodayScreenState extends State<TodayScreen> {
           builder: (context, view) {
             final items = view.items.toList()
               ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
-            // 「接下來」＝時間最早、還沒完成的那一件（含先前漏掉的）。
-            RoutineOccurrence? next;
-            for (final o in items) {
-              if (_statusOf(o) != 'done') {
-                next = o;
-                break;
-              }
-            }
-            final pending = next;
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               children: [
-                const _AlmanacPanel(),
+                const TearableCalendarSheet(child: _CalendarSheet()),
                 const SizedBox(height: AppSpacing.xl),
-                if (pending != null) ...[
-                  _NextUpCard(
-                    occurrence: pending,
-                    status: _statusOf(pending),
-                    onComplete: () => _complete(pending),
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-                ],
                 const SectionHeader('今天的安排', elderMode: true),
                 const SizedBox(height: AppSpacing.md),
                 for (final o in items) ...[
@@ -127,7 +112,7 @@ class _TodayScreenState extends State<TodayScreen> {
                     key: ValueKey(o.routineId),
                     occurrence: o,
                     status: _statusOf(o),
-                    isNext: identical(o, pending),
+                    onComplete: () => _complete(o),
                   ),
                   const SizedBox(height: AppSpacing.md),
                 ],
@@ -146,6 +131,245 @@ class _TodayScreenState extends State<TodayScreen> {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// 撕曆頁首——一張紙分兩面：左邊日期，右邊早安圖。
+///
+/// ```
+/// ┌──────────┬──────────────┐
+/// │   27     │              │
+/// │ 星期一    │    早安圖     │
+/// │ 農曆六月十四│              │
+/// └──────────┴──────────────┘
+/// ```
+///
+/// 寬度用 flex 1:1 分,不寫死 dp——Android 邏輯寬度 320～412 都有,寫死會爆版。
+/// 原本是 2:3(日期窄、早安圖寬),但頂列要放到 14sp 讀得出來就需要更多寬度,
+/// 兩面各半是「頂列完整」與「早安圖不過小」之間的平衡點。
+///
+/// 高度由整排的 5:2 比例算出來,再夾在 120～160dp:低於 120 日期數字卡不下,
+/// 高於 160 會擠掉下方清單的第一列。
+///
+/// 兩面都可以點開放大檢視;它們是同一張紙,撕頁動畫要整排一起撕走。
+class _CalendarSheet extends StatelessWidget {
+  const _CalendarSheet();
+
+  static const _paneGap = 8.0;
+
+  /// Hero tag。放大檢視要用同一組 tag 才轉場得起來。
+  static const dateHeroTag = 'calendar_card_hero';
+  static const greetingHeroTag = 'morning_image_hero';
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final lunar = LunarDate.of(now);
+
+    // 台灣日曆慣例：假日紅、平日藍。農曆節日（春節、中秋…）也算假日。
+    // TODO: 國定假日（如雙十、清明補假）需要行事曆資料才判得出來，目前只認週末與農曆節日。
+    final isHoliday = now.weekday == DateTime.saturday ||
+        now.weekday == DateTime.sunday ||
+        lunar.festival != null;
+    final calColor =
+        isHoliday ? AppColors.accentText : AppColors.calendarWeekday;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final height = (constraints.maxWidth / 2.5).clamp(120.0, 160.0);
+        // 一面的長寬比。放大檢視照這個比例放大，維持「放大＝同一張變大」。
+        final paneAspect = (constraints.maxWidth - _paneGap) / 2 / height;
+        return SizedBox(
+          height: height,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: _TappablePane(
+                  heroTag: dateHeroTag,
+                  label: '放大看日期',
+                  onTap: () => showEnlargedDate(context,
+                      now: now,
+                      lunar: lunar,
+                      color: calColor,
+                      aspectRatio: paneAspect),
+                  child: _DatePane(now: now, lunar: lunar, color: calColor),
+                ),
+              ),
+              const SizedBox(width: _paneGap),
+              Expanded(
+                child: _TappablePane(
+                  heroTag: greetingHeroTag,
+                  label: '放大看圖',
+                  onTap: () => showEnlargedGreeting(context,
+                      now: now, aspectRatio: paneAspect),
+                  child: _GreetingPane(now: now),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 可點開放大的面板外框。
+///
+/// Hero 包在最外層、點擊區蓋滿整面——長輩點哪裡都算數，不必瞄準小圖示。
+class _TappablePane extends StatelessWidget {
+  const _TappablePane({
+    required this.heroTag,
+    required this.label,
+    required this.onTap,
+    required this.child,
+  });
+
+  final String heroTag;
+  final String label;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Hero(
+          tag: heroTag,
+          // 轉場途中用一般 Material，避免 Hero 飛行時把陰影也一起插值成怪形狀。
+          flightShuttleBuilder: (_, __, ___, ____, toContext) =>
+              Material(color: Colors.transparent, child: child),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+/// 日期面板——牌面本身是 [AlmanacFace]（三個尺寸共用同一套版面），
+/// 這裡只負責那張紙：紙色、圓角、陰影與螢幕報讀的整句日期。
+class _DatePane extends StatelessWidget {
+  const _DatePane(
+      {required this.now, required this.lunar, required this.color});
+
+  final DateTime now;
+  final LunarDate lunar;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      // 牌面用最白的紙色，跟下方一般卡片（card）區隔開，像一張撕曆貼在頁面上
+      color: AppColors.cardAlt,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      radius: AppRadius.cardLarge,
+      shadows: AppShadows.cardRaised,
+      semanticLabel: elderDateSpokenLabel(now, lunar),
+      child: AlmanacFace(date: now, lunar: lunar, color: color),
+    );
+  }
+}
+
+/// 螢幕報讀用的完整日期語句。TalkBack 要一次讀完，不要逐塊拆讀。
+String elderDateSpokenLabel(DateTime now, LunarDate lunar) {
+  const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+  return '${now.year}年${now.month}月${now.day}日 '
+      '星期${weekdays[now.weekday - 1]} '
+      '農曆${lunar.monthDay}，歲次${lunar.ganZhiYear}年'
+      '${lunar.highlight == null ? '' : '，${lunar.highlight}'}';
+}
+
+/// 早安圖——依時段換一張。
+///
+/// 圖檔放 `assets/images/greeting_{morning,afternoon,evening}.jpg`，**沒放也不會壞**：
+/// 找不到檔案就退回色塊加大字（見 [_GreetingFallback]），所以圖可以晚點才補。
+///
+/// 裁切用 `BoxFit.cover` 配 `Alignment.topCenter`：素材多半是正方形、祝福語印在
+/// 下緣，而這一面是 3:2 橫式。對齊上緣剛好保住主體與「早安」大字，順便把下緣那行
+/// 讀不到的小字裁掉——縮到約 192dp 寬之後，那種字級長輩本來就看不見。
+class _GreetingPane extends StatelessWidget {
+  const _GreetingPane({required this.now});
+
+  final DateTime now;
+
+  ({String label, IconData icon, String asset}) get _greeting {
+    final h = now.hour;
+    if (h < 11) {
+      return (
+        label: '早安',
+        icon: Icons.wb_twilight,
+        asset: 'assets/images/greeting_morning.jpg',
+      );
+    }
+    if (h < 18) {
+      return (
+        label: '午安',
+        icon: Icons.wb_sunny_outlined,
+        asset: 'assets/images/greeting_afternoon.jpg',
+      );
+    }
+    return (
+      label: '晚安',
+      icon: Icons.nightlight_outlined,
+      asset: 'assets/images/greeting_evening.jpg',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final g = _greeting;
+    return AppCard(
+      color: AppColors.avatarBg,
+      padding: EdgeInsets.zero, // 圖要滿版貼齊卡片邊緣
+      radius: AppRadius.cardLarge,
+      shadows: AppShadows.cardRaised,
+      semanticLabel: g.label,
+      child: ClipRRect(
+        borderRadius: const BorderRadius.all(AppRadius.cardLarge),
+        child: Image.asset(
+          g.asset,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+          alignment: Alignment.topCenter,
+          errorBuilder: (context, _, __) =>
+              _GreetingFallback(label: g.label, icon: g.icon),
+        ),
+      ),
+    );
+  }
+}
+
+/// 沒有圖檔時的替代：暖色底加時段問候。
+class _GreetingFallback extends StatelessWidget {
+  const _GreetingFallback({required this.label, required this.icon});
+
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Container(
+      color: AppColors.avatarBg,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(12),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 44, color: AppColors.avatarFg),
+            const SizedBox(width: AppSpacing.md),
+            Text(label,
+                style: text.headlineLarge?.copyWith(color: AppColors.avatarFg)),
+          ],
         ),
       ),
     );
@@ -197,161 +421,18 @@ class _LinkCaregiverEntry extends StatelessWidget {
   }
 }
 
-/// 農民曆牌面——照傳統撕曆的版面：
+/// 行程列。每一列都可以自己打勾。
 ///
-/// ```
-/// 2026      歲次丙午年      7
-///                          月
-/// 農
-/// 曆          19
-/// 六
-/// 月        星 期 日
-/// 初
-/// 六
-/// ```
+/// 原本只有最上面那張「接下來」卡片有按鈕，是為了守長者模式「單頁可互動元素 <=3」，
+/// 但代價是長輩 19:00 量完血壓沒地方標記——那條規則的用意是不要讓人在一堆**不同**
+/// 功能裡挑，而不是禁止同一個動作重複出現。整份清單只有一種操作（打勾自己那件），
+/// 認知負擔跟三顆不同按鈕不是同一回事，所以這裡刻意放寬。
 ///
-/// 四角各司其職（左上國曆年、中上干支、右上月份直排、左側農曆直排），
-/// 中央留給巨大的日期。整面單色、靠字級與位置分層次——顏色照台灣日曆的慣例，
-/// 假日（週末與農曆節日）朱紅、平日藍。
-class _AlmanacPanel extends StatelessWidget {
-  const _AlmanacPanel();
-
-  static const _weekdays = ['一', '二', '三', '四', '五', '六', '日'];
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final now = DateTime.now();
-    final lunar = LunarDate.of(now);
-
-    // 台灣日曆慣例：假日紅、平日藍。農曆節日（春節、中秋…）也算假日。
-    // TODO: 國定假日（如雙十、清明補假）需要行事曆資料才判得出來，目前只認週末與農曆節日。
-    final isHoliday = now.weekday == DateTime.saturday ||
-        now.weekday == DateTime.sunday ||
-        lunar.festival != null;
-    final calColor =
-        isHoliday ? AppColors.accentText : AppColors.calendarWeekday;
-
-    return AppCard(
-      // 牌面用最白的紙色，跟下方一般卡片（card）區隔開，像一張撕曆貼在頁面上
-      color: AppColors.cardAlt,
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
-      radius: AppRadius.cardLarge,
-      shadows: AppShadows.cardRaised,
-      semanticLabel: '${now.month}月${now.day}日 星期${_weekdays[now.weekday - 1]}，'
-          '農曆${lunar.monthDay}，歲次${lunar.ganZhiYear}年'
-          '${lunar.highlight == null ? '' : '，${lunar.highlight}'}',
-      child: Column(
-        children: [
-          // 頂列：國曆年 · 歲次 · 月份（數字大、「月」小，直排）
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('${now.year}',
-                  style: AlmanacTypography.year.copyWith(color: calColor)),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('歲次${lunar.ganZhiYear}年',
-                      textAlign: TextAlign.center,
-                      style:
-                          AlmanacTypography.ganZhi.copyWith(color: calColor)),
-                ),
-              ),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('${now.month}',
-                      style: AlmanacTypography.monthNumber
-                          .copyWith(color: calColor)),
-                  Text('月',
-                      style: AlmanacTypography.monthLabel
-                          .copyWith(color: calColor)),
-                ],
-              ),
-            ],
-          ),
-
-          // 中段：農曆直排靠左，巨大日期置中
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              _VerticalText('農曆${lunar.monthDay}',
-                  style: AlmanacTypography.lunar.copyWith(color: calColor),
-                  gap: AlmanacTypography.lunarGap),
-              // 日期在「農曆直排右緣」到「卡片右緣」之間置中——與左右兩側等距，
-              // 而不是對齊整張卡片的中線（那會被左邊的直排推得偏右）。
-              // FittedBox：200sp 在窄螢幕或系統放大字級時自動縮，不撐破卡片。
-              Expanded(
-                child: Center(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text('${now.day}',
-                        style: AlmanacTypography.day.copyWith(color: calColor)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.sm),
-
-          // letterSpacing 會在最後一個字右側也加上間距，補一個左邊距讓它視覺置中
-          Padding(
-            padding: EdgeInsets.only(
-                left: AlmanacTypography.weekday.letterSpacing ?? 0),
-            child: Text('星期${_weekdays[now.weekday - 1]}',
-                style: AlmanacTypography.weekday.copyWith(color: calColor)),
-          ),
-
-          // 節氣或農曆節日只在當天出現
-          if (lunar.highlight != null) ...[
-            const SizedBox(height: AppSpacing.md),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-              decoration: BoxDecoration(
-                color: calColor,
-                borderRadius: const BorderRadius.all(AppRadius.pill),
-              ),
-              child: Text(lunar.highlight!,
-                  style: text.headlineSmall?.copyWith(color: Colors.white)),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// 中文直排：逐字往下排。
-///
-/// 不用 RotatedBox——那會把字也轉倒。中文直排本來就是「字不轉、往下疊」。
-/// [gap] 是字與字的垂直間隔（直排的「字距」）；`letterSpacing` 在直排無效，
-/// 因為每個字各自是一個 Text。
-class _VerticalText extends StatelessWidget {
-  const _VerticalText(this.text, {this.style, this.gap = 0});
-
-  final String text;
-  final TextStyle? style;
-  final double gap;
-
-  @override
-  Widget build(BuildContext context) {
-    final runes = text.runes.toList();
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < runes.length; i++) ...[
-          if (i > 0) SizedBox(height: gap),
-          Text(String.fromCharCode(runes[i]), style: style),
-        ],
-      ],
-    );
-  }
-}
-
-/// 「接下來」——本畫面唯一的可互動元素。
-class _NextUpCard extends StatelessWidget {
-  const _NextUpCard({
+/// 輕重由狀態承擔：逾期給紅框加整寬大按鈕，還沒到的只給右側一顆安靜的圓形勾，
+/// 已完成的沒有按鈕。
+class _RoutineRow extends StatelessWidget {
+  const _RoutineRow({
+    super.key,
     required this.occurrence,
     required this.status,
     required this.onComplete,
@@ -364,83 +445,13 @@ class _NextUpCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final missed = status == 'missed';
-
-    return AppCard(
-      color: AppColors.cardAlt,
-      padding: const EdgeInsets.all(20),
-      radius: AppRadius.cardLarge,
-      shadows: AppShadows.cardRaised,
-      border: Border.all(color: AppColors.accent, width: 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(missed ? '這件還沒做' : '接下來',
-              style: text.headlineSmall?.copyWith(color: AppColors.accentText)),
-          const SizedBox(height: AppSpacing.sm),
-          Text(occurrence.title, style: text.headlineLarge),
-          const SizedBox(height: AppSpacing.sm),
-          Row(
-            children: [
-              const Icon(Icons.schedule,
-                  size: 28, color: AppColors.inkSecondary),
-              const SizedBox(width: AppSpacing.sm),
-              Flexible(
-                child: Text(_timeLabel(occurrence.scheduledAt),
-                    style: text.headlineSmall
-                        ?.copyWith(color: AppColors.inkSecondary)),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          SizedBox(
-            width: double.infinity,
-            height: 72, // >=60dp
-            child: FilledButton.icon(
-              onPressed: onComplete,
-              icon: const Icon(Icons.check, size: 32),
-              label: Text('我完成了',
-                  style: text.headlineMedium?.copyWith(color: Colors.white)),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.accentText,
-                foregroundColor: Colors.white,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.all(AppRadius.field),
-                ),
-              ).copyWith(
-                overlayColor:
-                    const WidgetStatePropertyAll(AppColors.accentPressed),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 行程列——純顯示，不可點（可互動元素只留給「接下來」那張卡）。
-class _RoutineRow extends StatelessWidget {
-  const _RoutineRow({
-    super.key,
-    required this.occurrence,
-    required this.status,
-    required this.isNext,
-  });
-
-  final RoutineOccurrence occurrence;
-  final String status;
-  final bool isNext;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
     final done = status == 'done';
+    final missed = status == 'missed';
 
     return AppCard(
       color: done ? AppColors.nest : AppColors.card,
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
-      border: isNext ? Border.all(color: AppColors.accent, width: 2) : null,
+      border: missed ? Border.all(color: AppColors.accent, width: 2) : null,
       semanticLabel: '${occurrence.title}，'
           '${_timeLabel(occurrence.scheduledAt)}，'
           '${RoutineStatusStyle.from(status).label}',
@@ -468,11 +479,76 @@ class _RoutineRow extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.sm),
           // 換行擺放，textScaler 2.0 下狀態膠囊不會跟標題擠在同一列
-          Align(
-            alignment: Alignment.centerLeft,
-            child: RoutineStatusChip(status, elderMode: true),
+          Row(
+            children: [
+              Flexible(child: RoutineStatusChip(status, elderMode: true)),
+              if (!done && !missed) ...[
+                const SizedBox(width: AppSpacing.sm),
+                _QuietCheckButton(
+                  key: ValueKey('quiet-check-${occurrence.routineId}'),
+                  onTap: onComplete,
+                  title: occurrence.title,
+                ),
+              ],
+            ],
           ),
+          // 逾期才給整寬大按鈕：這是現在最該處理的一件，值得佔畫面。
+          if (missed) ...[
+            const SizedBox(height: AppSpacing.lg),
+            SizedBox(
+              width: double.infinity,
+              height: 72, // >=60dp
+              child: FilledButton.icon(
+                onPressed: onComplete,
+                icon: const Icon(Icons.check, size: 32),
+                label: Text('我完成了',
+                    style: text.headlineMedium?.copyWith(color: Colors.white)),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.accentText,
+                  foregroundColor: Colors.white,
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.all(AppRadius.field),
+                  ),
+                ).copyWith(
+                  overlayColor:
+                      const WidgetStatePropertyAll(AppColors.accentPressed),
+                ),
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// 還沒到的那幾列用的打勾鈕。60dp 觸控但視覺安靜——它們不該跟逾期那件搶注意力，
+/// 可是長輩提早做完了要有地方標記。
+class _QuietCheckButton extends StatelessWidget {
+  const _QuietCheckButton(
+      {super.key, required this.onTap, required this.title});
+
+  final VoidCallback onTap;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '標記「$title」完成',
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 60,
+          height: 60,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: AppColors.accent, width: 2),
+          ),
+          alignment: Alignment.center,
+          child: const Icon(Icons.check, size: 30, color: AppColors.accentText),
+        ),
       ),
     );
   }

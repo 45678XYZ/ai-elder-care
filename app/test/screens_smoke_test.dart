@@ -4,6 +4,8 @@ import 'package:ai_elder_care/caregiver/screens/summaries_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/timeline_screen.dart';
 import 'package:ai_elder_care/elder/screens/today_screen.dart';
 import 'package:ai_elder_care/shared/screens/role_select_screen.dart';
+import 'package:ai_elder_care/shared/services/calendar_tear_store.dart';
+import 'package:ai_elder_care/shared/services/lunar_date.dart';
 import 'package:ai_elder_care/shared/services/session_store.dart';
 import 'package:ai_elder_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -23,7 +25,12 @@ void main() {
   });
 
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    // 標記撕曆動畫今天已播過。動畫期間底層包在 IgnorePointer 裡，語意節點會被
+    // 一併排除，讓版面與無障礙斷言變得看時機而定。動畫本身由
+    // calendar_tear_test.dart 單獨測，這裡只測版面。
+    SharedPreferences.setMockInitialValues({
+      'calendar_tear_last_shown': CalendarTearStore.dateKey(DateTime.now()),
+    });
     // 每個測試都從乾淨的長者情境開始，避免互相影響。
     AppSession.instance
       ..elders = const []
@@ -53,6 +60,10 @@ void main() {
           data: MediaQueryData(
             size: size,
             textScaler: TextScaler.linear(textScale),
+            // 關掉撕曆過場：進到今日畫面**每次**都會播，動畫期間底層被蓋住，
+            // 版面與無障礙斷言會變成看時機而定。動畫本身由 calendar_tear_test.dart
+            // 單獨測；這裡順便驗了「減少動態效果」那條路徑真的不播。
+            disableAnimations: true,
           ),
           child: screen,
         ),
@@ -102,22 +113,117 @@ void main() {
       expect(find.text('${DateTime.now().day}'), findsWidgets);
     });
 
-    testWidgets('只給一個確認按鈕——長者模式可互動元素 <=3', (tester) async {
+    // 頁首撕曆的驗收：三種常見 Android 邏輯寬度都要放得下，日期三行不能被截掉。
+    for (final width in [320.0, 360.0, 412.0]) {
+      testWidgets('撕曆頁首在 ${width.toInt()}dp 寬不溢出', (tester) async {
+        await pumpScreen(tester, const TodayScreen(),
+            size: Size(width, 844));
+        expect(tester.takeException(), isNull);
+
+        final now = DateTime.now();
+        final lunar = LunarDate.of(now);
+        // 撕曆的每個元素都要在，小卡與放大檢視是同一套版面（不再有簡化版）。
+        // 月份數字與大日期同數的日子（7/7）會找到兩個，所以用 AtLeastN。
+        expect(find.text('${now.year}'), findsOneWidget);
+        expect(find.text('歲次${lunar.ganZhiYear}年'), findsOneWidget);
+        expect(find.text('${now.month}'), findsAtLeastNWidgets(1));
+        expect(find.text('${now.day}'), findsAtLeastNWidgets(1));
+        expect(find.textContaining('星期'), findsOneWidget);
+        // 農曆是直排，逐字各自一個 Text——檢查第一個字在就好。
+        expect(find.text('${lunar.monthDay}日'.characters.first),
+            findsAtLeastNWidgets(1));
+      });
+    }
+
+    testWidgets('早安圖依時段換問候語', (tester) async {
+      // semantics tree 預設不建，要顯式開；順便驗了螢幕報讀讀得到這些標籤。
+      // 必須在 test body 內 dispose——框架的檢查早於 addTearDown 回呼。
+      final handle = tester.ensureSemantics();
+      await pumpScreen(tester, const TodayScreen());
+
+      final h = DateTime.now().hour;
+      final expected = h < 11 ? '早安' : (h < 18 ? '午安' : '晚安');
+      // 用語意標籤而不是可見文字：有圖時畫面上只有圖，問候語由 semanticLabel 承載。
+      expect(find.semantics.byLabel(RegExp(expected)), findsOne);
+      handle.dispose();
+    });
+
+    testWidgets('日曆兩面都可以點開放大', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpScreen(tester, const TodayScreen());
+
+      expect(find.semantics.byLabel(RegExp('放大看日期')), findsOne);
+      expect(find.semantics.byLabel(RegExp('放大看圖')), findsOne);
+      handle.dispose();
+    });
+
+    testWidgets('TalkBack 一次讀完整句日期，不逐塊拆讀', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpScreen(tester, const TodayScreen());
+
+      final now = DateTime.now();
+      final lunar = LunarDate.of(now);
+      expect(find.semantics.byLabel(RegExp(elderDateSpokenLabel(now, lunar))),
+          findsOne);
+      handle.dispose();
+    });
+
+    testWidgets('只有逾期那件給整寬大按鈕，其餘保持安靜', (tester) async {
       await pumpTall(tester, const TodayScreen());
 
+      // 假資料裡逾期的只有「吃早餐」，所以整寬的「我完成了」只該有一顆。
       expect(find.text('我完成了'), findsOneWidget);
     });
 
-    testWidgets('確認完成後該筆變為已完成', (tester) async {
+    /// 「還沒到」那幾列的安靜打勾鈕。
+    final quietChecks = find.byWidgetPredicate((w) =>
+        w.key is ValueKey<String> &&
+        (w.key! as ValueKey<String>).value.startsWith('quiet-check-'));
+
+    testWidgets('還沒到的項目也能自己打勾', (tester) async {
       await pumpTall(tester, const TodayScreen());
 
-      // 假資料裡最早未完成的是「吃早餐」（missed），確認它會被當成下一件事
-      expect(find.text('這件還沒做'), findsOneWidget);
+      // 每一列都要能標記完成——長輩提早做完了不該沒地方記。
+      // 假資料有兩筆「還沒到」（看醫生、量血壓）。
+      expect(quietChecks, findsNWidgets(2));
+    });
+
+    /// 打勾後等畫面穩定。確認完成會跳 SnackBar，它排了一個 3 秒的關閉 timer——
+    /// 不把那段時間推完，測試結束時會因為 timersPending 失敗。
+    Future<void> settleAfterTap(WidgetTester tester) async {
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('確認完成後該筆變為已完成', (tester) async {
+      await pumpTall(tester, const TodayScreen());
+      final before = tester.widgetList(find.text('已完成')).length;
 
       await tester.tap(find.text('我完成了'));
-      await tester.pumpAndSettle();
+      await settleAfterTap(tester);
 
-      expect(find.textContaining('已記錄完成'), findsOneWidget);
+      expect(tester.widgetList(find.text('已完成')).length, before + 1);
+    });
+
+    testWidgets('打勾還沒到的項目也會變成已完成', (tester) async {
+      await pumpTall(tester, const TodayScreen());
+      final before = tester.widgetList(find.text('已完成')).length;
+
+      await tester.tap(quietChecks.first);
+      await settleAfterTap(tester);
+
+      expect(tester.widgetList(find.text('已完成')).length, before + 1);
+      // 打完勾那一列的按鈕要收起來，不能重複標記
+      expect(quietChecks, findsOneWidget);
+    });
+
+    testWidgets('同一件事不會同時出現在兩個地方', (tester) async {
+      await pumpTall(tester, const TodayScreen());
+
+      // 舊版把最早未完成的那件另外做成一張卡，跟清單第一列是同一筆資料，
+      // 同一屏出現兩次。拿掉之後每個標題都只該有一個。
+      expect(find.text('吃早餐'), findsOneWidget);
     });
   });
 
