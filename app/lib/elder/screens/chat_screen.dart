@@ -390,56 +390,25 @@ class _Message {
   final String text;
 }
 
-/// 開始對話前的引導：時段問候 + 三句範例，整組置中。純顯示，不可互動——
+/// 開始對話前的引導：只有一句時段問候，整個對話區正中央。純顯示，不可互動——
 /// 長者模式的三個互動額度要留給麥克風、打字、底部分頁。
 ///
-/// 每一句前面一顆朱紅星芒、整組置中在空白的對話區裡。原本是三張靠左的卡片，
-/// 看起來像「可以點的選項」，但它們不能點；改成置中的文字就只是**示範**，
-/// 不會被誤認成按鈕，也不跟下面真正能按的麥克風搶。
+/// 原本這裡還有「你可以這樣說」跟三句範例，但那三句是靠左的卡片，
+/// 看起來像「可以點的選項」卻不能點；拿掉之後聊天室一開始就只留一句問候，
+/// 乾淨地待在畫面正中間，不會有東西看起來像按鈕卻按不下去。
 class _ConversationHint extends StatelessWidget {
   const _ConversationHint({required this.greeting});
 
   /// 例：「阿蘭嬤，早安！」——依時段變化，講完就被對話取代。
   final String greeting;
 
-  /// 挑日常會用到的三句：一句回報、一句身體狀況、一句閒聊，
-  /// 讓長輩看得出「什麼都可以說」而不只是查資料。
-  static const _examples = [
-    '我今天吃過藥了',
-    '我有點頭暈',
-    '今天天氣怎麼樣',
-  ];
-
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        // 置中在整片空對話區裡，但字級放大到兩倍時仍要捲得動——
-        // 所以是「至少滿一頁高」的可捲置中，而不是會被撐爆的 Center。
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.lg, vertical: AppSpacing.xl),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-              minHeight:
-                  math.max(constraints.maxHeight - AppSpacing.xl * 2, 0)),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _HintLine(text: greeting, style: text.headlineLarge),
-              const SizedBox(height: AppSpacing.xl),
-              Text('你可以這樣說',
-                  textAlign: TextAlign.center,
-                  style: text.headlineSmall
-                      ?.copyWith(color: AppColors.inkSecondary)),
-              const SizedBox(height: AppSpacing.lg),
-              for (final line in _examples) ...[
-                _HintLine(text: line, style: text.headlineSmall),
-                const SizedBox(height: AppSpacing.md),
-              ],
-            ],
-          ),
-        ),
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+        child: _HintLine(text: greeting, style: text.headlineLarge),
       ),
     );
   }
