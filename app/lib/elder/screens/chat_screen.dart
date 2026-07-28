@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../shared/models/ask_result.dart';
 import '../../shared/services/api_client.dart';
 import '../../shared/services/api_exception.dart';
 import '../../shared/services/audio_service.dart';
@@ -43,10 +42,16 @@ class _ChatScreenState extends State<ChatScreen>
   bool _conversationActive = false;
   bool _micAvailable = false;
 
-  /// 目前這一輪的問題（語音即時辨識或打字），與 AI 回答、錯誤。
+  /// 這次進入畫面後的完整對話。每一輪問答都往後加，不覆蓋前一輪——
+  /// 長輩會想回頭看剛才問過什麼、AI 說過什麼，蓋掉等於對話沒發生過。
+  final List<_Message> _messages = [];
+  final _scrollCtrl = ScrollController();
+
+  /// 正在辨識中、還沒定案的那一句。定案後移進 [_messages]，這裡清空。
   String _question = '';
-  AskResult? _result;
-  String? _error;
+
+  /// 沒聽懂時給長者的提示。內容固定，方便去重（連續失敗不重複洗版）。
+  static const _notHeardHint = '我剛剛沒聽清楚，可以再說一次，或用打字。';
 
   /// listening 已聆聽秒數。
   Timer? _listenTimer;
@@ -72,6 +77,7 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void dispose() {
     _listenTimer?.cancel();
+    _scrollCtrl.dispose();
     _pulse.dispose();
     _speech.cancel();
     _audio.dispose();
@@ -83,8 +89,11 @@ class _ChatScreenState extends State<ChatScreen>
     var ok = false;
     try {
       ok = await _speech.init(
-        onError: (msg) {
-          if (mounted) setState(() => _error = '語音辨識錯誤：$msg');
+        // 辨識失敗對長者只有一種有用的說法：沒聽清楚，再說一次或改打字。
+        // 原始錯誤碼幫不上忙，但要留在歷史裡，長輩往回捲才知道哪一句沒進去。
+        onError: (_) {
+          if (!mounted) return;
+          _appendNotHeardHint();
         },
       );
     } catch (_) {
@@ -112,10 +121,7 @@ class _ChatScreenState extends State<ChatScreen>
   // ---- 免手持語音迴圈 ----
 
   void _startConversation() {
-    setState(() {
-      _conversationActive = true;
-      _error = null;
-    });
+    setState(() => _conversationActive = true);
     _listenTurn();
   }
 
@@ -129,11 +135,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// 聆聽一句話；靜音斷句後拿到最終文字就送出。
   Future<void> _listenTurn() async {
     if (!_conversationActive || !_micAvailable) return;
+    // 只清「正在辨識中」的暫存，不動 _messages——歷史要留著。
     setState(() {
       _setPhase(_Phase.listening);
       _question = '';
-      _result = null;
-      _error = null;
     });
 
     var handled = false; // 每輪只處理一次最終結果
@@ -158,27 +163,27 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _handleQuestion(String question,
       {required bool continueLoop}) async {
     await _speech.stop();
+    // 問題定案，移進歷史；暫存的辨識文字清掉，避免同一句出現兩次。
     setState(() {
       _setPhase(_Phase.thinking);
-      _question = question;
-      _result = null;
-      _error = null;
+      _messages.add(_Message(isElder: true, text: question));
+      _question = '';
     });
+    _scrollToBottom();
 
     try {
       final result = await _api.ask(question);
       if (!mounted) return;
       setState(() {
-        _result = result;
+        _messages.add(_Message(isElder: false, text: result.answer));
         _setPhase(_Phase.speaking);
       });
+      _scrollToBottom();
       await _audio.speak(result.answer);
-    } on ApiException catch (e) {
+    } on ApiException catch (_) {
       if (!mounted) return;
-      setState(() {
-        _error = e.message;
-        _conversationActive = false; // 出錯就停迴圈，避免一直重打
-      });
+      setState(() => _conversationActive = false); // 出錯就停迴圈，避免一直重打
+      _appendNotHeardHint();
     }
 
     if (!mounted) return;
@@ -247,10 +252,29 @@ class _ChatScreenState extends State<ChatScreen>
               style: text.headlineLarge),
         ),
         // 橫線把問候語與對話區切開，讓下方看得出來是一個「聊天室」而不是同一段內容。
-        const Divider(
-            height: 1, thickness: 1.5, color: AppColors.borderDashed),
+        const Divider(height: 1, thickness: 1.5, color: AppColors.borderDashed),
       ],
     );
+  }
+
+  /// 加一則「沒聽清楚」提示。連續失敗時不重複加，否則長輩會被同一句洗版。
+  void _appendNotHeardHint() {
+    if (_messages.isNotEmpty && _messages.last.text == _notHeardHint) return;
+    setState(() =>
+        _messages.add(const _Message(isElder: false, text: _notHeardHint)));
+    _scrollToBottom();
+  }
+
+  /// 新訊息進來後捲到底。等這一幀畫完才捲，否則 maxScrollExtent 還是舊的。
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollCtrl.hasClients) return;
+      _scrollCtrl.animateTo(
+        _scrollCtrl.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   Widget _buildConversation(BuildContext context) {
@@ -258,31 +282,29 @@ class _ChatScreenState extends State<ChatScreen>
 
     // 還沒講過話時這塊是空的——一整片留白會讓長輩不確定自己是不是按錯了。
     // 放範例句而不是插圖：它同時回答「這裡能做什麼」和「我該說什麼」。
-    if (_question.isEmpty && _result == null && _error == null) {
+    if (_messages.isEmpty && _question.isEmpty) {
       return const _ConversationHint();
     }
 
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      children: [
-        if (_question.isNotEmpty)
-          _Bubble(
-            isElder: true,
-            child: Text(_question,
-                style: text.headlineSmall?.copyWith(color: AppColors.onDark)),
+    // 最後一項是正在辨識中、還沒定案的那句（如果有）。
+    final pendingCount = _question.isNotEmpty ? 1 : 0;
+    return ListView.builder(
+      controller: _scrollCtrl,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      itemCount: _messages.length + pendingCount,
+      itemBuilder: (context, i) {
+        final isPending = i >= _messages.length;
+        final isElder = isPending || _messages[i].isElder;
+        return _Bubble(
+          isElder: isElder,
+          child: Text(
+            isPending ? _question : _messages[i].text,
+            style: isElder
+                ? text.headlineSmall?.copyWith(color: AppColors.onDark)
+                : text.headlineSmall,
           ),
-        if (_error != null)
-          _Bubble(
-            isElder: false,
-            // ASR 錯誤：長者唯一能自行判斷的線索（§5.2）。
-            child: Text('我剛剛沒聽清楚，可以再說一次，或用打字。', style: text.headlineSmall),
-          )
-        else if (_result != null)
-          _Bubble(
-            isElder: false,
-            child: Text(_result!.answer, style: text.headlineSmall),
-          ),
-      ],
+        );
+      },
     );
   }
 
@@ -353,7 +375,14 @@ class _ChatScreenState extends State<ChatScreen>
     if (h < 18) return '午安';
     return '晚安';
   }
+}
 
+/// 對話中的一則訊息。
+class _Message {
+  const _Message({required this.isElder, required this.text});
+
+  final bool isElder;
+  final String text;
 }
 
 /// 開始對話前的引導。純顯示，不可互動——長者模式的三個互動額度要留給
