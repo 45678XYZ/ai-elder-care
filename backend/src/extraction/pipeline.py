@@ -166,6 +166,7 @@ class ExtractionPipeline:
             chunk.chunk_id,
             transcript,
             candidates,
+            taxonomy=self.taxonomy,
             model_id=self.config.model_for("classifier"),
             client=self.client,
         )
@@ -248,7 +249,7 @@ class ExtractionPipeline:
         ts = resolve_observed_at(extracted.observed_at, extracted.raw_temporal_expression, reference)
         subject = normalize_subject(extracted.subject, self.lexicon)
         predicate = normalize_predicate(
-            extracted.concept_id, extracted.predicate, self.lexicon, self.taxonomy
+            extracted.concept_id, extracted.predicate, self.lexicon, self.taxonomy, embedder=self.embedder
         )
         if not predicate.value:
             # 沒有謂語就沒有事件身分；寧可丟掉一筆也不要寫入無法去重的事件
@@ -272,8 +273,15 @@ class ExtractionPipeline:
         confidence = min(confidences) if confidences else None
 
         if predicate.via_alias:
-            # 記錄 alias 命中，供調校 lexicon（`__other__` 命中率過高代表詞彙需擴充）
             structured["predicate_alias_hit"] = True
+        elif predicate.via_fuzzy_embedding:
+            structured["predicate_fuzzy_hit"] = True
+            structured["predicate_fuzzy_sim"] = predicate.similarity_score
+        elif not predicate.matched:
+            structured["is_novel_predicate"] = True
+
+        if predicate.raw_predicate and predicate.raw_predicate != predicate.value:
+            structured["raw_predicate"] = predicate.raw_predicate
 
         if self.suspected_routine_lookup is not None:
             suspected = self.suspected_routine_lookup(extracted.concept_id, predicate.value, ts)

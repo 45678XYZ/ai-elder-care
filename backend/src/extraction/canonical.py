@@ -83,6 +83,9 @@ class PredicateResolution:
     matched: bool
     matched_concept_id: str | None = None
     via_alias: bool = False
+    via_fuzzy_embedding: bool = False
+    similarity_score: float | None = None
+    raw_predicate: str = ""
 
 
 def load_predicate_lexicon(assets_dir: Path | str | None = None) -> PredicateLexicon:
@@ -172,16 +175,21 @@ def normalize_predicate(
     predicate: str | None,
     lexicon: PredicateLexicon,
     taxonomy: Taxonomy | None = None,
+    embedder: Any | None = None,
 ) -> PredicateResolution:
     """收斂謂語。
 
-    比對順序：該 concept 的 canonical 清單 → 該 concept 的別名表 → 沿祖先鏈重複上述比對。
-    模型回報 `__other__` 或完全比不到時保留正規化後的原字串，並標記 `matched=False`，
-    供觀測 `__other__` 命中率決定是否擴充詞彙（詞彙覆蓋率不足時會直接反映成重複事件）。
+    比對順序：
+    1. 該 concept 的 canonical 清單 (Exact Canonical Match)
+    2. 該 concept 的別名表 (Alias Match)
+    3. 沿祖先鏈重複上述比對
+    4. 向量語義比對 (Embedding Fuzzy Match, sim >= 0.75)
+    5. 未命中時保留正規化後的開放世界原字串 (Open-world Novel Predicate)，標記 matched=False。
     """
-    text = normalize_text(predicate or "")
+    raw_text = predicate or ""
+    text = normalize_text(raw_text)
     if not text or text == lexicon.other_token:
-        return PredicateResolution(value=text, matched=False)
+        return PredicateResolution(value=text, matched=False, raw_predicate=raw_text)
 
     chain = [concept_id]
     if taxonomy is not None:
@@ -193,7 +201,7 @@ def normalize_predicate(
             continue
         if text in entry.canonical:
             return PredicateResolution(
-                value=text, matched=True, matched_concept_id=candidate_concept
+                value=text, matched=True, matched_concept_id=candidate_concept, raw_predicate=raw_text
             )
         target = entry.aliases.get(text)
         if target:
@@ -202,7 +210,42 @@ def normalize_predicate(
                 matched=True,
                 matched_concept_id=candidate_concept,
                 via_alias=True,
+                raw_predicate=raw_text,
             )
+
+    # 向量語義模糊比對 (Fuzzy Embedding Match)
+    if embedder is not None and hasattr(embedder, "embed"):
+        candidates = lexicon.candidates(concept_id)
+        if candidates:
+            try:
+                import numpy as np
+                text_vec = embedder.embed(text)
+                cand_vecs = [embedder.embed(c) for c in candidates]
+                text_norm = text_vec / (np.linalg.norm(text_vec) + 1e-9)
+                best_sim = -1.0
+                best_cand = None
+                for cand, vec in zip(candidates, cand_vecs):
+                    vec_norm = vec / (np.linalg.norm(vec) + 1e-9)
+                    sim = float(np.dot(text_norm, vec_norm))
+                    if sim > best_sim:
+                        best_sim = sim
+                        best_cand = cand
+
+                if best_cand and best_sim >= 0.65:
+                    logger.info(
+                        "謂語向量模糊比對命中：concept_id=%s %s -> %s (sim=%.3f)",
+                        concept_id, text, best_cand, best_sim
+                    )
+                    return PredicateResolution(
+                        value=best_cand,
+                        matched=True,
+                        matched_concept_id=concept_id,
+                        via_fuzzy_embedding=True,
+                        similarity_score=round(best_sim, 3),
+                        raw_predicate=raw_text,
+                    )
+            except Exception as exc:
+                logger.debug("向量模糊比對時出錯：%s", exc)
 
     logger.warning(
         "謂語未命中受控詞彙，沿用原值：concept_id=%s predicate=%s lexicon_version=%s",
@@ -210,7 +253,7 @@ def normalize_predicate(
         text,
         lexicon.version,
     )
-    return PredicateResolution(value=text, matched=False)
+    return PredicateResolution(value=text, matched=False, raw_predicate=raw_text)
 
 
 def slot_label(ts: str, slot_minutes: int) -> str:

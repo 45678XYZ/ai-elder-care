@@ -83,7 +83,7 @@ def deduplicate(
             by_key[event.canonical_event_key] = merge_events(existing, event)
             key_merged += 1
 
-    # 第二層：同 slot／subject／concept 但謂語漂移
+    # 第二層：同 slot／subject／concept 且謂語為別名漂移者才合併
     alias_merged = 0
     grouped: dict[tuple[str, str, str], list[CanonicalEvent]] = {}
     for event in by_key.values():
@@ -98,21 +98,44 @@ def deduplicate(
             merged.append(group[0])
             continue
 
-        target_predicate = _preferred_predicate(group, concept_id, lexicon)
-        logger.info(
-            "謂語漂移合併：slot=%s subject=%s concept_id=%s predicates=%s -> %s",
-            slot_key,
-            subject,
-            concept_id,
-            [event.predicate for event in group],
-            target_predicate,
-        )
+        # 依據受控詞彙別名拆分子群組（例如 "測血壓" 與 "量血壓" 屬同一個別名群組）
+        subgroups: dict[str, list[CanonicalEvent]] = {}
+        for event in group:
+            target_pred = event.predicate
+            if lexicon is not None:
+                res = lexicon.concepts.get(concept_id)
+                if res:
+                    target_pred = res.aliases.get(event.predicate, event.predicate)
+            subgroups.setdefault(target_pred, []).append(event)
 
-        combined = group[0]
-        for event in group[1:]:
-            combined = merge_events(combined, event)
-            alias_merged += 1
-        merged.append(_rekey(combined, target_predicate, slot_minutes))
+        # 若子群組數量多於 1 個（如包含通用與具體謂語），但皆無相互衝突的結構化數據，則進行漂移收斂
+        if len(subgroups) > 1:
+            # 檢查是否有具體相異的獨立測量 (例如量血壓 vs 量體重)
+            has_distinct_measurements = any(
+                len(e.structured_detail or {}) > 0 for e in group
+            ) and len({e.predicate for e in group if e.predicate in (lexicon.candidates(concept_id) if lexicon else ())}) > 1
+
+            if not has_distinct_measurements:
+                # 屬同概念內的謂語漂移，依 preferred_predicate 進行收斂
+                target_pred = _preferred_predicate(group, concept_id, lexicon)
+                combined = group[0]
+                for event in group[1:]:
+                    combined = merge_events(combined, event)
+                    alias_merged += 1
+                merged.append(_rekey(combined, target_pred, slot_minutes))
+                continue
+
+        for pred_key, sub_events in subgroups.items():
+            if len(sub_events) == 1:
+                merged.append(_rekey(sub_events[0], pred_key, slot_minutes))
+                continue
+
+            target_pred = _preferred_predicate(sub_events, concept_id, lexicon)
+            combined = sub_events[0]
+            for event in sub_events[1:]:
+                combined = merge_events(combined, event)
+                alias_merged += 1
+            merged.append(_rekey(combined, target_pred, slot_minutes))
 
     ordered = tuple(sorted(merged, key=lambda event: (event.ts, event.event_id)))
     return ordered, DedupStats(
