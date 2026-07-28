@@ -1,13 +1,15 @@
-"""每日摘要 API。規格見 docs/api.md 的「每日摘要」。
+"""GET /summaries & POST /summaries/generate — 每日摘要 API Handler。規格見 docs/api.md。
 
-- `GET  /summaries?elder_id=&from=&to=`   只回已生成日期，最新日期優先
-- `POST /summaries/generate`              同步生成，可合法回 `data_status=partial`
+處理途徑與流程：
+1. GET /summaries（列表查詢）：
+   - 權限驗證：確認請求者具備指定 elder_id 之存取權限
+   - 範圍計算：支援 from/to 區間查詢（預設最近 7 天，依台灣日界），倒序分頁回傳
+   - 安全過濾：僅回傳已生成摘要之日期與公開白名單欄位
 
-回應只公開 api.md 列出的欄位：`input_through_at`、`completeness_rank`、`generator_version`
-與 `schema_version` 是後端內部欄位（覆寫優先序用），一律不外流。
-
-生成邏輯在 `shared/summarizer.py`，與排程 generator 共用同一份實作，避免手動與排程算出
-不同結果。
+2. POST /summaries/generate（同步手動生成）：
+   - 權限驗證：確認請求者具備指定 elder_id 之存取權限
+   - 同步觸發：呼叫 shared/summarizer 共用邏輯，無縫相容 EventBridge 排程生成機制
+   - 覆寫優先序控制：若既有摘要具較高完整度（如 complete），新產生的 partial 摘要不會覆寫舊摘要，此時回傳既有版本
 """
 
 from datetime import datetime, timedelta
@@ -22,7 +24,7 @@ from src.shared.models import SUMMARY_SECTION_KEYS
 
 logger = logging.getLogger(__name__)
 
-# 白名單投影：資料層之後新增內部欄位時不會無聲外流
+# 白名單投影欄位：避免資料層新增內部欄位（如 input_through_at、completeness_rank）時無聲外流
 PUBLIC_SUMMARY_FIELDS: tuple[str, ...] = (
     "elder_id",
     "date",
@@ -46,7 +48,7 @@ _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def handler(event, context):
-    """依 HTTP method 分派：GET 列表、POST 手動生成。"""
+    """每日摘要 Lambda 入口；依 HTTP Method 分派至對應處置函式。"""
     method = (event.get("httpMethod") or "").upper()
     if method == "GET":
         return handle_list(event)
@@ -61,6 +63,7 @@ def handler(event, context):
 
 
 def handle_list(event) -> dict[str, Any]:
+    """處理 GET /summaries 請求，查詢指定日期區間之每日摘要時間軸。"""
     params = event.get("queryStringParameters") or {}
 
     elder_id = (params.get("elder_id") or "").strip()
@@ -76,7 +79,7 @@ def handle_list(event) -> dict[str, Any]:
     to_date = (params.get("to") or today).strip()
     from_date = (params.get("from") or "").strip()
     if not from_date:
-        # 預設最近 7 天（含首尾），以 to 為基準往回推
+        # 未指定 from 時，以 to_date 為基準往前回推 7 天（含首尾）
         if not _DATE_PATTERN.match(to_date):
             return responses.error(400, "INVALID_PARAMETER", "日期格式須為 YYYY-MM-DD")
         from_date = _shift_days(to_date, -(DEFAULT_RANGE_DAYS - 1))
@@ -103,7 +106,7 @@ def handle_list(event) -> dict[str, Any]:
             next_token=(params.get("next_token") or "").strip() or None,
         )
     except db.DBError as exc:
-        # next_token 由後端編碼，前端原樣帶回；解不開代表被改過或跨版本，屬請求問題
+        # next_token 由後端編碼，前端原樣帶回；解碼失敗代表遭改動或跨版本失效，應歸類為用戶端請求錯誤
         if "next_token" in str(exc):
             return responses.error(400, "INVALID_PARAMETER", "無效的 next_token")
         logger.exception("查詢每日摘要失敗：elder_id=%s", elder_id)
@@ -121,6 +124,7 @@ def handle_list(event) -> dict[str, Any]:
 
 
 def handle_generate(event) -> dict[str, Any]:
+    """處理 POST /summaries/generate 請求，同步觸發生成並儲存指定日期之摘要。"""
     try:
         payload = json.loads(event.get("body") or "{}")
     except (TypeError, ValueError):
@@ -142,8 +146,7 @@ def handle_generate(event) -> dict[str, Any]:
         return responses.error(400, "INVALID_PARAMETER", "日期格式須為 YYYY-MM-DD")
 
     try:
-        # 手動生成不等待排程窗口，因此可能回 partial；written=False 代表既有摘要更新或
-        # 更完整（覆寫優先序擋下本次），此時回既有那份，對呼叫端仍是成功。
+        # 手動生成不等待排程窗口，可合法產出 data_status=partial；written=False 代表既有摘要具較高完整度（覆寫優先序擋下本次），回傳既有版本仍屬成功
         summary, written = summarizer.generate_and_store(elder_id, date)
     except bedrock.BedrockError:
         logger.exception("摘要生成的模型呼叫失敗：elder_id=%s date=%s", elder_id, date)
@@ -163,10 +166,9 @@ def handle_generate(event) -> dict[str, Any]:
 
 
 def to_public_summary(item: dict[str, Any]) -> dict[str, Any]:
-    """投影成 api.md 的摘要物件。
+    """將資料層 daily_summaries 實體投影為符合 api.md 規範之公開字典。
 
-    `sections` 七個 key 必須完整存在（無資料為 null），因此缺 key 一律補齊；其餘欄位缺值
-    才給契約預設值，避免前端拿到 `undefined`。
+    sections 7 個鍵必須完整存在（無資料補 null）；其餘欄位提供預設值，避免前端拿到 undefined 造成渲染錯誤。
     """
     projected = {field: item.get(field) for field in PUBLIC_SUMMARY_FIELDS}
     sections = projected.get("sections") or {}
@@ -181,4 +183,6 @@ def to_public_summary(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _shift_days(date: str, days: int) -> str:
+    """計算相對於指定日期的位移天數日期字串（YYYY-MM-DD）。"""
     return day_key(parse_ts(f"{date}T00:00:00+08:00") + timedelta(days=days))
+

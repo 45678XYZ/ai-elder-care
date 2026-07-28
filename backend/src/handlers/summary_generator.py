@@ -1,16 +1,14 @@
-"""每日摘要的排程生成（EventBridge）。
+"""EventBridge 排程每日摘要生成 Handler。規範見 docs/framework.md 與 docs/feature_daily-summarization.md。
 
-兩種觸發，共用 `shared/summarizer.py` 的生成邏輯（規範見 docs/api.md 的每日摘要與
-docs/feature_daily-summarization.md §7）：
+處理途徑與模式：
+1. mode=nightly（深夜當日摘要生成）：
+   - 深夜定時執行，為每位長者產出當日摘要
+   - 若相關對話之 batch 尚未處理完成，仍產出並寫入 data_status=partial 摘要，優先確保照護者當晚能看到已完成部分
 
-- `mode=nightly`：台灣時間深夜跑一次當日摘要。此時仍有未完成 batch 的 session 就寫
-  `partial`，不卡著等——照護者當晚就要看得到已知的部分。
-- `mode=backfill`：掃近幾天的 `partial` 摘要重算。相關 batch 完成後，這一輪會把它覆寫成
-  `complete`；覆寫優先序由資料層的條件式寫入保證，這裡不做讀後判斷。
-
-等待窗口的實作是「只重算 `generated_at` 距今在 `SUMMARY_WAIT_MINUTES` 內的 partial」。
-超過窗口就放手：batch 若真的卡在 `failed`，那是 DLQ reconciler 與告警的責任，
-不該讓摘要無限重算燒模型費用。
+2. mode=backfill（等待視窗重算補齊）：
+   - 掃描近幾天內 data_status=partial 之摘要並重新生成
+   - 相關 batch 完成後升級寫入為 complete（由資料層條件式寫入控制覆寫優先序）
+   - 超過 SUMMARY_WAIT_MINUTES 等待窗口者放棄重算，防止卡住的 failed batch 造成無限重算並浪費 LLM 費用
 """
 
 from datetime import datetime, timedelta
@@ -32,6 +30,7 @@ DEFAULT_SWEEP_LIMIT = 50
 
 
 def _env_int(key: str, default: int) -> int:
+    """從環境變數讀取整數值；若未設定或無效則回傳預設值。"""
     raw = os.environ.get(key, "").strip()
     if not raw:
         return default
@@ -42,19 +41,22 @@ def _env_int(key: str, default: int) -> int:
 
 
 def wait_minutes() -> int:
+    """取得 partial 摘要允許重算升級的等待窗口時間（分鐘）。"""
     return _env_int("SUMMARY_WAIT_MINUTES", DEFAULT_WAIT_MINUTES)
 
 
 def backfill_days() -> int:
+    """取得 backfill 模式掃描歷史摘要的天數範圍。"""
     return _env_int("SUMMARY_BACKFILL_DAYS", DEFAULT_BACKFILL_DAYS)
 
 
 def sweep_limit() -> int:
+    """取得單次排程執行處理長者的上限數量，防止 Lambda 超時。"""
     return _env_int("SUMMARY_SWEEP_LIMIT", DEFAULT_SWEEP_LIMIT)
 
 
 def handler(event, context):
-    """EventBridge 入口。`mode` 由 rule 的 input 指定，預設 nightly。"""
+    """EventBridge 排程觸發入口；依據 event payload 之 mode 參數分派執行。"""
     payload = event or {}
     mode = str(payload.get("mode") or MODE_NIGHTLY).lower()
     if mode == MODE_BACKFILL:
@@ -68,7 +70,7 @@ def handler(event, context):
 
 
 def run_nightly(payload: dict[str, Any]) -> dict[str, Any]:
-    """對每位長者生成指定日期（預設今天）的摘要。"""
+    """執行 nightly 模式，生成所有長者指定日期（預設今日）之摘要。"""
     now = datetime.now(TZ_TAIPEI)
     date = str(payload.get("date") or day_key(now))
     elders = _target_elders(payload)
@@ -80,7 +82,7 @@ def run_nightly(payload: dict[str, Any]) -> dict[str, Any]:
         try:
             summary, _ = summarizer.generate_and_store(elder_id, date)
         except (bedrock.BedrockError, db.DBError):
-            # 單一長者失敗不影響其他人；下一輪 backfill 或隔天排程會再處理
+            # 單一長者生成失敗記錄例外並跳過，不中斷整體排程；未完成者留待下一輪 backfill 或隔天排程處理
             logger.exception("排程摘要生成失敗：elder_id=%s date=%s", elder_id, date)
             failed += 1
             continue
@@ -106,7 +108,7 @@ def run_nightly(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_backfill(payload: dict[str, Any]) -> dict[str, Any]:
-    """重算等待窗口內仍為 `partial` 的摘要。"""
+    """執行 backfill 模式，重算並嘗試升級等待窗口內仍為 partial 的歷史摘要。"""
     now = datetime.now(TZ_TAIPEI)
     days = int(payload.get("days") or backfill_days())
     window = timedelta(minutes=wait_minutes())
@@ -133,7 +135,7 @@ def run_backfill(payload: dict[str, Any]) -> dict[str, Any]:
             if summary.get("data_status") != summarizer.DATA_STATUS_PARTIAL:
                 continue
             if not _within_window(summary, now=now, window=window):
-                # 超過等待窗口：停止重算，交給 batch 告警處理
+                # 超過等待窗口時間（SUMMARY_WAIT_MINUTES）：停止無謂重算以節省 LLM 成本，問題交由 DLQ 告警追蹤
                 skipped_stale += 1
                 continue
             date = summary["date"]
@@ -166,9 +168,9 @@ def run_backfill(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _within_window(summary: dict[str, Any], *, now: datetime, window: timedelta) -> bool:
-    """`generated_at` 是否還在等待窗口內。
+    """判斷摘要之 generated_at 時間戳記是否仍位於允許重算的等待窗口內。
 
-    缺 `generated_at` 的資料視為過期而不是重算：那代表資料異常，重算也很可能再失敗。
+    缺 generated_at 或時間格式異常時直接判定為不在窗口內（視為異常資料），避免因無效資料反覆觸發重算。
     """
     generated_at = summary.get("generated_at")
     if not generated_at:
@@ -186,10 +188,9 @@ def _within_window(summary: dict[str, Any], *, now: datetime, window: timedelta)
 
 
 def _target_elders(payload: dict[str, Any]) -> list[str]:
-    """要處理的長者清單。
+    """取得本次排程處理目標長者 ID 清單。
 
-    `elder_ids` 可由手動觸發指定（重跑單一長者用）；否則掃 `elders` 表。MVP 的長者數在
-    數十量級，`scan` 足夠；單次處理量仍受 `SUMMARY_SWEEP_LIMIT` 約束，避免 Lambda 超時。
+    支援 payload 指定 elder_ids 做單獨重跑；預設 Scan elders 表，並受 SUMMARY_SWEEP_LIMIT 數量約束避免超時。
     """
     explicit = payload.get("elder_ids")
     if explicit:
@@ -200,3 +201,4 @@ def _target_elders(payload: dict[str, Any]) -> list[str]:
         logger.exception("讀取長者清單失敗，本次 sweep 不處理")
         return []
     return [item["elder_id"] for item in elders if item.get("elder_id")][: sweep_limit()]
+
