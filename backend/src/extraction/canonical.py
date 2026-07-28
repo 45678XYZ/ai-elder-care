@@ -1,13 +1,15 @@
-"""Canonical 事件身分：Slot、Subject、Predicate 與 `event_id`。
+"""Canonical 事件身分、受控詞彙與 `event_id` 生成器模組。
 
-規範見 docs/framework.md 的「Canonical identity 與寫入規則」。三種事件的 canonical key 各有規則：
+提供事件身分規範化、謂語/主體受控詞彙映射、時間桶 (Slot) 計算與確定性 `event_id` 產出。
+架構規範與寫入規則詳見 `docs/framework.md` 的「Canonical identity 與寫入規則」。
 
-- 一般事件：`Date + Slot + Subject + Predicate`
-- routine 完成：只由 `routine_id + routine_date` 決定（不含 `routine_version`，同日改版仍是同一筆）
-- 高風險 safety：由 `session_id + alert episode` 決定
-
-`event_id` 一律由 `elder_id + canonical_event_key` 穩定產生，與 chunk、track、模型版本無關。
-Subject 與 Predicate 都必須先經 server-owned 正規化再組 key，否則同一件事會因表述不同而重複。
+本模組設計目的與核心機制：
+- **伺服器端受控詞彙 (Server-Owned Controlled Lexicon)**：主體與謂語在組裝鍵值前必須經由伺服器端正規化。例如將「阿公」、「長者本人」統一收斂為「長者」，將「吃了降壓藥」、「服血壓藥」透過 `predicate_lexicon.json` 映射至相同的受控謂語，防止同一照護事實因口語表達差異而重複寫入。
+- **三類事件 Canonical Key 分立**：
+  1. 一般事件：`Date#Slot#Subject#Predicate`
+  2. Routine 完成：`ROUTINE#routine_id#routine_date`（刻意排除 `routine_version`，同日改版手動或對話完成均收斂至同一筆）
+  3. 高風險 Safety：`SAFETY#session_id#episode`（收斂 Realtime 與 Batch 事件）
+- **穩定確定性 `event_id` 產出**：由 `elder_id + canonical_event_key` 進行 SHA-256 雜湊產生。該識別碼與 Chunk 拆分方式、模型版本完全無關，能保證 SQS 批次作業 Retry 或 DLQ Replay 時為具備冪等性的覆蓋/去重寫入。
 """
 
 from collections.abc import Mapping
@@ -27,31 +29,36 @@ from .temporal import day_key, parse_ts
 
 logger = logging.getLogger(__name__)
 
+# 謂語受控詞彙檔名；儲存於 `taxonomy_assets` 目錄下
 PREDICATE_LEXICON_FILE = "predicate_lexicon.json"
 
+# 事件識別碼前綴
 EVENT_ID_PREFIX = "evt_"
-# 與既有 shared/db.py 的產生規則一致，避免同一份資料在兩處算出不同 ID
+
+# 雜湊切除長度；與 `shared/db.py` 的 ID 產生機制一致，保持全系統二進制產出長度同步
 EVENT_ID_HASH_LENGTH = 12
 
+# Canonical Key 內部欄位分隔符號；採用 `#` 以配合 DynamoDB SK 複合鍵分割與前綴查詢
 KEY_SEPARATOR = "#"
 ROUTINE_KEY_PREFIX = "ROUTINE"
 SAFETY_KEY_PREFIX = "SAFETY"
 
+# 預設事件主體；當模型未指明主體時預設對應長者本人
 DEFAULT_SUBJECT = "長者"
 
-# 句尾語助詞與標點；只清尾端，避免動到「吃了血壓藥」這種句中用字
+# 句尾語助詞與標點符號正則；僅清理結尾無意義贅字（如「吃了血壓藥啦」->「吃了血壓藥」），保留句中語意用字
 _TRAILING_PARTICLES = ("了", "啦", "喔", "唷", "哦", "呀", "呢", "耶", "吧", "嘛", "囉", "的")
 _PUNCTUATION_PATTERN = re.compile(r"^[\s、,，.。!！?？~～\-—]+|[\s、,，.。!！?？~～\-—]+$")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 
 
 class CanonicalError(ValueError):
-    """canonical key 組成資料不完整或不合法。"""
+    """Canonical Key 組成資料缺失、不合規或正規化失敗時拋出之例外。"""
 
 
 @dataclass(frozen=True)
 class ConceptPredicates:
-    """單一 concept 的謂語受控詞彙。"""
+    """單一概念 (Concept) 的受控謂語與別名對照資料結構。"""
 
     canonical: tuple[str, ...]
     aliases: dict[str, str]
@@ -59,7 +66,7 @@ class ConceptPredicates:
 
 @dataclass(frozen=True)
 class PredicateLexicon:
-    """server-owned 謂語與主體正規化詞彙。"""
+    """伺服器管轄之主體與謂語受控詞彙庫模型。"""
 
     version: str
     other_token: str
@@ -67,17 +74,18 @@ class PredicateLexicon:
     concepts: dict[str, ConceptPredicates]
 
     def candidates(self, concept_id: str) -> tuple[str, ...]:
+        """取得特定概念的受控謂語候選清單。"""
         entry = self.concepts.get(concept_id)
         return entry.canonical if entry else ()
 
     def candidates_for_prompt(self, concept_ids: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
-        """組 prompt 用的候選表；沒有登記的 concept 回空 tuple。"""
+        """組裝供 Prompt 使用的概念對應謂語白名單；未登記的概念回傳空元組。"""
         return {concept_id: self.candidates(concept_id) for concept_id in concept_ids}
 
 
 @dataclass(frozen=True)
 class PredicateResolution:
-    """謂語正規化結果。"""
+    """謂語正規化結果容器。"""
 
     value: str
     matched: bool
@@ -86,12 +94,14 @@ class PredicateResolution:
 
 
 def load_predicate_lexicon(assets_dir: Path | str | None = None) -> PredicateLexicon:
+    """載入謂語受控詞彙庫 JSON 資產。"""
     resolved = Path(assets_dir) if assets_dir is not None else TAXONOMY_ASSETS_DIR
     return _load_predicate_lexicon_cached(str(resolved.resolve()))
 
 
 @lru_cache(maxsize=8)
 def _load_predicate_lexicon_cached(assets_dir: str) -> PredicateLexicon:
+    """以 `@lru_cache` 快取讀取 JSON 資產，避免批次處理時重複讀取磁碟。"""
     path = Path(assets_dir) / PREDICATE_LEXICON_FILE
     if not path.is_file():
         raise CanonicalError(f"謂語詞彙資產缺失：{path}")
@@ -120,7 +130,10 @@ def _load_predicate_lexicon_cached(assets_dir: str) -> PredicateLexicon:
 
 
 def validate_lexicon(lexicon: PredicateLexicon, taxonomy: Taxonomy) -> list[str]:
-    """檢查詞彙與分類體系是否一致；回傳問題清單，空清單代表通過。"""
+    """雙向校驗受控詞彙庫與概念樹 (Taxonomy) 之涵蓋一致性。
+
+    確保所有的謂語概念均落在概念樹中，且所有的葉節點概念都有對應的謂語候選，防止部署缺失。
+    """
     problems: list[str] = []
     for concept_id in lexicon.concepts:
         if taxonomy.get(concept_id) is None:
@@ -132,7 +145,7 @@ def validate_lexicon(lexicon: PredicateLexicon, taxonomy: Taxonomy) -> list[str]
 
 
 def normalize_text(value: str) -> str:
-    """字形正規化：NFKC、去空白、去頭尾標點與句尾語助詞。"""
+    """字串標準化：進行 NFKC 全半形轉換、剔除空白、頭尾標點符號與尾端語助詞。"""
     text = unicodedata.normalize("NFKC", str(value))
     text = _WHITESPACE_PATTERN.sub("", text)
     text = _PUNCTUATION_PATTERN.sub("", text)
@@ -154,8 +167,8 @@ def normalize_subject(
 ) -> str:
     """收斂事件主體。
 
-    `extra_aliases` 供 runtime 疊加長者專屬別名（例如 `elders.family` 的稱謂與姓名），
-    因為那些別名依長者而異，不適合寫死在資產裡。
+    支援透過 `extra_aliases` 於執行期動態注入特定長者的專屬親友稱謂（如 `elders.family` 的暱稱映射），
+    避免將個資或長者特有的家庭稱謂硬編碼於全域詞彙檔中。
     """
     text = normalize_text(subject or "")
     if not text:
@@ -173,11 +186,10 @@ def normalize_predicate(
     lexicon: PredicateLexicon,
     taxonomy: Taxonomy | None = None,
 ) -> PredicateResolution:
-    """收斂謂語。
+    """將口語謂語收斂至受控詞彙。
 
-    比對順序：該 concept 的 canonical 清單 → 該 concept 的別名表 → 沿祖先鏈重複上述比對。
-    模型回報 `__other__` 或完全比不到時保留正規化後的原字串，並標記 `matched=False`，
-    供觀測 `__other__` 命中率決定是否擴充詞彙（詞彙覆蓋率不足時會直接反映成重複事件）。
+    比對順序：該概念的 canonical 清單 -> 該概念的別名表 -> 沿概念樹祖先鏈向上搜尋。
+    若未命中則保留原字串並標記 `matched=False`，並發出警告日誌以作為動態擴充詞彙庫的觀測指標。
     """
     text = normalize_text(predicate or "")
     if not text or text == lexicon.other_token:
@@ -214,10 +226,10 @@ def normalize_predicate(
 
 
 def slot_label(ts: str, slot_minutes: int) -> str:
-    """依 `EVENT_SLOT_MINUTES` 計算固定邊界的時間桶標籤。
+    """依據 `EVENT_SLOT_MINUTES` 將時間戳分桶至固定邊界的時間區塊 (Slot)。
 
-    `slot_index = floor(minute_of_day / slot_minutes)`；粒度為整小時的倍數時輸出 `SLOT_HH`，
-    否則輸出 `SLOT_HHMM`（規範見 docs/framework.md）。
+    計算公式：`slot_index = floor(minute_of_day / slot_minutes)`。
+    當粒度為整小時倍數時輸出 `SLOT_HH`，其餘輸出 `SLOT_HHMM`。
     """
     if slot_minutes <= 0 or slot_minutes > 1440:
         raise CanonicalError(f"slot 粒度不合法：{slot_minutes}")
@@ -236,7 +248,7 @@ def canonical_event_key(
     predicate: str,
     slot_minutes: int,
 ) -> str:
-    """一般事件的 canonical key：`Date#Slot#Subject#Predicate`。"""
+    """組合一般生活與照護事件的唯一身分鍵：`Date#Slot#Subject#Predicate`。"""
     subject_text = normalize_text(subject)
     predicate_text = normalize_text(predicate)
     if not subject_text or not predicate_text:
@@ -248,10 +260,9 @@ def canonical_event_key(
 
 
 def routine_completion_key(routine_id: str, routine_date: str) -> str:
-    """routine 完成事件的 canonical key。
+    """組合 Routine 完成事件的唯一身分鍵：`ROUTINE#routine_id#routine_date`。
 
-    刻意不含 `routine_version`：同一天不同版本的 routine 完成仍是同一個 logical occurrence，
-    手動完成與對話完成也要收斂到同一筆 event。
+    刻意排除 `routine_version`，確保同一天內即便 Routine 定義修改，手動打卡或對話完成均收斂至同一筆實例。
     """
     if not routine_id or not routine_date:
         raise CanonicalError("routine completion 需要 routine_id 與 routine_date")
@@ -259,7 +270,10 @@ def routine_completion_key(routine_id: str, routine_date: str) -> str:
 
 
 def safety_episode_key(session_id: str, episode: str) -> str:
-    """高風險 safety 事件的 canonical key：同 session 同 episode 的 realtime 與 batch 收斂。"""
+    """組合高風險 Safety 事件的唯一身分鍵：`SAFETY#session_id#episode`。
+
+    用於收斂同一對話輪次中 Realtime 即時告警與 Batch 批次萃取的重複事件。
+    """
     if not session_id or not episode:
         raise CanonicalError("safety event 需要 session_id 與 episode")
     episode_text = normalize_text(episode)
@@ -267,7 +281,10 @@ def safety_episode_key(session_id: str, episode: str) -> str:
 
 
 def event_id_for(elder_id: str, canonical_key: str) -> str:
-    """由 `elder_id + canonical_event_key` 產生穩定 `event_id`。"""
+    """由 `elder_id + canonical_event_key` 經由 SHA-256 雜湊穩定生成唯一的 `event_id`。
+
+    相同的長者與 Canonical Key 永遠產生完全相同的 ID，保障 SQS 批次處理與重試時具備寫入冪等性。
+    """
     if not elder_id or not canonical_key:
         raise CanonicalError("event_id 需要 elder_id 與 canonical_event_key")
     signature = f"{elder_id}:{canonical_key}".encode("utf-8")
@@ -276,5 +293,8 @@ def event_id_for(elder_id: str, canonical_key: str) -> str:
 
 
 def event_time_key(ts: str, event_id: str) -> str:
-    """GSI `events-by-time` 的排序鍵；`ts` 必須已正規化為固定毫秒精度。"""
+    """生成 DynamoDB GSI `events-by-time` 的 Sort Key (`ts#event_id`)。
+
+    要求 `ts` 必須為帶有固定毫秒精度的 ISO 8601 時間字串，確保 SK 字典排序完全對齊時間先後順序。
+    """
     return f"{ts}{KEY_SEPARATOR}{event_id}"

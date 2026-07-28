@@ -1,15 +1,17 @@
-"""記憶體內 slot 去重。
+"""Batch 記憶體內 Slot 去重模組。規範見 docs/framework.md 的「Batch 記憶體內去重」。
 
-規範見 docs/framework.md 的「Batch 記憶體內去重」：session 關閉後輸入已凍結，因此去重是
-確定性的，retry 冪等。合併規則：
+去重機制與階段流程：
+1. 第一階段（精確 Key 去重）：
+   - 對同一 session 內的事件按 `canonical_event_key`（`Date#Slot#Subject#Predicate`）收斂
+   - 相同 Key 之事件透過 `merge_events` 合併，保留屬性最完整者，並將對話證據（evidence）取聯集
 
-- 同一 `canonical_event_key`（`Date + Slot + Subject + Predicate`）收斂為一筆。
-- `detail` 與 `structured_detail` 取最完整的一次，`evidence_conversation_ids` 取聯集。
-- 額外一層 **predicate alias fallback**（feature 文件 §5 第 3 層）：同 slot、同 subject、
-  同 `concept_id` 但謂語正規化後仍不同者，以 lexicon 的 canonical 值合併。受控詞彙與
-  server-owned 正規化擋不掉的漂移，最後由這層兜住。
+2. 第二階段（別名同義詞去重 alias fallback）：
+   - 針對同 Slot、同 Subject、同 `concept_id` 但謂語文字漂移的事件進行二次收斂
+   - 透過 `lexicon` 受控詞彙檔選擇規範謂語，解決 LLM 萃取時近義詞漂移問題
+   - 合併後重算 `canonical_event_key` 與 `event_id`
 
-跨 session 的殘留重複不在這裡處理，framework 明文不宣稱 zero duplicate。
+3. 確定性與冪等保證：
+   - 排序與選擇邏輯皆具確定性，確保相同 snapshot 重複執行產生完全一致的收斂結果
 """
 
 from collections.abc import Sequence
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def _completeness(event: CanonicalEvent) -> tuple[int, int, float]:
-    """「最完整」的排序依據：結構化屬性數 → 描述長度 → 信心值。"""
+    """計算事件資料完整度權重，做為合併時選擇基底事件（base）的比較依據。"""
     return (
         len(event.structured_detail or {}),
         len(event.detail or ""),
@@ -32,10 +34,10 @@ def _completeness(event: CanonicalEvent) -> tuple[int, int, float]:
 
 
 def merge_events(primary: CanonicalEvent, other: CanonicalEvent) -> CanonicalEvent:
-    """把兩筆同身分事件合併成一筆。
+    """合併兩筆同身分（同 Key 或同義）的 CanonicalEvent 實體。
 
-    以較完整者為基底，補齊對方獨有的結構化屬性，evidence 取聯集並保持穩定排序
-    （排序穩定才能讓同一 snapshot 重跑產生完全相同的 item）。
+    選擇資訊最完整者為基底，合併補齊獨有結構欄位（structured_detail）、將對話證據（evidence）取聯集並以穩定排序保存，
+    維持重跑時輸出一致性。
     """
     base, extra = (
         (primary, other) if _completeness(primary) >= _completeness(other) else (other, primary)
@@ -54,7 +56,7 @@ def merge_events(primary: CanonicalEvent, other: CanonicalEvent) -> CanonicalEve
         structured_detail=structured,
         evidence_conversation_ids=evidence,
         confidence=max(confidences) if confidences else None,
-        # 初建來源固定為較早的 chunk，避免重跑時因合併順序改變而漂移
+        # 初建來源固定取較早的 chunk ID，避免重複執行時因處理順序影響結果
         source_chunk_id=min(
             filter(None, (base.source_chunk_id, extra.source_chunk_id)), default=base.source_chunk_id
         ),
@@ -68,11 +70,15 @@ def deduplicate(
     slot_minutes: int,
     lexicon=None,
 ) -> tuple[tuple[CanonicalEvent, ...], DedupStats]:
-    """對同一 session 的事件做兩層去重。"""
+    """對單一 session 萃出的事件列表執行兩階段去重與收斂。
+
+    Returns:
+        (已去重且排序穩定的事件 tuple, 去重統計指標 DedupStats)
+    """
     if not events:
         return (), DedupStats()
 
-    # 第一層：canonical key 完全相同
+    # 第一階段：按 canonical_event_key 完全相同者進行無失真收斂
     by_key: dict[str, CanonicalEvent] = {}
     key_merged = 0
     for event in events:
@@ -83,7 +89,7 @@ def deduplicate(
             by_key[event.canonical_event_key] = merge_events(existing, event)
             key_merged += 1
 
-    # 第二層：同 slot／subject／concept 但謂語漂移
+    # 第二階段：按 (Slot, Subject, concept_id) 歸組，處理受控詞彙未能防護的同義謂語漂移
     alias_merged = 0
     grouped: dict[tuple[str, str, str], list[CanonicalEvent]] = {}
     for event in by_key.values():
@@ -128,10 +134,9 @@ def _preferred_predicate(
     concept_id: str,
     lexicon,
 ) -> str:
-    """挑出合併後要用的謂語。
+    """在同義謂語群組中挑選規範化（canonical）謂語。
 
-    優先取 lexicon 對該 concept 登記的 canonical 值（依 lexicon 順序，保證確定性）；
-    都沒登記時取字典序最小者——理由只是要一個穩定規則，不是語意上更好。
+    優先挑選受控詞彙集（lexicon）登記之規範值；若皆未登記則取字典序最小者，以建立確定性的全序選擇規則。
     """
     predicates = {event.predicate for event in group}
     if lexicon is not None:
@@ -142,7 +147,7 @@ def _preferred_predicate(
 
 
 def _rekey(event: CanonicalEvent, predicate: str, slot_minutes: int) -> CanonicalEvent:
-    """換謂語後重算 canonical key 與 event_id。"""
+    """變更事件之謂語，並依據新謂語重新計算對應之 canonical_event_key 與 event_id。"""
     if event.predicate == predicate:
         return event
     new_key = canonical_event_key(event.ts, event.subject, predicate, slot_minutes)
@@ -152,3 +157,4 @@ def _rekey(event: CanonicalEvent, predicate: str, slot_minutes: int) -> Canonica
         canonical_event_key=new_key,
         event_id=event_id_for(event.elder_id, new_key),
     )
+

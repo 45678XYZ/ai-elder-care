@@ -1,18 +1,23 @@
-"""batch extractor Lambda（SQS consumer）。
+"""批次事件萃取器 Lambda Handler (SQS Consumer)。
 
-規範見 docs/framework.md 的「Session close、SQS recovery 與 DLQ」。這支 handler 的責任是
-把「至少一次投遞」轉成「恰好一次的可見結果」：
+負責處理 SQS 訊息佇列觸發之非同步事件萃取任務，將 SQS「至少一次投遞 (At-Least-Once Delivery)」
+轉譯為資料庫層級「恰好一次 (Exactly-Once)」之可見結果。
+架構規範、狀態機轉移、租約與 DLQ 處置詳見 `docs/framework.md` 的「Session close、SQS recovery 與 DLQ」。
 
-    claim（pending 或 lease 過期）→ 重用或建立 manifest → pipeline → conditional Put events
-    → 更新 turn batch 欄位 → complete（清 GSI 與 lease）
+處理流程：
+    claim (pending 或 lease 過期) -> 重用或建立 manifest -> pipeline 萃取 -> 條件式 Put events
+    -> 更新 turn batch 欄位 -> complete (清理 GSI 與清除 lease 租約)
 
-重複投遞的處置分四種，全部不重跑：`completed` 直接 ack、`failed` 直接 ack（等人工 replay）、
-snapshot hash 不符直接 ack（訊息對應的是舊 snapshot）、lease 仍有效直接 ack（讓原 owner 收斂）。
-
-失敗分兩類：permanent（驗證、權限、資料不一致）標 `failed` 後 ack；retryable（節流、暫時性
-故障）放掉 lease 後 throw，讓 SQS 依 redrive 政策重投，耗盡後進 DLQ。
-
-回應使用 partial batch failure：只回報真正需要重投的 messageId，避免整批重跑。
+本模組設計目的與核心機制：
+- **重複投遞處置策略 (不重複重跑)**：
+  1. `completed`：已有完成紀錄，直接 ACK 吞下訊息。
+  2. `failed`：已標記為永久失敗，直接 ACK 吞下訊息（等待人工排除後重播）。
+  3. `snapshot_hash` 不符：訊息為舊版本對話快照，直接 ACK 吞下訊息。
+  4. `lease` 仍有效：已有其他 Worker 鎖定處理中，直接 ACK 吞下訊息（由原 Owner 繼續收斂）。
+- **錯誤雙軌分流處理 (Error Categorization)**：
+  - 永久失敗 (Permanent Error)：資料不符合規範或權限問題，標記 `failed` 狀態後回傳 ACK，防範無效訊息於 SQS 死循環浪費資源。
+  - 暫時失敗 (Retryable Error)：Bedrock 節流或資料庫競爭衝突，釋放租約 (`release_batch_lease`) 並丟出例外，交給 SQS 依 Redrive Policy 重投，耗盡後進 DLQ。
+- **部分批次失敗語法 (Partial Batch Failures)**：傳回 `{"batchItemFailures": [...]}`，僅對真正的失敗訊息識別碼發起重投，避免整批全數重算。
 """
 
 from typing import Any
@@ -34,16 +39,16 @@ from src.shared import bedrock, db, metrics, sessions
 
 logger = logging.getLogger(__name__)
 
-# lease 長度應大於單一 session 的處理時間上限；過短會讓別人誤判為死亡而重複處理
+# 分佈式租約 (Lease) 超時時間；設定為 300 秒（大於單一 Session 處理上限），防範 Worker 處理中遭他人誤判為死亡搶佔
 BATCH_LEASE_SECONDS = int(os.environ.get("BATCH_LEASE_SECONDS", "300"))
 
 
 class PermanentBatchError(Exception):
-    """資料不一致等無法靠重試解決的錯誤；標 failed 後 ack。"""
+    """資料不一致、結構毀損等無法透過自動重試排除之永久性錯誤。"""
 
 
-def handler(event, context):
-    """SQS event source 入口。"""
+def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    """SQS 觸發入口點；採用 Partial Batch Failures 語法處理。"""
     failures: list[dict[str, str]] = []
     for record in event.get("Records") or []:
         message_id = record.get("messageId", "")
@@ -53,7 +58,7 @@ def handler(event, context):
             logger.warning("batch 暫時性失敗，交回 SQS 重投：message_id=%s %s", message_id, exc)
             failures.append({"itemIdentifier": message_id})
         except db.DBError as exc:
-            # 資料層的暫時性錯誤（節流、條件競爭）同樣交回重投
+            # 資料層之暫時性錯誤（如節流或條件競爭）交回 SQS 重投
             logger.warning("batch 資料層失敗，交回 SQS 重投：message_id=%s %s", message_id, exc)
             failures.append({"itemIdentifier": message_id})
         except PermanentBatchError as exc:
@@ -66,10 +71,9 @@ def handler(event, context):
 
 
 def parse_message(record: dict[str, Any]) -> tuple[str, str, str]:
-    """取出 `(elder_id, session_id, session_snapshot_hash)`。
+    """從 SQS Record 內解析出 `(elder_id, session_id, session_snapshot_hash)` 三元組。
 
-    三個值都必填：少了 snapshot hash 就無法判斷這則訊息是否對應目前的 frozen snapshot，
-    也就無法安全地處理 duplicate 與 DLQ replay。
+    三個欄位均為強制的基底身分識別；缺少 snapshot hash 將無法與目前 frozen snapshot 比對，無法安全處置重複訊息。
     """
     try:
         body = json.loads(record.get("body") or "{}")
@@ -85,7 +89,10 @@ def parse_message(record: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def build_pipeline(config: ExtractionConfig) -> ExtractionPipeline:
-    """組裝 pipeline；資產載入有快取，warm start 不重複讀檔。"""
+    """組裝 ExtractionPipeline 編排器物件。
+
+    相關 Taxonomy 與 Lexicon 資產載入設有內部快取，在 Lambda 熱啟動 (Warm Start) 下不會重複讀取磁碟。
+    """
     taxonomy = load_taxonomy(config.taxonomy_assets_dir)
     lexicon = load_predicate_lexicon(config.taxonomy_assets_dir)
     embedder = bedrock.BedrockEmbeddingProvider(config.embedding_model_id, config.embedding_dim)
@@ -111,6 +118,7 @@ _s3vectors = None
 
 
 def _s3vectors_client():
+    """惰性初始化 S3 Vectors boto3 client。"""
     global _s3vectors
     if _s3vectors is None:
         import boto3
@@ -120,7 +128,7 @@ def _s3vectors_client():
 
 
 def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> str:
-    """處理單一訊息；回傳處置結果字串供測試與觀測。"""
+    """處理單一 SQS Record 訊息；傳回處置狀態字串供測試斷言與監控。"""
     started = time.monotonic()
     elder_id, session_id, snapshot_hash = parse_message(record)
     owner = _lease_owner(context)
@@ -133,7 +141,7 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         lease_seconds=BATCH_LEASE_SECONDS,
     )
     if outcome != sessions.CLAIM_ACQUIRED:
-        # 四種重複投遞情境都直接 ack，不重跑也不改狀態
+        # 四種重複投遞或無效情境直接 ACK，不重複計算亦不更動資料庫狀態
         logger.info(
             "batch 不需處理，直接 ack：session_id=%s outcome=%s", session_id, outcome
         )
@@ -158,14 +166,14 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         metrics.emit_batch_outcome("model_permanent_failure", session_id=session_id)
         raise PermanentBatchError(str(exc)) from exc
     except Exception:
-        # 暫時性失敗放掉 lease，讓重投或 recovery sweep 立刻能接手
+        # 暫時性失敗主動釋放租約，讓重投訊息或定時掃描 Recovery Sweep 能立刻接手
         sessions.release_batch_lease(elder_id, session_id, owner=owner)
         metrics.emit_batch_outcome("retryable_failure", session_id=session_id)
         raise
 
     written, conflicts = _write_events(result)
     if conflicts:
-        # 內容互斥代表既有資料與這次萃取矛盾，屬需要人看的問題
+        # 事件內容互斥代表既存資料與本次萃取產生嚴重矛盾，需留存並由人工排查
         sessions.fail_batch(
             elder_id,
             session_id,
@@ -209,13 +217,19 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
     return sessions.CLAIM_ACQUIRED
 
 
-def _lease_owner(context) -> str:
-    """lease owner 用本次執行的識別碼，才能分辨「同一個 worker」與「接管者」。"""
+def _lease_owner(context: Any) -> str:
+    """產生本次執行的專屬 Owner 識別碼，區分「同個 Worker 續約」與「異地接管者」。"""
     request_id = getattr(context, "aws_request_id", None)
     return request_id or f"local-{uuid.uuid4().hex[:12]}"
 
 
-def _run_extraction(pipeline, config, elder_id: str, session_id: str, session: dict[str, Any]):
+def _run_extraction(
+    pipeline: ExtractionPipeline,
+    config: ExtractionConfig,
+    elder_id: str,
+    session_id: str,
+    session: dict[str, Any],
+) -> Any:
     turn_ids = session.get("turn_ids") or []
     if not turn_ids:
         raise PermanentBatchError("frozen session 沒有 turn_ids")
@@ -240,7 +254,7 @@ def _run_extraction(pipeline, config, elder_id: str, session_id: str, session: d
             planned.to_manifest(),
             planner_version=config.chunk_planner_version,
         )
-        # 競爭下別人先寫入時以既存版本為準，確保 chunk ID 一致
+        # 條件式寫入競爭下若其他 Worker 先寫入，以既存版本為準，確保 Chunk ID 全局一致
         manifest = manifest_from_entries(
             session_id, snapshot_hash, config.chunk_planner_version, stored
         )
@@ -257,10 +271,9 @@ def _run_extraction(pipeline, config, elder_id: str, session_id: str, session: d
 
 
 def _to_turn(raw: dict[str, Any]) -> Turn:
-    """把 conversations 的 turn item 轉成分塊需要的最小形狀。
+    """將對話紀錄的 Turn Item 轉換為分塊器所需要的最小資料結構。
 
-    speaker 由既有欄位推導：長者逐字稿存 `elder_transcript`，AI 話語存 `ai_prompt_text`
-    或 `ai_respond_text`。一個 turn 同時有兩邊時以長者發言為主體。
+    Speaker 判斷機制：若包含長者逐字稿 `elder_transcript` 則發言者判定為「長者」；否則判定為「AI」。
     """
     elder_text = (raw.get("elder_transcript") or "").strip()
     ai_text = (raw.get("ai_respond_text") or raw.get("ai_prompt_text") or "").strip()
@@ -276,8 +289,8 @@ def _to_turn(raw: dict[str, Any]) -> Turn:
     )
 
 
-def _write_events(result) -> tuple[int, list[str]]:
-    """以條件式 Put 寫入事件；命中相同 canonical 視為冪等。"""
+def _write_events(result: Any) -> tuple[int, list[str]]:
+    """透過條件式 Put 將事件寫入 DynamoDB；遇到完全相同之 `event_id` 與內容視為冪等成功。"""
     written = 0
     conflicts: list[str] = []
     for event in result.events:
@@ -289,8 +302,8 @@ def _write_events(result) -> tuple[int, list[str]]:
     return written, conflicts
 
 
-def _chunk_by_turn(result) -> dict[str, str]:
-    """turn → 初建 chunk 的對照；context-only turn 不列入。"""
+def _chunk_by_turn(result: Any) -> dict[str, str]:
+    """建立 Turn ID 至初建 Chunk ID 之對照表；供更新 Turn 關聯狀態。"""
     mapping: dict[str, str] = {}
     for outcome in result.chunk_outcomes:
         for event in outcome.events:

@@ -1,16 +1,19 @@
-"""端到端萃取編排。
+"""端到端事件萃取編排器 (End-to-End Extraction Pipeline Orchestrator)。
 
-對應 aws-hackathon 的 `end_to_end_pipeline`，順序相同、責任邊界不同：
+整合對話分塊 (Chunker)、概念檢索 (Retriever)、RAC 分類 (Classifier)、HMLC 剪枝 (Pruner)、
+動態 Schema 組裝 (Schema Composer)、Single-Pass 萃取 (Extractor)、時序解析 (Temporal)、
+Canonical 身分建構 (Canonical) 與 Slot 去重 (Dedup) 等模組。
+架構規範與寫入規則詳見 `docs/framework.md` 與 `docs/feature_events-extraction.md`。
 
+處理流程：
     frozen turns → chunk planner → 概念檢索 → RAC 分類 → HMLC 剪枝 → 動態 schema 組裝
     → single-pass 萃取 → 時間正規化 → canonical key → slot 去重 → （由 handler 寫入 events）
 
-刻意**不寫 DynamoDB**：寫入涉及條件式 Put、lease 與 session 狀態機，屬 batch handler 的
-責任。pipeline 保持純運算，才能在沒有 AWS 環境的情況下完整測試，也讓「同一 snapshot 重跑
-產生同一組 canonical key」這件事可以離線驗證。
-
-`suspected_routine_lookup` 對應決策 C：batch 萃取到疑似 routine 完成時只在
-`structured_detail` 標 `suspected_routine_id`，絕不寫 completion event。
+本模組設計目的與核心機制：
+- **純記憶體運算與 DB 責任解耦**：本模組**刻意不直接寫入 DynamoDB**。資料庫寫入涉及條件式 PutItem、租約鎖 (Lease) 與 Session 狀態機，屬於批次處理器 (`batch_extractor.py`) 的責任。Pipeline 保持純運算，才能在無視 AWS 環境的狀況下進行單元測試，並離線驗證「同一 Snapshot 重跑必產出相同 Canonical Key」。
+- **重試冪等性與 Manifest 重用**：若 Session 已有 ChunkManifest，重試時一律重用舊 Manifest，確保在 SQS Retry、重複派送或 DLQ Replay 下 Chunk ID 保持 100% 相同。
+- **貫徹決策 C（Routine 僅標記不改狀態）**：萃取到疑似 Routine 完成事件時，僅於 `structured_detail` 標註 `suspected_routine_id`，絕不改寫 Routine 完成狀態或產生打卡事件。
+- **保守信心值與完備觀測指標 (`metrics`)**：取分類與萃取之最小信心值作為事件信心值；提供完整 metrics 輸出供 CloudWatch 儀表板監控。
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -47,12 +50,13 @@ from .temporal import resolve_observed_at
 
 logger = logging.getLogger(__name__)
 
+# 疑似 Routine 完成之查表邏輯型別；傳入 `(concept_id, predicate, ts)` 回傳 `routine_id`
 SuspectedRoutineLookup = Callable[[str, str, str], str | None]
 
 
 @dataclass(frozen=True)
 class ChunkOutcome:
-    """單一 chunk 的萃取結果與觀測數據。"""
+    """單一 Chunk 的萃取結果與執行期觀測數據容器。"""
 
     chunk_id: str
     events: tuple[CanonicalEvent, ...]
@@ -60,15 +64,14 @@ class ChunkOutcome:
     unmatched_predicates: int = 0
     candidate_count: int = 0
     hit_count: int = 0
-    # structured outputs 被降級的次數（模型或 SDK 不支援硬約束時）；持續 > 0 代表
-    # 分類其實一直靠 prompt 指引在跑，enum 約束沒有生效
+    # Structured Outputs 被降級為 Prompt 指引模式之次數；持續大於 0 代表模型或 SDK 硬約束失效
     structured_output_degraded: int = 0
     model_latency_ms: int = 0
 
 
 @dataclass(frozen=True)
 class PipelineResult:
-    """一個 session 的萃取結果。"""
+    """單一 Session 之完整萃取結果與觀測指標容器。"""
 
     session_id: str
     manifest: ChunkManifest
@@ -78,7 +81,7 @@ class PipelineResult:
 
     @property
     def metrics(self) -> dict[str, Any]:
-        """供 CloudWatch 的觀測指標。"""
+        """組裝供 CloudWatch 電視牆與告警使用的結構化統計指標。"""
         type_distribution: dict[str, int] = {}
         for event in self.events:
             type_distribution[event.type] = type_distribution.get(event.type, 0) + 1
@@ -103,7 +106,7 @@ class PipelineResult:
 
 @dataclass
 class ExtractionPipeline:
-    """萃取 pipeline；一次 batch 執行建立一個實例。"""
+    """端到端萃取編排器主類別；一次批次任務建立單一實例。"""
 
     config: ExtractionConfig
     taxonomy: Taxonomy
@@ -114,7 +117,7 @@ class ExtractionPipeline:
     segmenter: Any = None
     suspected_routine_lookup: SuspectedRoutineLookup | None = None
 
-    # -- 分塊 ---------------------------------------------------------------
+    # -- 對話分塊 (Chunking) --------------------------------------------------
 
     def plan(
         self,
@@ -122,10 +125,9 @@ class ExtractionPipeline:
         session_snapshot_hash: str,
         turns: Sequence[Turn],
     ) -> ChunkManifest:
-        """規劃 chunk；只在 session 尚無 manifest 時呼叫。
+        """規劃對話主題分塊與邊界 (Chunk Manifest)。
 
-        已有 manifest 時應由 handler 用 `manifest_from_entries` 還原重用，
-        才能保證 retry、duplicate delivery 與 DLQ replay 的 chunk ID 完全相同。
+        僅在 Session 首次執行批次萃取時呼叫；若已有 Manifest，必須重用既有資料以確保 SQS 重試冪等性。
         """
         plan = plan_boundaries(
             turns,
@@ -145,7 +147,7 @@ class ExtractionPipeline:
             fallback_used=plan.fallback_used,
         )
 
-    # -- 單一 chunk ---------------------------------------------------------
+    # -- 單一 Chunk 處理 -----------------------------------------------------
 
     def process_chunk(
         self,
@@ -156,7 +158,7 @@ class ExtractionPipeline:
         *,
         elder: Mapping[str, Any] | None = None,
     ) -> ChunkOutcome:
-        """跑完一個 chunk 的檢索 → 分類 → 剪枝 → 萃取 → canonical 身分。"""
+        """執行單一 Chunk 之完整流程：概念檢索 -> RAC 分類 -> HMLC 剪枝 -> 動態 Schema 組裝 -> Single-Pass 萃取 -> Canonical 身分建構。"""
         transcript = render_chunk_text(turns, chunk)
         evidence_ids = core_turn_ids(turns, chunk)
         reference = reference_datetime_for(turns, chunk)
@@ -244,14 +246,17 @@ class ExtractionPipeline:
         extracted,
         classification_confidence: Mapping[str, float],
     ) -> tuple[CanonicalEvent, bool] | None:
-        """把萃取結果轉成 canonical event；算不出身分就丟棄並告警。"""
+        """將抽取結果轉換為具有唯一 Canonical 身分之 CanonicalEvent 實例。
+
+        若謂語正規化失敗導致無可用謂語，直接丟棄該事件並發出警告（無謂語無法計算 Canonical Key 與進行去重）。
+        """
         ts = resolve_observed_at(extracted.observed_at, extracted.raw_temporal_expression, reference)
         subject = normalize_subject(extracted.subject, self.lexicon)
         predicate = normalize_predicate(
             extracted.concept_id, extracted.predicate, self.lexicon, self.taxonomy
         )
         if not predicate.value:
-            # 沒有謂語就沒有事件身分；寧可丟掉一筆也不要寫入無法去重的事件
+            # 無謂語則無事件身分；寧可丟棄單一事件，也不寫入無法去重的垃圾資料
             logger.warning(
                 "事件缺少可用謂語，已丟棄：chunk_id=%s concept_id=%s",
                 chunk.chunk_id,
@@ -262,7 +267,7 @@ class ExtractionPipeline:
         key = canonical_event_key(ts, subject, predicate.value, self.config.event_slot_minutes)
         structured = dict(extracted.attributes)
 
-        # 分類與萃取各有一個信心值；對外取較保守的 min，另一個留在 structured_detail
+        # 信心值採用保守策略：取分類信心值與萃取信心值之最小值 (`min`)，保留較高風險提示
         hit_confidence = classification_confidence.get(extracted.concept_id)
         if hit_confidence is not None:
             structured["classification_confidence"] = hit_confidence
@@ -272,13 +277,13 @@ class ExtractionPipeline:
         confidence = min(confidences) if confidences else None
 
         if predicate.via_alias:
-            # 記錄 alias 命中，供調校 lexicon（`__other__` 命中率過高代表詞彙需擴充）
+            # 記錄別名命中狀態，作為評估是否需擴充 `predicate_lexicon.json` 正式詞彙庫之依據
             structured["predicate_alias_hit"] = True
 
         if self.suspected_routine_lookup is not None:
             suspected = self.suspected_routine_lookup(extracted.concept_id, predicate.value, ts)
             if suspected:
-                # 決策 C：只標記供摘要層降噪，不寫 completion event、不改 routine 狀態
+                # 貫徹決策 C：僅標註 suspected_routine_id 供摘要層降躁，絕不寫入完成事件或更動 Routine 狀態
                 structured["suspected_routine_id"] = suspected
 
         event = CanonicalEvent(
@@ -301,7 +306,7 @@ class ExtractionPipeline:
         )
         return event, predicate.matched
 
-    # -- 整個 session -------------------------------------------------------
+    # -- 整個 Session 執行 ---------------------------------------------------
 
     def run(
         self,
@@ -313,9 +318,9 @@ class ExtractionPipeline:
         manifest: ChunkManifest | None = None,
         elder: Mapping[str, Any] | None = None,
     ) -> PipelineResult:
-        """跑完一個 closed session。
+        """執行整個 Closed Session 之事件萃取。
 
-        `manifest` 有值時直接重用（retry／duplicate／DLQ replay 路徑），不重新分塊。
+        全 Chunk 事件收集完成後，於 Session 層級發起時間桶與同義詞去重 (`deduplicate`)，產出最終結果與統計資料。
         """
         resolved_manifest = manifest or self.plan(session_id, session_snapshot_hash, turns)
 

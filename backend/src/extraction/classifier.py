@@ -1,15 +1,12 @@
-"""RAC 多標籤分類器。
+"""RAC (Retrieval-Augmented Classification) 多標籤分類器模組。
 
-移植自 aws-hackathon 的 `rac_classifier`（Multi-Shot 模式，Top-K=14），保留 HMLC
-決策原則與候選標籤定義的 prompt 結構，換掉三件事：
+提供對話片段 (chunk) 在 Top-K 候選概念集上的多標籤識別。
+架構規範與設計決策詳見 `docs/framework.md` 與 `docs/feature_events-extraction.md`。
 
-- **client 換成 Bedrock structured outputs**。分類的 schema 形狀固定（只有候選 enum 會變），
-  grammar 快取命中率高，而分類最需要的就是「不要回候選集以外的標籤」。
-- **不索取原文片段**。上游會要 `evidence_span`，那是逐字稿摘錄；決策 D 明文不落地，
-  連要都不要，追溯改用 `evidence_conversation_ids`。
-- **輸出確定性排序**。剪枝與後續 canonical key 都依賴同一組輸入產生同一組輸出。
-
-`rationale` 仍然索取：它是分類理由而非逐字稿，對品質與除錯有幫助，但只進 log 不進 events。
+本模組設計目的：
+- 採用 **Bedrock Structured Outputs (`converse_json`)** 進行強約束解碼。JSON Schema 將 `concept_id` 的 `enum` 限制在候選集範圍內，以極低成本在 API 網關層徹底杜絕幻覺標籤。
+- 遵循 **PII 最小化原則（決策 D）**：不索取原文片段 (evidence_span)，僅保留繁體中文判斷理由 (rationale) 供 CloudWatch 日誌觀察，資料落地追溯改用 `evidence_conversation_ids`。
+- 確保 **輸出結果的確定性（Deterministic Sorting）**：命中的標籤按信心值遞減與 concept_id 字典序排序，保障下游 HMLC 剪枝與 Canonical Key 計算具重複再現性。
 """
 
 from collections.abc import Sequence
@@ -22,9 +19,10 @@ from .models import CandidateConcept, ClassificationResult, LabelHit
 
 logger = logging.getLogger(__name__)
 
-# prompt 與輸出契約的版本；寫進 metadata 供比對 A/B 與回溯
+# 分類器 Prompt 與輸出契約版本；寫入結果 metadata 以利跨版本 A/B 比對與問題追溯
 CLASSIFIER_VERSION = "rac-classifier-1"
 
+# 系統 Prompt：強制要求模型僅依據對話判斷，嚴禁補充推測與輸出候選集以外的標籤
 SYSTEM_PROMPT = (
     "你是嚴謹的長者照護主題多標籤分類助手，只依據對話內容判斷，"
     "不補充對話沒有提到的事情，也不輸出候選清單以外的標籤。"
@@ -32,10 +30,11 @@ SYSTEM_PROMPT = (
 
 
 def build_classification_schema(candidate_ids: Sequence[str]) -> dict:
-    """分類輸出的 JSON Schema。
+    """生成 Bedrock Structured Outputs 所需的 JSON Schema。
 
-    `concept_id` 以 enum 收斂到候選集，這是擋掉幻覺標籤最便宜的一層；
-    形狀落在 Bedrock structured outputs 支援的子集內（`additionalProperties: false`、無數值約束）。
+    透過在 `concept_id` 欄位硬編碼 `enum: list(candidate_ids)`，能在語法解碼層層面
+    直接封鎖模型產生候選清單外的標籤。Schema 結構嚴格遵守 Bedrock 支援子集
+    （`additionalProperties: False`，不包含不支援的長度或範圍約束）。
     """
     return {
         "type": "object",
@@ -66,7 +65,11 @@ def build_classification_prompt(
     transcript: str,
     candidates: Sequence[CandidateConcept],
 ) -> str:
-    """組 Multi-Shot 分類 prompt。"""
+    """組裝帶有候選概念詳細定義與典型情境的提示詞 (Multi-Shot Prompt)。
+
+    逐一列出 Top-K 候選節點的定義、典型情境與同義詞，為 LLM 提供明確的排他分類邊界，
+    避免將僅概念相似但細節不足的對話誤判為具體葉節點。
+    """
     blocks: list[str] = []
     for index, candidate in enumerate(candidates, start=1):
         synonyms = "、".join(candidate.synonyms) if candidate.synonyms else "無"
@@ -109,9 +112,11 @@ def classify_chunk(
     model_id: str | None = None,
     client=None,
 ) -> ClassificationResult:
-    """對單一 chunk 做多標籤分類。
+    """執行對話片段的多標籤分類識別。
 
-    候選集為空時直接回無命中，不浪費一次模型呼叫。
+    當 `candidates` 為空時直接返回空命中，避免發起無效的 LLM API 呼叫；
+    若降級路徑（無 Grammar 強制約束）回傳了候選集以外的標籤，或信心值低於門檻 (`min_confidence`)，
+    會於後處理階段過濾，並將命中標籤依得分與 ID 確定性排序。
     """
     if not candidates:
         logger.warning("候選節點為空，跳過分類：chunk_id=%s", chunk_id)
@@ -142,7 +147,7 @@ def classify_chunk(
             continue
         concept_id = raw.get("concept_id")
         if concept_id not in allowed:
-            # 走降級路徑（無 grammar 約束）時模型仍可能回候選外的標籤
+            # 走無 Grammar 約束降級路徑時，模型仍可能回傳候選外的標籤，需二次校驗丟棄
             logger.warning("分類回傳候選集外的節點，已丟棄：concept_id=%s", concept_id)
             continue
         try:
@@ -161,6 +166,7 @@ def classify_chunk(
                 confidence=confidence,
             )
 
+    # 進行確定性排序（信心值降序，同分時按字典序），保證下游剪枝與 canonical key 的再現性
     ordered = tuple(sorted(hits.values(), key=lambda hit: (-hit.confidence, hit.concept_id)))
     return ClassificationResult(
         chunk_id=chunk_id,
@@ -175,9 +181,9 @@ def classify_chunk(
 
 
 def candidates_from_taxonomy(taxonomy, concept_ids: Sequence[str]) -> tuple[CandidateConcept, ...]:
-    """由分類體系直接組候選（不經向量檢索）。
+    """從分類體系直接建立候選概念清單（不經由向量檢索）。
 
-    供全量候選的離線比對與測試使用；正式路徑走 `retriever` 的 Top-K。
+    主要用於單元測試或離線對照實驗（全量候選情境），線上生產環境走 `retriever.py` 的 Top-K 檢索。
     """
     candidates = []
     for concept_id in concept_ids:
@@ -197,7 +203,10 @@ def candidates_from_taxonomy(taxonomy, concept_ids: Sequence[str]) -> tuple[Cand
 
 
 def summarize_for_log(result: ClassificationResult) -> str:
-    """把分類結果壓成單行供 log；不含逐字稿。"""
+    """將分類結果壓縮為單行 JSON 供結構化 Log 輸出。
+
+    僅輸出概念 ID 與信心值，絕不包含對話原文逐字稿，符合 PII 最小化規範。
+    """
     return json.dumps(
         {
             "chunk_id": result.chunk_id,
@@ -206,3 +215,4 @@ def summarize_for_log(result: ClassificationResult) -> str:
         },
         ensure_ascii=False,
     )
+

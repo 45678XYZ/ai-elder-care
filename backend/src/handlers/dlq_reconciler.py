@@ -1,14 +1,13 @@
-"""DLQ reconciler：把重試耗盡的 batch 訊息收斂成 `failed` 並告警。
+"""SQS DLQ reconciler Lambda handler。規範見 docs/framework.md。
 
-規範見 docs/framework.md 第 10、11 點。這支 handler 的重點在「什麼情況下不能動 session」：
+將 SQS DLQ 重試耗盡的 batch 訊息收斂為 `failed` 並發送安全化告警。
 
-- **snapshot hash 不符**：訊息對應的是舊 snapshot，session 早已往前走。改它會把一個健康的
-  session 誤標為 failed，所以只記錄並 ack。
-- **已 `completed`**：遲到的失敗訊息不得覆寫已完成的結果。
-- **已 `failed`**：已經是待人工處理的終態，重複收斂沒有意義。
-
-只有「hash 相符且尚未 terminal」才條件式標記 `failed`、清 lease、寫入安全化後的錯誤，
-並發出告警。任何情況都要 ack，否則訊息會在 DLQ 裡無限循環。
+保護機制與處置邏輯：
+1. snapshot hash 不符：訊息對應舊 snapshot，session 已往前走；避免誤將健康 session 標為 failed，故僅記錄並 ack
+2. 已 completed：遲到的失敗訊息不得覆寫已完成的結果，僅記錄並 ack
+3. 已 failed：已處於待人工處理的終態，重複收斂無意義，僅記錄並 ack
+4. hash 相符且非終態：條件式標記 failed、清除 lease、寫入安全化錯誤訊息並發送 SNS 告警
+5. 訊息處置原則：不論處置結果或是否有例外，一律 ack（Succeed），避免訊息在 DLQ 反覆死迴圈
 """
 
 from typing import Any
@@ -35,6 +34,7 @@ _sns_client = None
 
 
 def get_sns_client():
+    """取得或初始化 SNS boto3 client（Singleton 模式，避免重複建立連線）。"""
     global _sns_client
     if _sns_client is None:
         _sns_client = boto3.client("sns")
@@ -42,14 +42,17 @@ def get_sns_client():
 
 
 def handler(event, context):
-    """DLQ event source 入口；一律 ack，回報各訊息的處置結果供觀測。"""
+    """SQS DLQ event source 入口；批次處理訊息並寫入 CloudWatch EMF 指標。
+
+    不論單筆收斂成功與否一律傳回處置結果並 ack，防止無效訊息滯留 DLQ 引發重複觸發死迴圈。
+    """
     outcomes: list[dict[str, str]] = []
     for record in event.get("Records") or []:
         message_id = record.get("messageId", "")
         try:
             outcome = process_record(record)
         except Exception:
-            # 連收斂都失敗時仍然 ack：訊息留在 DLQ 只會反覆炸同一個錯
+            # 防禦性擷取例外：不論處理結果為何一律 ack，防止無法收斂的毒丸訊息滯留 DLQ 引發重複炸死
             logger.exception("DLQ 收斂失敗：message_id=%s", message_id)
             outcome = "error"
         metrics.emit_dlq_outcome(outcome)
@@ -58,6 +61,11 @@ def handler(event, context):
 
 
 def process_record(record: dict[str, Any], *, sns_client=None) -> str:
+    """處理單筆 DLQ 記錄，驗證對應 session 狀態並執行條件式收斂。
+
+    Returns:
+        收斂結果狀態碼（OUTCOME_*），用於指標統計與紀錄追蹤。
+    """
     try:
         body = json.loads(record.get("body") or "{}")
     except json.JSONDecodeError:
@@ -77,7 +85,7 @@ def process_record(record: dict[str, Any], *, sns_client=None) -> str:
         return OUTCOME_SESSION_NOT_FOUND
 
     if session.get("session_snapshot_hash") != snapshot_hash:
-        # 舊 snapshot 的訊息：session 已往前走，不可誤改
+        # 舊 snapshot 訊息：session 已往前走，若強制改寫會誤將健康 session 標為失敗
         logger.warning(
             "DLQ 訊息的 snapshot 已過期，不修改 session：session_id=%s", session_id
         )
@@ -94,7 +102,7 @@ def process_record(record: dict[str, Any], *, sns_client=None) -> str:
     sessions.fail_batch(
         elder_id,
         session_id,
-        # 不比對 lease owner：DLQ 收斂的前提就是原 worker 已經放棄
+        # 不比對 lease owner：DLQ 收斂的前提即為原 worker 處理已耗盡重試並放棄 lease
         owner=None,
         code="BATCH_RETRIES_EXHAUSTED",
         message="SQS 重試耗盡，已由 DLQ reconciler 收斂為 failed，待人工 replay",
@@ -104,9 +112,9 @@ def process_record(record: dict[str, Any], *, sns_client=None) -> str:
 
 
 def publish_alert(elder_id: str, session_id: str, *, client=None) -> bool:
-    """發出安全化的告警。
+    """發送 batch 失敗告警至 SNS Topic。
 
-    只帶 ID 與狀態，不帶對話內容或錯誤堆疊裡可能夾帶的逐字稿（PII 最小化）。
+    告警 payload 僅包含識別 ID 與建議處置動作，嚴禁夾帶對話內容或錯誤堆疊（遵守 PII 最小化原則）。
     """
     message = json.dumps(
         {
@@ -128,3 +136,4 @@ def publish_alert(elder_id: str, session_id: str, *, client=None) -> bool:
     except Exception:
         logger.exception("發送 batch 失敗告警失敗：session_id=%s", session_id)
         return False
+

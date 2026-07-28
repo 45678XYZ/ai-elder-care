@@ -1,21 +1,15 @@
-"""動態 schema 組裝（Universal Ancestral Traversal）。
+"""動態 Schema 組裝模組（Universal Ancestral Traversal）。
 
-移植自 aws-hackathon 的 `dynamic_schema_composer`：對每個命中節點自身往上走到根，
-沿途收集各層級的屬性欄位，組成該次萃取專用的 Pydantic 模型。
+提供對對話片段 (chunk) 經過 HMLC 剪枝後的命中標籤，動態走訪本體論祖先樹並組裝
+專屬的 Pydantic 模型與 Prompt 規則。
+架構規範與設計決策詳見 `docs/framework.md` 與 `docs/feature_events-extraction.md`。
 
-移植時的三項調整：
-
-- **同一份組裝結果同時產出 prompt 表示與驗證器**（決策 H）。萃取階段不走 grammar 硬約束，
-  所以「屬性隔離」不能只靠後處理清洗，必須在 prompt 裡明列每個 concept 的屬性白名單；
-  兩者來自同一個組裝結果，不會走鐘。
-- **不落地逐字稿欄位**（決策 D）。`source_utterance` 這類原文片段直接不進 schema，
-  模型連填的機會都沒有，而不是寫進去再刪。
-- **事件輸出新增 `subject`／`predicate`**。canonical key 由 `Date + Slot + Subject + Predicate`
-  決定，沒有這兩個欄位就算不出事件身分。
-
-輸出的 JSON Schema 刻意維持在 Bedrock structured outputs 支援的子集內
-（`additionalProperties: false`、無數值與字串長度約束、無遞迴），
-即使預設不啟用硬約束，也能靠 `EXTRACTION_MODE` 直接切換。
+本模組設計目的與核心機制：
+- **動態祖先走訪 (Universal Ancestral Traversal)**：對每個命中節點往上走到根，沿途收集各層級的專屬屬性欄位，為該次萃取打造最輕量、無無關欄位干擾的專屬 Pydantic 驗證器。
+- **單一源頭雙向產出（決策 H）**：由同一份 `ComposedSchema` 組裝結果同時產出 Prompt 規則文字 (`describe_for_prompt`) 與 Pydantic 驗證模型，確保提示詞白名單與後續驗證邏輯 100% 同步不走鐘。
+- **PII 最小化隔離（決策 D）**：主動於 Schema 中排除原文片段欄位 (`source_utterance`)，從根源封鎖逐字稿複製至寫入層。
+- **基底身分欄位**：包含 `subject` 與 `predicate`，為後續時間軸正規化與 Canonical Event Key 計算奠定基礎。
+- **屬性跨概念防滲透 (`prune_irrelevant_event_properties`)**：單一容器 Schema 同時載入多概念屬性時，於後處理強制剔除未列於該概念白名單的屬性。
 """
 
 from collections.abc import Mapping, Sequence
@@ -31,7 +25,7 @@ from .taxonomy import Taxonomy
 
 logger = logging.getLogger(__name__)
 
-# 事件的固定基底欄位；所有 concept 共用
+# 所有事件共用的固定基底欄位，奠定事件基礎身分與 Canonical Key (`elder_id + Date + Slot + Subject + Predicate`)
 BASE_EVENT_FIELDS: tuple[str, ...] = (
     "event_index",
     "concept_id",
@@ -42,10 +36,10 @@ BASE_EVENT_FIELDS: tuple[str, ...] = (
     "observed_at",
 )
 
-# 決策 D：原文片段不進 schema，避免逐字稿被複製到 events
+# 遵循決策 D：將逐字稿原文欄位排除於 Schema 之外，從模型輸入端即防止 PII 敏感對話複製至寫入層
 EXCLUDED_GLOBAL_PROPERTIES: frozenset[str] = frozenset({"source_utterance"})
 
-# registry 的型別字串 → Python 型別
+# 屬性註冊表型別映射至 Python 型別
 _TYPE_MAP: dict[str, Any] = {
     "string": str,
     "float": float,
@@ -56,11 +50,11 @@ _TYPE_MAP: dict[str, Any] = {
     "array": list[str],
     "list": list[str],
     # 開放式 object 無法落在 Bedrock 的 schema 子集內（additionalProperties 只能是 false），
-    # 因此以字串承載；`structured_detail` 本身是 Map，內層存字串不影響下游使用
+    # 故以字串承載；structured_detail 本身是 Map，內層存字串不影響下游使用
     "object": str,
 }
 
-# Bedrock structured outputs 不支援的 JSON Schema 關鍵字
+# Bedrock structured outputs 不支援的 JSON Schema 限制關鍵字
 _UNSUPPORTED_SCHEMA_KEYWORDS: frozenset[str] = frozenset(
     {
         "minimum",
@@ -79,7 +73,10 @@ _UNSUPPORTED_SCHEMA_KEYWORDS: frozenset[str] = frozenset(
 
 
 def _ancestor_chain(taxonomy: Taxonomy, concept_id: str) -> tuple[str, ...]:
-    """自根之下到命中節點的路徑（不含根節點 `UCO`）。"""
+    """取得自根節點以下至命中節點的祖先路徑（排除 level 0 的根節點 `UCO`）。
+
+    排除根節點可避免無屬性的無效走訪，順序由淺至深方便順序繼承屬性定義。
+    """
     chain = [concept_id, *taxonomy.ancestors(concept_id)]
     ordered = tuple(reversed([cid for cid in chain if taxonomy.get(cid) is not None]))
     root = ordered[0] if ordered else None
@@ -89,17 +86,18 @@ def _ancestor_chain(taxonomy: Taxonomy, concept_id: str) -> tuple[str, ...]:
 
 
 def _node_property_definitions(taxonomy: Taxonomy, concept_id: str) -> list[dict[str, Any]]:
+    """讀取指定節點在屬性註冊表中定義的專屬屬性清單。"""
     node_properties = taxonomy.property_registry.get("node_properties") or {}
     props = node_properties.get(concept_id)
     return list(props) if isinstance(props, list) else []
 
 
 def _field_spec(prop: dict[str, Any], *, allow_required: bool) -> tuple[Any, Any]:
-    """由屬性定義產生 `(型別, Field)`。
+    """由屬性定義生成 Pydantic `(型別, Field)` 規格對。
 
-    `allow_required` 只對全域屬性開放：全域屬性每筆事件都適用，registry 標 nullable=false
-    時設為必填才有意義。節點專屬屬性一律可為 null——同一份 schema 會同時容納多個 concept
-    的屬性，把某個 concept 的屬性設成必填會讓其他 concept 的事件永遠驗證失敗。
+    全域屬性（`allow_required=True`）適用於所有事件，當 registry 標示為非空時可設為必填；
+    而節點專屬屬性一律必須可為 `None`（`allow_required=False`），因為動態容器 Schema
+    會同時包含多個概念的屬性，若將某一概念的專屬屬性設為必填，會導致其他概念的事件驗證失敗。
     """
     py_type = _TYPE_MAP.get(prop.get("type", "string"), str)
     description = prop.get("description", "")
@@ -112,12 +110,16 @@ def compose_multi_event(
     hits: Sequence[LabelHit],
     taxonomy: Taxonomy,
 ) -> ComposedSchema:
-    """為 single-pass 萃取組裝「一次回應多筆事件」的容器 schema。"""
+    """為單次 Single-Pass 萃取組裝可一次回應多筆事件的動態容器 Schema。
+
+    透過祖先鏈走訪收集所有相關屬性，並以 `Literal[concept_ids]` 將 `concept_id` 收斂在剪枝後的標籤內，
+    防止 LLM 輸出未授權的細分類節點。
+    """
     concept_ids = tuple(hit.concept_id for hit in hits if taxonomy.get(hit.concept_id) is not None)
     if not concept_ids:
         raise ValueError("組裝 schema 至少需要一個存在於分類體系的 concept_id")
 
-    # concept_id 以 Literal 收斂，直接擋掉幻覺標籤；順序沿用剪枝後的確定性順序
+    # concept_id 以 Literal 收斂，直接在 Pydantic 驗證層擋掉幻覺標籤；順序沿用剪枝後的確定性順序
     concept_literal = Literal[concept_ids]  # type: ignore[valid-type]
 
     event_fields: dict[str, Any] = {
@@ -190,10 +192,10 @@ def compose_multi_event(
 
 
 def schema_fingerprint(concept_ids: Sequence[str], field_names: Sequence[str]) -> str:
-    """schema 形狀的穩定指紋。
+    """計算動態 Schema 形狀的穩定雜湊指紋。
 
-    動態 schema 每換一組標籤就是一份新 grammar，指紋用於觀測 grammar 首編譯命中率，
-    也讓 golden test 能鎖住組裝結果。
+    動態 Schema 每換一組標籤就是一份新語法，此指紋用於監控 Bedrock 靜態語法快取命中率，
+    同時提供單元測試進行 Schema 形狀的斷言鎖定。
     """
     payload = json.dumps(
         {"concepts": sorted(concept_ids), "fields": sorted(field_names)},
@@ -207,11 +209,11 @@ def prune_irrelevant_event_properties(
     event: Mapping[str, Any],
     composed: ComposedSchema,
 ) -> dict[str, Any]:
-    """剔除不屬於該事件 concept 的屬性，防止事件間屬性互相滲透。
+    """強制剔除不屬於該事件概念 (concept_id) 的跨概念滲透屬性。
 
-    與上游不同：非白名單欄位一律剔除，即使有值也不保留。上游為求保守會留下有值的
-    無關欄位，但那正是屬性滲透的入口——血壓值被填進睡眠事件時，保留它只是把錯誤
-    寫進 `structured_detail`。有值卻被剔除時記錄告警，作為調整 prompt 的訊號。
+    在多事件容器 Schema 中，LLM 偶爾會誤將某概念的屬性（如「收縮壓」）填入另一概念的事件（如「睡眠事件」）。
+    本函式採白名單嚴格過濾：非該概念白名單內的屬性一律剔除，若被剔除之屬性含有非 None 值則發出警告，
+    確保錯誤屬性不被無聲寫入 DynamoDB `structured_detail`。
     """
     concept_id = event.get("concept_id")
     if not concept_id:
@@ -238,11 +240,10 @@ def describe_for_prompt(
     predicate_candidates: Mapping[str, Sequence[str]] | None = None,
     other_predicate_token: str = "__other__",
 ) -> str:
-    """把組裝結果寫成 prompt 規則區塊。
+    """將組裝好的 Schema 轉譯為 Prompt 中的規則描述區塊。
 
-    萃取階段不靠解碼層約束，因此 schema 規則必須在 prompt 裡講清楚：
-    允許的分類節點、每個節點的屬性白名單、predicate 候選、null 政策，
-    以及完整 JSON Schema。
+    由於單次 Single-Pass 萃取不依賴硬約束解碼，Prompt 必須明確指出允許的分類節點、
+    各節點的專屬屬性白名單、predicate 候選詞與全空填 null 規則，傳遞最完整的上下文引導 LLM。
     """
     lines: list[str] = []
 
@@ -298,9 +299,9 @@ def describe_for_prompt(
 
 
 def check_schema_constraints(schema: Mapping[str, Any]) -> list[str]:
-    """檢查 JSON Schema 是否落在 Bedrock structured outputs 支援的子集內。
+    """檢查生成的 JSON Schema 是否符合 Bedrock structured outputs 支援的子集規範。
 
-    回傳違規描述清單；空清單代表可安全啟用硬約束模式。
+    傳回違規描述列表；傳回空列表代表該 Schema 可安全切換至 Bedrock 網關硬約束模式。
     """
     violations: list[str] = []
 
@@ -321,10 +322,11 @@ def check_schema_constraints(schema: Mapping[str, Any]) -> list[str]:
 
         if node.get("type") == "object" or "properties" in node:
             if node.get("additionalProperties") is not False:
-                violations.append(f"{path}: object 必須設定 additionalProperties=false")
+                violations.append(f"{path}: object 避免未約束屬性，必須設定 additionalProperties=false")
 
         for key, value in node.items():
             walk(value, f"{path}.{key}")
 
     walk(schema, "$")
     return violations
+

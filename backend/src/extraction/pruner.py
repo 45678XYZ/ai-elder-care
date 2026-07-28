@@ -1,18 +1,15 @@
-"""Top-Down 階層多標籤剪枝（HMLC）。
+"""Top-Down 階層多標籤剪枝 (HMLC - Hierarchical Multi-Label Classification) 模組。
 
-兩條規則來自 aws-hackathon 的 `hmlc_pruner`，語意不變：
+提供對 LLM 識別出的多標籤進行本體論階層樹的剪枝與去重。
+架構規範與設計決策詳見 `docs/framework.md` 與 `docs/feature_events-extraction.md`。
 
-1. **葉節點特異性優先**：葉節點命中時，壓制其所有祖先節點，避免同一件事同時被標成
-   「用藥行為」與「藥物不良反應」而在下游產生兩筆事件。
-2. **父節點籠統退守**：類別節點命中但其下沒有任何葉節點命中時，保留該類別節點作為
-   籠統分類，不因為「不夠具體」就丟掉事件。
+本模組設計目的與兩大 HMLC 剪枝原則：
+1. **葉節點特異性優先（壓制祖先）**：當特異性高的葉節點命中時，自動壓制其祖先鏈節點，防止同一生活行為（如「按時吃血壓藥」）同時寫入一般類別與具體葉節點，導致下游重複建立兩筆事件。
+2. **類別節點籠統退守（父節點保留）**：當長者提及主題但細節不足以歸類至特定葉節點時，保留該類別節點作為退守分類，防止僅因「不夠具體」就遺失生活紀錄。
 
-移植時新增兩項約束：
-
-- **輸出必須確定性**：batch 的冪等性建立在同一 snapshot 產生同一組 canonical key 上，
-  因此剪枝結果一律以 `(信心值遞減, concept_id)` 排序，不沿用輸入順序。
-- **層級下限**：根節點與第一層領域節點（如 `UCO.BehavioralRecord`）粗到無法對應高階
-  類別，也無法組出有意義的屬性 schema，一律丟棄並告警。
+品質與複製性約束：
+- **極小化層級限制 (MIN_CLASSIFIABLE_LEVEL = 2)**：剔除過於粗粒度、無法映射至 7 大高階事件類別的根節點與一級領域節點。
+- **確定性排序**：剪枝結果統一按 `(信心值降序, concept_id 字典序)` 排序，保障批次萃取與 Canonical Key 具備冪等重試再現性。
 """
 
 from collections.abc import Iterable, Sequence
@@ -23,7 +20,8 @@ from .taxonomy import Taxonomy
 
 logger = logging.getLogger(__name__)
 
-# 可作為事件分類的最淺層級；UCO=0、UCO.BehavioralRecord=1、類別節點=2
+# 可作為事件分類的最淺階層門檻（UCO 根節點為 Level 0，領域大類如 UCO.BehavioralRecord 為 Level 1）；
+# 低於此門檻之節點過於粗粒度，無法映射至 7 大高階類別，亦無法構建具體的屬性 Schema。
 MIN_CLASSIFIABLE_LEVEL = 2
 
 
@@ -34,13 +32,17 @@ def prune_label_hits(
     min_confidence: float = 0.0,
     min_level: int = MIN_CLASSIFIABLE_LEVEL,
 ) -> tuple[LabelHit, ...]:
-    """對命中標籤做階層剪枝，回傳確定性排序後的結果。"""
+    """對識別出的命中標籤執行階層剪枝與確定性排序。
+
+    先過濾未知節點、過淺節點與低信心度標籤；接著尋找所有命中的葉節點，
+    將其父祖鏈節點加入壓制清單；最後將未被壓制之標籤進行確定性排序後傳回。
+    """
     accepted: dict[str, LabelHit] = {}
 
     for hit in hits:
         node = taxonomy.get(hit.concept_id)
         if node is None:
-            # 分類器可能幻覺出不存在的節點；丟棄但留痕，供調整候選集與 prompt
+            # 防範無約束降級路徑傳回未在分類體系中定義之節點，留下記錄以供檢視與維護
             logger.warning("剪枝丟棄未知節點：concept_id=%s", hit.concept_id)
             continue
         if node.level < min_level:
@@ -54,7 +56,7 @@ def prune_label_hits(
         if hit.confidence < min_confidence:
             continue
 
-        # 同一節點重複命中時保留信心值較高者，避免下游算出不同 confidence
+        # 相同節點被多次傳入時保留最高信心值者，避免信心值不一致影響排序確定性
         existing = accepted.get(hit.concept_id)
         if existing is None or hit.confidence > existing.confidence:
             accepted[hit.concept_id] = hit
@@ -62,7 +64,7 @@ def prune_label_hits(
     if not accepted:
         return ()
 
-    # 葉節點命中即壓制其祖先鏈；未被壓制的類別節點屬於「父節點退守」
+    # 當細粒度葉節點命中時，其所有父祖節點均劃入壓制集合，防止下游重複產生高階與細階兩筆事件
     suppressed: set[str] = set()
     for concept_id in accepted:
         node = taxonomy.nodes[concept_id]
@@ -76,9 +78,14 @@ def prune_label_hits(
             continue
         pruned.append(hit)
 
+    # 按信心值由高至低、同分按字典序排序，確保動態 Schema 與 Canonical Key 計算具重複再現性
     return tuple(sorted(pruned, key=lambda h: (-h.confidence, h.concept_id)))
 
 
 def concept_ids(hits: Sequence[LabelHit]) -> tuple[str, ...]:
-    """取出 concept_id 序列，保持與 hits 相同順序。"""
+    """從 LabelHit 序列中提取 concept_id 列表，保持傳入順序。
+
+    供 Schema Composer 與 Pipeline 便捷提取節點 ID 序列使用。
+    """
     return tuple(hit.concept_id for hit in hits)
+

@@ -1,18 +1,15 @@
-"""Single-pass 多事件萃取器。
+"""Single-Pass 多事件萃取器模組。
 
-移植自 aws-hackathon 的 `structured_extractor.extract_single_pass`（README 的 4 管道評測
-支持 single_pass），保留「一次呼叫同時完成事件分裂、屬性萃取與時序推導」的設計，改四件事：
+提供對單一對話片段 (chunk) 進行多事件拆分、專屬屬性萃取與時序表達推導。
+架構規範與設計決策詳見 `docs/framework.md` 與 `docs/feature_events-extraction.md`。
 
-- **輸出新增 `subject`／`predicate`**。canonical key 由 `Date + Slot + Subject + Predicate`
-  決定，少了這兩個欄位就算不出事件身分。
-- **prompt 承載動態 schema 規則**（決策 H）。不走 grammar 硬約束，所以 per-concept 屬性白名單、
-  predicate 候選與 null 政策都必須在 prompt 裡明列，來源是同一份 `schema_composer` 產物。
-- **帶入長者 context**。hackathon 評測結論是萃取階段必須有 patient context，對應到這裡就是
-  `elders` 的 persona 與 `health_notes`。
-- **驗證失敗只丟該事件**（決策 I）。一次有界修復重問，仍失敗則丟棄並計數告警，
-  不讓整個 chunk 變 `failed`。
-
-不索取 `context_snippet`／`evidence_span`（決策 D）：追溯用 `evidence_conversation_ids`。
+本模組設計目的與核心機制：
+- **Single-Pass 高效萃取**：採用一次 LLM 呼叫同時完成事件拆分、屬性萃取與相對時間表達解析，大幅降低多輪呼叫的開銷與延遲。
+- **基底身分欄位 mandatory 要求**：強制輸出 `subject`（主體，如「長者」）與 `predicate`（單一語意謂語，如「服用血壓藥」），作為後續計算 Canonical Event Key (`elder_id + Date + Slot + Subject + Predicate`) 的關鍵身分欄位。
+- **單一源頭雙向 Schema 引導（決策 H）**：由 `schema_composer.py` 的產物導出完整的 Prompt 規則與 Pydantic 驗證模型。預設採用 Prompt 指引模式以避免動態 Schema 頻繁觸發 Bedrock 語法快取編譯。
+- **長者背景情境注入**：注入長者 persona 與健康註記 (`health_notes`) 提供照護範疇引導，但嚴格排除住址等無關資訊以符合 PII 最小化。
+- **有界修復與單一事件容錯（決策 I）**：驗證失敗時發起最多 1 次有界重問 (`MAX_REPAIR_ATTEMPTS = 1`) 修復問題事件。修復失敗僅丟棄該瑕疵事件並記錄告警，保障其餘正確事件正常寫入，不使整個 Chunk 失敗。
+- **無原文片段落地（決策 D）**：不索取 `context_snippet` 或 `evidence_span`，對話追溯改用 `evidence_conversation_ids`。
 """
 
 from collections.abc import Mapping, Sequence
@@ -31,18 +28,19 @@ from .taxonomy import Taxonomy
 
 logger = logging.getLogger(__name__)
 
-# prompt 與輸出契約版本；寫進 metadata 供回溯
+# 萃取器 Prompt 與輸出契約版本；寫入結果 metadata 供品質回溯與 A/B 測試比對
 EXTRACTOR_VERSION = "single-pass-extractor-1"
 
-# 一個 chunk 最多做幾次修復重問；有界才不會讓壞輸出拖垮 batch 延遲
+# 單一 Chunk 進行 Validation Error 修復重問的上限（有界 1 次，防止瑕疵輸出拖垮批次任務延遲）
 MAX_REPAIR_ATTEMPTS = 1
 
+# 系統 Prompt：明確定位照護資訊結構化萃取專家，強制要求僅基於事實萃取，嚴禁推測與無中生有
 SYSTEM_PROMPT = (
     "你是長者照護資訊結構化萃取專家。只萃取對話中明確提到的照護事實，"
     "保留具體數值與藥名等細節，不推測、不補充對話沒有的內容。"
 )
 
-# 事件物件裡屬於「事件本體」而非結構化屬性的欄位
+# 事件物件中屬於身分與時序核心基底的欄位；用於與專屬動態屬性分隔
 _EVENT_CORE_FIELDS = frozenset(
     {
         "event_index",
@@ -57,10 +55,10 @@ _EVENT_CORE_FIELDS = frozenset(
 
 
 def build_elder_context(elder: Mapping[str, Any] | None) -> str:
-    """把長者背景壓成 prompt 片段。
+    """將長者個人背景與健康資料轉譯為 Prompt 脈絡片段。
 
-    只帶影響萃取判讀的欄位（暱稱、年齡、健康註記、生活習慣），不帶地址與親友姓名等
-    對萃取無用的個資，符合 PII 最小化。
+    僅選取會直接影響萃取判讀與健康屬性理解的欄位（稱謂、出生年份、健康註記、生活習慣）；
+    主動排除住址與親友姓名等對萃取無關之資訊，貫徹 PII 隱私最小化原則。
     """
     if not elder:
         return "（無長者背景資料）"
@@ -92,7 +90,7 @@ def build_extraction_prompt(
     elder: Mapping[str, Any] | None = None,
     other_predicate_token: str = "__other__",
 ) -> str:
-    """組 single-pass 萃取 prompt。"""
+    """組裝帶有動態 Schema 規則、長者背景與事件拆分原則的 Single-Pass 萃取提示詞。"""
     schema_rules = describe_for_prompt(
         composed,
         taxonomy,
@@ -126,7 +124,7 @@ def build_extraction_prompt(
 【對話逐字稿】
 {transcript}
 
-請輸出 JSON 物件，包含 `"chunk_id": "{chunk_id}"`、`"reference_datetime": "{reference_datetime}"` 與 `"events"` 陣列。
+請輸出 JSON 物件，包含 `"chunk_id": "{chunk_id}"` 與 `"events"` 陣列。
 """
 
 
@@ -143,7 +141,11 @@ def extract_events(
     model_id: str | None = None,
     client=None,
 ) -> ExtractionResult:
-    """對單一 chunk 做 single-pass 萃取。"""
+    """對單一對話塊執行 Single-Pass 事件萃取、驗證與容錯處理。
+
+    預設採用 Prompt 指引模式（不啟動 Bedrock 硬約束語法），避免每一次標籤組合變動
+    引發靜態語法編譯延遲；若整體 JSON 損壞則拋出可重試例外，局部事件驗證失敗則走有界修復與容錯丟棄。
+    """
     prompt = build_extraction_prompt(
         chunk_id,
         transcript,
@@ -154,7 +156,7 @@ def extract_events(
         elder=elder,
     )
 
-    # 預設不走硬約束：動態 schema 每換一組標籤就是新 grammar，會反覆觸發首次編譯
+    # 預設不走硬約束：動態 schema 每換一組標籤就是新 grammar，會反覆觸發首次編譯延遲
     json_schema = composed.schema_json if extraction_mode == EXTRACTION_STRUCTURED_OUTPUT else None
     if json_schema is None:
         text, metadata = bedrock.converse(
@@ -162,7 +164,7 @@ def extract_events(
         )
         data = bedrock.extract_json(text)
         if not data:
-            # 整份解不開屬暫時性問題，交給上層重試而非丟掉整個 chunk
+            # 整份 JSON 損壞屬網路或模型暫時性問題，拋出可重試例外供上層 SQS 重新派送
             raise bedrock.RetryableBedrockError("萃取輸出無法解析為 JSON 物件")
     else:
         data, metadata = bedrock.converse_json(
@@ -191,7 +193,7 @@ def extract_events(
             repaired, still_failing = _validate_events(repaired_raw, composed)
             accepted.extend(repaired)
             failures = still_failing
-        # 修復後仍失敗者丟棄；chunk 其餘事件照寫（決策 I）
+        # 修復後仍失敗之事件直接丟棄並告警，保住其餘驗證通過的合格事件（決策 I）
 
     for failure in failures:
         logger.warning(
@@ -223,7 +225,10 @@ def _validate_events(
     raw_events: Sequence[Any],
     composed: ComposedSchema,
 ) -> tuple[list[dict[str, Any]], list[tuple[dict[str, Any], str]]]:
-    """逐筆驗證事件，回傳 `(通過清單, 失敗清單)`。"""
+    """使用動態 Pydantic 模型逐筆驗證事件，並進行跨概念屬性防滲透過濾。
+
+    傳回 `(通過驗證之事件清單, 失敗事件與原因清單)`。
+    """
     accepted: list[dict[str, Any]] = []
     failures: list[tuple[dict[str, Any], str]] = []
     for raw in raw_events:
@@ -235,12 +240,13 @@ def _validate_events(
         except ValidationError as exc:
             failures.append((raw, _summarize_validation_error(exc)))
             continue
-        # 驗證通過仍要清掉跨分類滲透的屬性；prompt 指引模式沒有解碼層保證
+        # 驗證通過後仍須清理非該概念白名單的跨概念滲透屬性（Prompt 指引模式下無網關解碼保證）
         accepted.append(prune_irrelevant_event_properties(validated.model_dump(), composed))
     return accepted, failures
 
 
 def _summarize_validation_error(exc: ValidationError) -> str:
+    """將 Pydantic ValidationError 摘要為單行文字說明。"""
     parts = []
     for error in exc.errors()[:5]:
         location = ".".join(str(item) for item in error.get("loc", ()))
@@ -256,9 +262,9 @@ def _request_repair(
     client,
     max_attempts: int,
 ) -> list[Any]:
-    """帶 validation error 做一次有界修復重問。
+    """帶入 Pydantic 驗證錯誤訊息，發起最多 1 次的有界修復重問。
 
-    只重問失敗的事件，通過的不重算——重算會讓已經正確的事件也承擔再壞一次的風險。
+    只對失敗的事件發起修正請求，已驗證通過的事件不重新計算，防止合格事件承擔再次出錯的風險。
     """
     if max_attempts <= 0:
         return []
@@ -282,7 +288,7 @@ def _request_repair(
             repair_prompt, system=SYSTEM_PROMPT, model_id=model_id, client=client
         )
     except bedrock.BedrockError as exc:
-        # 修復是加分項；失敗就走丟棄路徑，不影響已通過的事件
+        # 重問修復屬於加分項；若呼叫失敗則記錄告警並直接丟棄失敗事件，不損害已通過事件
         logger.warning("事件修復重問失敗，改走丟棄路徑：%s", exc)
         return []
 
@@ -295,6 +301,11 @@ def _to_extracted_event(
     event: Mapping[str, Any],
     composed: ComposedSchema,
 ) -> ExtractedEvent:
+    """將通過驗證的原始字典轉換為標準的 ExtractedEvent 資料模型實例。
+
+    將屬性拆分為核心欄位（subject, predicate, summary, observed_at）與專屬動態屬性字典 (attributes)，
+    供後續模組對應寫入 DynamoDB 的 `events` 資料表。
+    """
     attributes = {
         key: value
         for key, value in event.items()

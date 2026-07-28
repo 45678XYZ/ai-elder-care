@@ -1,15 +1,20 @@
-"""Chunk planner 與 `chunk_manifest`。
+"""Chunk Planner 與 `chunk_manifest` 管理模組。規範見 docs/framework.md 的「Static topic chunks」。
 
-規範見 docs/framework.md 的「Static topic chunks」。要點：
+核心設計原則與約束：
+1. Core Range 完整切割：
+   - core ranges 必須完全覆蓋 session 內所有 turns 且互不重疊
+   - 確保每個 turn 恰好作為 core 被處理一次，防止漏萃取或跨 chunk 重複萃取
 
-- **core ranges 必須完整 partition 所有 turns 且互不重疊**，每個 turn 恰好被一個 chunk 當作
-  core 處理一次；否則同一件事會被兩個 chunk 各萃取一次，或整段被漏掉。
-- **context overlap 只供理解，不 emit 事件**。context-only turn 不會出現在 evidence，
-  也不會產生事件。
-- **`chunk_id` 由 `session_snapshot_hash + 首尾 core turn id + ordinal` 穩定產生**，
-  與模型、時間、執行次數無關。
-- **manifest 首次成功後條件式持久化**，所有 retry、duplicate delivery 與 DLQ replay 重用
-  同一份；這是「分塊可以非確定性」與「batch 必須冪等」兩個要求能並存的原因。
+2. Context Overlap 邊界：
+   - context overlap 僅作為 LLM 理解前文脈絡（只讀不 emit）
+   - context-only turns 嚴禁產生事件，亦不得作為對話證據（evidence_conversation_ids）
+
+3. 確定性 Chunk ID 派生：
+   - `chunk_id` 由 `session_snapshot_hash + 首尾 core turn id + ordinal` 雜湊產生
+   - 刻意排除執行時間與模型版本，保證同一 snapshot 重跑時產生完全一致的 ID，維護稽核追溯
+
+4. Manifest 條件式持久化：
+   - 首次劃分後寫入 DynamoDB 持久化；重試（retry）、重複交付（duplicate delivery）與 DLQ 重播均重用現成 manifest，達到最終冪等
 """
 
 from collections.abc import Sequence
@@ -25,19 +30,19 @@ logger = logging.getLogger(__name__)
 CHUNK_ID_PREFIX = "chk_"
 CHUNK_ID_HASH_LENGTH = 12
 
-# 前後各帶幾個 turn 當理解脈絡；只讀不 emit
+# 上下文脈絡包含的前後 turn 數量；僅供 LLM 理解語意脈絡，不得作為事件萃取來源
 DEFAULT_CONTEXT_OVERLAP = 1
 
 
 class ChunkPlanError(ValueError):
-    """manifest 不合法。"""
+    """Manifest 格式不合法或未滿足劃分條件約束。"""
 
 
 @dataclass(frozen=True)
 class PlannedChunk:
-    """單一 chunk 的靜態處理範圍。
+    """單一 Chunk 的靜態處理範圍與索引。
 
-    索引都是 session 內 frozen turns 的位置，`core_*` 為含頭含尾的閉區間。
+    索引均為 session 內 frozen turns 的 0-indexed 位置，`core_*` 包含頭尾端點（閉區間）。
     """
 
     chunk_id: str
@@ -54,7 +59,7 @@ class PlannedChunk:
         return self.core_end - self.core_start + 1
 
     def to_manifest_entry(self) -> dict[str, Any]:
-        """壓成 session item 內的 compact metadata（不含逐字稿）。"""
+        """壓縮為 session item 內部儲存的 compact metadata 字典（不含逐字稿與原文）。"""
         return {
             "chunk_id": self.chunk_id,
             "ordinal": self.ordinal,
@@ -69,7 +74,7 @@ class PlannedChunk:
 
 @dataclass(frozen=True)
 class ChunkManifest:
-    """一個 closed session 的完整 chunk 規劃。"""
+    """單一 closed session 之全量 Chunk 劃分與規劃物件。"""
 
     session_id: str
     session_snapshot_hash: str
@@ -89,10 +94,10 @@ def chunk_id_for(
     last_core_turn_id: str,
     ordinal: int,
 ) -> str:
-    """穩定的 chunk ID。
+    """計算確定的 chunk ID。
 
-    刻意不含模型版本、時間或標籤：同一份 frozen snapshot 重跑時 chunk ID 必須相同，
-    否則 retry 會產生新的 `source_chunk_id`，讓稽核追不回來源。
+    刻意排除模型版本與當下時間：保證同一 frozen snapshot 重跑時產生相同的 chunk ID，
+    確保重試或重播放置時 source_chunk_id 能夠精準追溯歷史。
     """
     signature = f"{session_snapshot_hash}|{first_core_turn_id}|{last_core_turn_id}|{ordinal}"
     digest = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:CHUNK_ID_HASH_LENGTH]
@@ -110,7 +115,7 @@ def plan_chunks(
     strategy: str = "",
     fallback_used: bool = False,
 ) -> ChunkManifest:
-    """由邊界產生 manifest。"""
+    """根據語意邊界列表與全量 frozen turns 生成分塊規劃清單（ChunkManifest）。"""
     if not turns:
         raise ChunkPlanError("frozen turns 為空，無法規劃 chunk")
     if not boundaries or boundaries[0] != 0:
@@ -156,7 +161,7 @@ def plan_chunks(
 
 
 def validate_manifest(manifest: ChunkManifest, total_turns: int) -> None:
-    """檢查 core ranges 恰好覆蓋每個 turn 一次。"""
+    """驗證 Manifest 的 Core Ranges 是否滿足完整劃分且無重疊（Partition Constraint）。"""
     covered: list[int] = []
     for chunk in manifest.chunks:
         if chunk.core_start > chunk.core_end:
@@ -183,9 +188,9 @@ def manifest_from_entries(
     planner_version: str,
     entries: Sequence[dict[str, Any]],
 ) -> ChunkManifest:
-    """由持久化的 manifest 還原。
+    """從 DB 持久化之 compact entries 還原 ChunkManifest。
 
-    retry、duplicate delivery 與 DLQ replay 都走這條路徑重用首次規劃，不重新分塊。
+    重試（retry）、重複交付與 DLQ 重播皆直接還原重用，避免非確定性重新劃分。
     """
     chunks = tuple(
         PlannedChunk(
@@ -209,10 +214,10 @@ def manifest_from_entries(
 
 
 def render_chunk_text(turns: Sequence[Turn], chunk: PlannedChunk) -> str:
-    """組 chunk 的逐字稿。
+    """將指定 chunk 範圍內的 turns 組合為送給 LLM 的逐字稿文本。
 
-    context-only 的 turn 標上前綴，讓模型知道那是脈絡而非本塊要萃取的內容；
-    這些 turn 不會出現在 evidence，也不該產生事件。
+    非 core 範圍的上下文加上 `（脈絡）` 前綴標記，提示 LLM 僅供參考不得萃取事件；
+    脈絡範圍之 turn 不得包含於證據（evidence）集中。
     """
     lines: list[str] = []
     for index in range(chunk.context_start, chunk.context_end + 1):
@@ -223,16 +228,20 @@ def render_chunk_text(turns: Sequence[Turn], chunk: PlannedChunk) -> str:
 
 
 def core_turn_ids(turns: Sequence[Turn], chunk: PlannedChunk) -> tuple[str, ...]:
-    """chunk 的 core turn IDs；evidence 只能取自這裡。"""
+    """取得指定 chunk 的 core range turn IDs 集合。
+
+    事件萃取之 evidence_conversation_ids 僅能從此集合挑選。
+    """
     return tuple(
         turns[index].conversation_id for index in range(chunk.core_start, chunk.core_end + 1)
     )
 
 
 def reference_datetime_for(turns: Sequence[Turn], chunk: PlannedChunk) -> str:
-    """時序推導的參考時間：core range 最後一個 turn 的 `created_at`。
+    """取得時序推導的基準時間戳記（取 core range 最末 turn 之 created_at）。
 
-    不可用當下時間——retry 或 DLQ replay 會落在不同時刻，Slot 與 canonical key 就會漂移。
-    取最後一個 turn 是因為相對時間表達（「剛剛」「昨天」）通常相對於說話當下。
+    嚴禁使用系統當下時間（datetime.now），否則重試或 DLQ 重播會導致 Slot 與 canonical key 發生時間漂移。
+    使用最末 turn 時間戳記係因語意中相對時間表達（如「剛剛」、「剛才」）均相對於對話當下。
     """
     return turns[chunk.core_end].created_at
+
