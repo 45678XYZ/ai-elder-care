@@ -494,7 +494,8 @@ def test_turn_speaker_is_derived_from_existing_fields(stack):
             "ai_respond_text": "很好",
         }
     )
-    assert (elder_turn.speaker, elder_turn.text) == ("長者", "我吃過藥了")
+    assert elder_turn.speaker == "長者"
+    assert elder_turn.text == "長者: 我吃過藥了\nAI: 很好"
 
     ai_turn = handler_module._to_turn(
         {
@@ -503,4 +504,6 @@ def test_turn_speaker_is_derived_from_existing_fields(stack):
             "ai_prompt_text": "早安，今天吃藥了嗎？",
         }
     )
-    assert (ai_turn.speaker, ai_turn.text) == ("AI", "早安，今天吃藥了嗎？")
+    assert ai_turn.speaker == "AI"
+    assert ai_turn.text == "AI: 早安，今天吃藥了嗎？"
+
