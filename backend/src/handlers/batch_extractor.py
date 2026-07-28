@@ -257,17 +257,26 @@ def _run_extraction(pipeline, config, elder_id: str, session_id: str, session: d
 
 
 def _to_turn(raw: dict[str, Any]) -> Turn:
-    """把 conversations 的 turn item 轉成分塊需要的最小形狀。
+    """把 conversations 的 turn item 轉成分塊與萃取需要的完整對話形狀。
 
-    speaker 由既有欄位推導：長者逐字稿存 `elder_transcript`，AI 話語存 `ai_prompt_text`
-    或 `ai_respond_text`。一個 turn 同時有兩邊時以長者發言為主體。
+    完整組合 ai_prompt_text (AI 1)、elder_transcript (長者) 與 ai_respond_text (AI 2)，
+    確保問答脈絡與用藥警示不遺失。
     """
+    parts = []
+    ai_prompt = (raw.get("ai_prompt_text") or "").strip()
     elder_text = (raw.get("elder_transcript") or "").strip()
-    ai_text = (raw.get("ai_respond_text") or raw.get("ai_prompt_text") or "").strip()
+    ai_respond = (raw.get("ai_respond_text") or "").strip()
+
+    if ai_prompt:
+        parts.append(f"AI: {ai_prompt}")
     if elder_text:
-        speaker, text = "長者", elder_text
-    else:
-        speaker, text = "AI", ai_text
+        parts.append(f"長者: {elder_text}")
+    if ai_respond:
+        parts.append(f"AI: {ai_respond}")
+
+    text = "\n".join(parts) if parts else (elder_text or ai_respond or ai_prompt or "")
+    speaker = "長者" if elder_text else "AI"
+
     return Turn(
         conversation_id=raw.get("conversation_id") or raw["record_id"].split("#", 1)[-1],
         speaker=speaker,

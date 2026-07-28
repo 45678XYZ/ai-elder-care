@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 BATCH_QUEUE_URL = os.environ.get("BATCH_QUEUE_URL", "")
 
 # 超過這段時間沒有互動的 active session 由週期性 closer 收斂
-SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30"))
+SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "10"))
 
 # 每次 sweep 處理的 session 數上限，避免單次執行超時
 SWEEP_LIMIT = int(os.environ.get("SESSION_SWEEP_LIMIT", "25"))

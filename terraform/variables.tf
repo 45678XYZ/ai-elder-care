@@ -98,7 +98,7 @@ variable "batch_lambda_timeout" {
 variable "session_idle_minutes" {
   description = "active session 閒置多久後由週期性 closer 收斂"
   type        = number
-  default     = 30
+  default     = 10
 }
 
 variable "session_sweep_minutes" {
