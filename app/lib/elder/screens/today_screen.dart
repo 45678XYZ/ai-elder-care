@@ -304,7 +304,7 @@ class _GreetingPane extends StatelessWidget {
       return (
         label: '早安',
         icon: Icons.wb_twilight,
-        asset: 'assets/images/greeting_morning.jpg',
+        asset: 'assets/images/greeting_morning.png',
       );
     }
     if (h < 18) {
