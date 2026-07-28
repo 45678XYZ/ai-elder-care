@@ -49,3 +49,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    # 早安／午安／晚安圖（長者今日頁的撕曆右半）。檔案缺席時畫面會退回色塊，
+    # 不會壞，所以這個目錄可以先是空的。
+    - assets/images/
