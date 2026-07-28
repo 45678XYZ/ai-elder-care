@@ -7,17 +7,12 @@ import 'package:ai_elder_care/shared/widgets/form_widgets.dart';
 import 'package:ai_elder_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// 登入／註冊／驗證碼三頁。
 ///
 /// 重點在**送出前的把關與回饋**：這三頁的每一種失敗如果只是靜靜地什麼都不做，
 /// 使用者（尤其長輩）會以為 App 壞了。導航後的結果由 router 負責，不在這裡測。
 void main() {
-  setUpAll(() {
-    GoogleFonts.config.allowRuntimeFetching = false;
-  });
-
   setUp(() {
     // 每個測試給乾淨的假後端，且不要人為延遲。
     AuthService.instance.backend = DemoAuthBackend(latency: Duration.zero);

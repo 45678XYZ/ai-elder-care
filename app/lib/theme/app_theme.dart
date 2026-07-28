@@ -1,9 +1,8 @@
 // 暖紙手帳 — 單一真實來源的 Theme 實作
 // 對映 SKILL.md §2 顏色 / §3 字體 / §4 間距圓角陰影
-// 依賴：google_fonts
+// 字體：assets/fonts/ 的 Noto Serif TC／Noto Sans TC（見 pubspec）
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// §2 顏色。所有文字色對比以最深紙底 #e4dccb 為基準驗收。
 abstract final class AppColors {
@@ -185,14 +184,29 @@ abstract final class AppShadows {
 ///
 /// 永遠走 Theme.of(context).textTheme，不要寫死 fontSize。
 abstract final class AppTypography {
-  static TextStyle _serif(double size, FontWeight w) => GoogleFonts.notoSerifTc(
-      fontSize: size, fontWeight: w, height: 1.5, color: AppColors.ink);
-  static TextStyle _sans(double size, FontWeight w) => GoogleFonts.notoSansTc(
-      fontSize: size, fontWeight: w, height: 1.55, color: AppColors.ink);
+  /// 字檔打包在 assets/fonts/（見 pubspec）。**不用 google_fonts 執行期下載**——
+  /// 下載版第一次啟動與離線時會先用系統字頂著、載完才跳字，而且各家 Android
+  /// 的預設中文字不同，畫面會因機而異。
+  static const serifFamily = 'NotoSerifTC';
+  static const sansFamily = 'NotoSansTC';
+
+  static TextStyle _serif(double size, FontWeight w) => TextStyle(
+      fontFamily: serifFamily,
+      fontSize: size,
+      fontWeight: w,
+      height: 1.5,
+      color: AppColors.ink);
+  static TextStyle _sans(double size, FontWeight w) => TextStyle(
+      fontFamily: sansFamily,
+      fontSize: size,
+      fontWeight: w,
+      height: 1.55,
+      color: AppColors.ink);
 
   static final textTheme = TextTheme(
     // 大數字（麥克風狀態等）— 行高 .78
-    displayLarge: GoogleFonts.notoSerifTc(
+    displayLarge: const TextStyle(
+        fontFamily: serifFamily,
         fontSize: 66,
         fontWeight: FontWeight.w900,
         height: .78,
@@ -231,7 +245,8 @@ abstract final class AppTypography {
 abstract final class AlmanacTypography {
   static TextStyle serif(double size, FontWeight weight,
           {double? height, double? letterSpacing}) =>
-      GoogleFonts.notoSerifTc(
+      TextStyle(
+        fontFamily: AppTypography.serifFamily,
         fontSize: size,
         fontWeight: weight,
         height: height,

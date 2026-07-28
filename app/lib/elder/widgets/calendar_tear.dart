@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../shared/services/calendar_tear_store.dart';
 import '../../shared/services/lunar_date.dart';
@@ -77,15 +76,8 @@ class _TearableCalendarSheetState extends State<TearableCalendarSheet>
     // 使用者選了「減少動態效果」就完全不播（規劃書 P3）。
     if (MediaQuery.of(context).disableAnimations) return;
 
-    // 襯線字體是 google_fonts 執行期抓的（第一次啟動要下載，之後讀快取）。
-    // 還沒到位就開演，長輩會先看到空白或系統預設字，載完才整片「跳」成襯線——
-    // 寧可晚零點幾秒播，也不要播到一半換字。
-    // 離線抓不到就照播，Flutter 會用預設字型頂著（catchError 而不是 try/catch：
-    // 每一個字重都是一個 future，錯誤要在 future 上就地吃掉，不要漏成未處理錯誤）。
-    await GoogleFonts.pendingFonts().catchError((_) => <void>[]);
-    if (!mounted) return;
-
     // 讓首屏先畫完再開演。跟清單、早安圖解碼搶同一幀，就是開頭那一下卡頓。
+    // （字體已經打包在 assets，不必再等下載——見 AppTypography。）
     await SchedulerBinding.instance.endOfFrame;
     if (!mounted) return;
 

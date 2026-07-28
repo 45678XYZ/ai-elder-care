@@ -26,8 +26,6 @@ dependencies:
   uuid: ^4.5.0
   # 記住「首次設定已完成」與長者基本資料，之後啟動直接進角色選擇
   shared_preferences: ^2.2.0
-  # 設計系統字體：Noto Serif TC（≥24sp）／Noto Sans TC（<24sp）
-  google_fonts: ^6.2.1
   # 導覽：照護者多畫面 + 具名路由（見 HANDOFF 畫面清單）
   go_router: ^14.2.0
   # 照護者統計圖表（折線／長條／Waffle）
@@ -54,3 +52,25 @@ flutter:
     # 早安／午安／晚安圖（長者今日頁的撕曆右半）。檔案缺席時畫面會退回色塊，
     # 不會壞，所以這個目錄可以先是空的。
     - assets/images/
+
+  # 設計系統字體：Noto Serif TC（≥32sp 標題與農民曆）／Noto Sans TC（其餘）。
+  #
+  # **打包進 App，不走 google_fonts 執行期下載**：下載版在第一次啟動與離線時會先
+  # 用系統字頂著、載完才跳成襯線，長輩會看到字「換了一次」；而且不同 Android 廠商
+  # 的預設中文字不一樣（例如三星有自己的字），畫面會因機而異。
+  #
+  # 只收實際用到的字重（見 lib/theme/app_theme.dart）：襯線只有 900，
+  # 黑體 500／700／900。字檔是 Noto CJK 的**繁體子集**，授權 SIL OFL 1.1（OFL.txt）。
+  fonts:
+    - family: NotoSerifTC
+      fonts:
+        - asset: assets/fonts/NotoSerifTC-Black.otf
+          weight: 900
+    - family: NotoSansTC
+      fonts:
+        - asset: assets/fonts/NotoSansTC-Medium.otf
+          weight: 500
+        - asset: assets/fonts/NotoSansTC-Bold.otf
+          weight: 700
+        - asset: assets/fonts/NotoSansTC-Black.otf
+          weight: 900

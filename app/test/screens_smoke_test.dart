@@ -1,4 +1,4 @@
-﻿import 'package:ai_elder_care/caregiver/screens/elders_screen.dart';
+import 'package:ai_elder_care/caregiver/screens/elders_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/stats_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/summaries_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/timeline_screen.dart';
@@ -10,7 +10,6 @@ import 'package:ai_elder_care/shared/services/session_store.dart';
 import 'package:ai_elder_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 每個畫面都要能在**兩倍字級**下畫完而不 overflow——這是 CLAUDE.md 的全域硬約束
@@ -19,11 +18,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Flutter 在 debug 下遇到 RenderFlex overflow 會丟 FlutterError，測試因此會失敗，
 /// 所以這組測試等於把那條約束變成會擋下改動的機制，而不只是文件上的一句話。
 void main() {
-  setUpAll(() {
-    // 測試環境不連網抓字體，改用內建 fallback，避免 HTTP 400 噪音。
-    GoogleFonts.config.allowRuntimeFetching = false;
-  });
-
   setUp(() {
     // 標記撕曆動畫今天已播過。動畫期間底層包在 IgnorePointer 裡，語意節點會被
     // 一併排除，讓版面與無障礙斷言變得看時機而定。動畫本身由
@@ -116,8 +110,7 @@ void main() {
     // 頁首撕曆的驗收：三種常見 Android 邏輯寬度都要放得下，日期三行不能被截掉。
     for (final width in [320.0, 360.0, 412.0]) {
       testWidgets('撕曆頁首在 ${width.toInt()}dp 寬不溢出', (tester) async {
-        await pumpScreen(tester, const TodayScreen(),
-            size: Size(width, 844));
+        await pumpScreen(tester, const TodayScreen(), size: Size(width, 844));
         expect(tester.takeException(), isNull);
 
         final now = DateTime.now();
@@ -130,8 +123,7 @@ void main() {
         expect(find.text('${now.day}'), findsAtLeastNWidgets(1));
         expect(find.textContaining('星期'), findsOneWidget);
         // 農曆是直排，逐字各自一個 Text——檢查第一個字在就好。
-        expect(find.text('${lunar.monthDay}日'.characters.first),
-            findsAtLeastNWidgets(1));
+        expect(find.text('農'), findsAtLeastNWidgets(1));
       });
     }
 

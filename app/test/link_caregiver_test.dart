@@ -3,7 +3,6 @@ import 'package:ai_elder_care/shared/services/session_store.dart';
 import 'package:ai_elder_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 連結家人這一頁的行為。
@@ -11,10 +10,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 這是照護者拿長輩手機操作、且會改變帳號歸屬的流程，出錯的代價比其他畫面高：
 /// 加錯了長輩自己不會發現，所以每一種送出結果都要有看得懂的回饋。
 void main() {
-  setUpAll(() {
-    GoogleFonts.config.allowRuntimeFetching = false;
-  });
-
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     AppSession.instance.linkedCaregiverIds = const [];
