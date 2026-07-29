@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../shared/services/lunar_date.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/almanac_face.dart';
+import '../widgets/greeting_slot.dart';
 
 /// 撕曆的放大檢視（規劃書 P1 / R2、R3、R4）。
 ///
@@ -177,33 +178,10 @@ class _EnlargedGreetingBody extends StatelessWidget {
   /// 有圖的時候比例由**原圖**決定（`BoxFit.contain` 不裁切也不變形）。
   final double fallbackAspectRatio;
 
-  ({String label, IconData icon, String asset}) get _greeting {
-    final h = now.hour;
-    if (h < 11) {
-      return (
-        label: '早安',
-        icon: Icons.wb_twilight,
-        asset: 'assets/images/greeting_morning.jpg',
-      );
-    }
-    if (h < 18) {
-      return (
-        label: '午安',
-        icon: Icons.wb_sunny_outlined,
-        asset: 'assets/images/greeting_afternoon.png',
-      );
-    }
-    return (
-      label: '晚安',
-      icon: Icons.nightlight_outlined,
-      asset: 'assets/images/greeting_evening.png',
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final g = _greeting;
+    final g = GreetingSlot.of(now);
     return ClipRRect(
       borderRadius: const BorderRadius.all(AppRadius.cardLarge),
       child: Image.asset(

@@ -4,6 +4,7 @@ import 'package:ai_elder_care/caregiver/screens/summaries_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/timeline_screen.dart'
     show TimelineScreen, filterBarKey;
 import 'package:ai_elder_care/elder/screens/today_screen.dart';
+import 'package:ai_elder_care/elder/widgets/greeting_slot.dart';
 import 'package:ai_elder_care/shared/screens/role_select_screen.dart';
 import 'package:ai_elder_care/shared/services/calendar_tear_store.dart';
 import 'package:ai_elder_care/shared/services/lunar_date.dart';
@@ -134,8 +135,7 @@ void main() {
       final handle = tester.ensureSemantics();
       await pumpScreen(tester, const TodayScreen());
 
-      final h = DateTime.now().hour;
-      final expected = h < 11 ? '早安' : (h < 18 ? '午安' : '晚安');
+      final expected = GreetingSlot.of(DateTime.now()).label;
       // 用語意標籤而不是可見文字：有圖時畫面上只有圖，問候語由 semanticLabel 承載。
       expect(find.semantics.byLabel(RegExp(expected)), findsOne);
       handle.dispose();

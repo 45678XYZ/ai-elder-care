@@ -9,6 +9,7 @@ import '../../shared/services/audio_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/services/speech_service.dart';
 import '../../theme/app_theme.dart';
+import '../widgets/greeting_slot.dart';
 
 /// 對話迴圈階段。
 enum _Phase { idle, listening, thinking, speaking }
@@ -374,12 +375,9 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  String _greeting() {
-    final h = DateTime.now().hour;
-    if (h < 11) return '早安';
-    if (h < 18) return '午安';
-    return '晚安';
-  }
+  /// 開場問候。分界與今日頁的早安圖共用一份（見 [GreetingSlot]）——
+  /// 同一個時間點，撕曆上寫「晚安」而聊天室說「早安」是不能發生的。
+  String _greeting() => GreetingSlot.of(DateTime.now()).label;
 }
 
 /// 對話中的一則訊息。
