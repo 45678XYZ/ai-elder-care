@@ -127,7 +127,7 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["sns:Publish"]
+        Action   = ["sns:Publish", "sns:Subscribe"]
         Resource = "*"
       },
       {
@@ -221,7 +221,36 @@ resource "aws_lambda_function" "elders" {
 
   environment {
     variables = {
-      TABLE_ELDERS = aws_dynamodb_table.elders.name
+      TABLE_ELDERS               = aws_dynamodb_table.elders.name
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
     }
   }
+}
+
+# =============================================================================
+# 5. Cognito Post Confirmation Trigger
+# =============================================================================
+
+resource "aws_lambda_function" "post_confirmation" {
+  function_name = "${var.project_name}-post-confirmation"
+  role          = aws_iam_role.lambda_backend_role.arn
+  handler       = "handlers.post_confirmation.handler"
+  runtime       = "python3.11"
+  timeout       = 10
+
+  filename = "${path.module}/build/backend.zip"
+
+  environment {
+    variables = {
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    }
+  }
+}
+
+resource "aws_lambda_permission" "allow_cognito_post_confirmation" {
+  statement_id  = "AllowCognitoInvokePostConfirmation"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.post_confirmation.function_name
+  principal     = "cognito-idp.amazonaws.com"
+  source_arn    = aws_cognito_user_pool.accounts.arn
 }
