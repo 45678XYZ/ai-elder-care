@@ -5,7 +5,10 @@ import json
 def json_response(status_code: int, body: dict) -> dict:
     return {
         "statusCode": status_code,
-        "headers": {"Content-Type": "application/json; charset=utf-8"},
+        "headers": {
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*"
+        },
         "body": json.dumps(body, ensure_ascii=False),
     }
 

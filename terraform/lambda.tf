@@ -165,7 +165,7 @@ resource "aws_lambda_function" "chat" {
   role          = aws_iam_role.lambda_backend_role.arn
   handler       = "handlers.chat.handler"
   runtime       = "python3.11"
-  timeout       = 30
+  timeout       = 28
   memory_size   = 512
 
   filename = "${path.module}/build/backend.zip"
