@@ -5,7 +5,8 @@
 ```
 src/
 ├── handlers/     # chat / elders / summaries / events / routines / stats / summary_generator / pre_token_generation（Cognito trigger）
-└── shared/       # auth（token 授權）、db（DynamoDB 六表）、responses（統一回應格式）
+└── shared/       # auth（token 授權）、db（DynamoDB 六表）、models（Pydantic schema）、
+                  # responses（統一回應格式）、routines（例行公事版本與 occurrence 推導）
 tests/            # pytest
 ```
 

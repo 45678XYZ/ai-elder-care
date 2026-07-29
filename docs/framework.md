@@ -340,6 +340,8 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 #### Canonical identity 與寫入規則
 
 - routine completion：canonical key 只由 logical occurrence 的 `elder_id + routine_id + routine_date` 決定；手動與對話完成、以及同日不同 routine version 都收斂到同一 event。`routine_version` 只記錄完成當下採用的有效版本，不參與 identity；存在該 canonical completion event 即判定 occurrence 為 `done`，否則依排程、目前時間與 grace period 動態衍生 `pending` 或 `missed`，routines 表不重複保存狀態。
+  - `canonical_event_key` 的字串形式固定為 `routine_completion#<routine_id>#<routine_date>`，`routine_date` 為台灣日界的 `YYYY-MM-DD`；`elder_id` 於 `event_id` 推導時併入，不重複寫進 key。
+  - 此格式與 `event_id` 推導方式一經寫入 event 即不可變更。變更會使同一 occurrence 算出不同 `event_id`，既有事件失去冪等收斂並產生重複完成紀錄。
 - high-risk safety：canonical key 由 `session_id + canonical alert episode` 決定；同一 session 同一警訊 episode 的 realtime 與 batch evidence 收斂。
 - normal event：canonical key 由 `Date + Slot + Subject + Predicate` 決定。
   - **Date**：`YYYY-MM-DD`，台灣日界（+08:00）。
