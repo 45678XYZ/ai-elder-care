@@ -319,8 +319,6 @@ resource "aws_lambda_permission" "allow_bedrock_to_invoke_tools" {
   source_arn    = aws_bedrockagent_agent.elder_companion_agent.arn
 }
 
-# 取得目前 AWS 帳號 ID 以利字串拼接
-data "aws_caller_identity" "current" {}
 
 # 6. 條件式將 Bedrock Knowledge Base (衛教知識庫) 綁定至 Agent
 resource "aws_bedrockagent_agent_knowledge_base_association" "health_kb" {
