@@ -1,17 +1,12 @@
-"""概念檢索：把對話塊對應到 Top-K 候選細分類節點。
+"""概念檢索模組：將對話片段檢索出 Top-K 候選細分類節點。
 
-改寫自 aws-hackathon 的 `dense_retriever`。原版在本機載 `sentence-transformers`+`torch`
-把 147 個 sub-chunk 算成矩陣後做內積；那套進不了 Lambda，也和「embedding 模型要能抽換」
-的決策衝突。這裡的作法：
+架構與設計決策詳見 `docs/framework.md` 與 `docs/feature_events-extraction.md`。
 
-- 向量索引放 **S3 Vectors**（決策 B），查詢向量由 Bedrock embedding 產生。
-- 索引維度在建立時固定，所以 index 名稱帶模型與維度，換模型是新建索引並存、切 env 生效。
-- **保留「每個 concept 取其 sub-chunk 最高相似度」的聚合**。一個概念有定義／範例／同義詞
-  三個 sub-chunk，任一命中就代表該概念相關；用最大值而非平均，否則描述較長的概念會被稀釋。
-- 索引不可用時**降級為離線內積**（用同一個 embedder 現算 sub-chunk 向量）。降級路徑同時是
-  單元測試路徑：注入 stub embedder 就能離線驗證聚合與 Top-K 排序。
-- 只檢索 level ≥ 2 的節點。根節點與領域節點粗到無法對應高階類別，剪枝階段本來就會丟掉，
-  讓它們占用 Top-K 名額只是浪費候選。
+本模組設計目的：
+- 為 Batch Extractor 提供二階段分類的第一階段（候選概念限縮），減少傳給 LLM 的分類空間。
+- 採用 **S3 Vectors + Bedrock Embedding** 線上向量檢索，徹底移除對本機大模型套件 (PyTorch/sentence-transformers) 的依賴，符合 Lambda 部署條件。
+- 支援 **「線上 S3 Vectors 檢索」與「離線內積計算」雙軌機制**，當向量索引未建立或服務異常時自動優雅降級，同時作為單元測試離線驗證路徑。
+- 採用 **Max-Pooling（最大相似度聚合）** 策略，每個照護概念包含多個 sub-chunk（定義、同義詞、範例），取最高分者代表該概念分級，避免描述較長的概念被平均值稀釋。
 """
 
 from collections.abc import Sequence
@@ -32,22 +27,31 @@ from .taxonomy import Taxonomy
 
 logger = logging.getLogger(__name__)
 
+# 概念資產檔檔名
 CONCEPT_CHUNKS_FILE = "concept_chunks.jsonl"
 
-# 每個概念的 sub-chunk 數（定義／範例／同義詞）；線上查詢要多取幾筆才夠聚合出 Top-K 概念
+# 每個概念內建包含的 sub-chunk 數量上限（定義／同義詞／範例三類）；
+# 線上 S3 Vectors 檢索時需向向量資料庫請求 (limit * 3) 筆向量，
+# 以確保聚合去重後仍能提供足額的 Top-K 候選概念。
 SUBCHUNKS_PER_CONCEPT = 3
 
-# S3 Vectors 單次 put 的上限
+# S3 Vectors 單次 put_vectors 寫入批次上限，避免請求 Payload 過大引發 API 失敗
 PUT_VECTORS_BATCH_SIZE = 500
 
 
 class RetrievalError(RuntimeError):
-    """檢索資產缺失或設定不完整。"""
+    """概念檢索資產缺失或設定無效時拋出的運行時錯誤。
+
+    此錯誤代表檢索基礎設定有誤，需中止檢索初始化。
+    """
 
 
 @dataclass(frozen=True)
 class ConceptChunk:
-    """概念的單一 sub-chunk；embedding 的最小單位。"""
+    """概念 sub-chunk 定義，為 Embedding 計算與檢索的最小物理單元。
+
+    採用 frozen=True 確保切分塊在記憶體中具不可變性（Immutable），避免被誤修改。
+    """
 
     chunk_id: str
     concept_id: str
@@ -62,7 +66,11 @@ def load_concept_chunks(
     *,
     min_level: int = MIN_CLASSIFIABLE_LEVEL,
 ) -> tuple[ConceptChunk, ...]:
-    """載入概念 sub-chunk 資產。"""
+    """載入概念 sub-chunk 靜態資產檔。
+
+    於載入時即剔除根節點與一級領域節點 (level < min_level)，因為過於粗粒度的節點
+    無法對應至具體的 7 大高階事件類別，提前過濾可避免無效節點佔用 Top-K 候選名額。
+    """
     base = Path(assets_dir) if assets_dir is not None else RETRIEVAL_ASSETS_DIR
     path = base / CONCEPT_CHUNKS_FILE
     if not path.is_file():
@@ -97,6 +105,10 @@ def load_concept_chunks(
 
 
 def _normalize(vector: Sequence[float]) -> list[float]:
+    """進行 L2 向量正規化。
+
+    單位化後的向量進行內積運算即可直接等於 Cosine 相似度，簡化後續的幾何相似度計算。
+    """
     norm = math.sqrt(sum(value * value for value in vector))
     if norm == 0:
         return list(vector)
@@ -104,11 +116,15 @@ def _normalize(vector: Sequence[float]) -> list[float]:
 
 
 def _dot(left: Sequence[float], right: Sequence[float]) -> float:
+    """計算兩向量之內積。"""
     return sum(a * b for a, b in zip(left, right))
 
 
 class ConceptRetriever:
-    """概念檢索器；線上走 S3 Vectors，不可用時降級為離線內積。"""
+    """候選概念檢索器。
+
+    支援線上 S3 Vectors 檢索與離線內積計算雙軌機制。
+    """
 
     def __init__(
         self,
@@ -130,13 +146,19 @@ class ConceptRetriever:
         self._s3vectors_client = s3vectors_client
         self._offline_matrix: tuple[list[float], ...] | None = None
 
-    # -- 線上／離線兩條路徑 -------------------------------------------------
+    # -- 線上與離線雙軌檢索路徑 ----------------------------------------------
 
     @property
     def online_enabled(self) -> bool:
+        """判定 S3 Vectors 線上檢索是否具備足夠的配置與 Client。"""
         return bool(self.vector_bucket and self.index_name and self._s3vectors_client is not None)
 
     def _query_online(self, query_vector: Sequence[float], limit: int) -> dict[str, float]:
+        """呼叫 S3 Vectors API 執行線上近鄰搜尋。
+
+        S3 Vectors 傳回之距離度量為 Cosine Distance，轉換為 Similarity 時使用 `1.0 - distance`。
+        取同概念多個 sub-chunk 的最高相似度（Max-Pooling），確保命中的概念獲得最顯著得分。
+        """
         response = self._s3vectors_client.query_vectors(
             vectorBucketName=self.vector_bucket,
             indexName=self.index_name,
@@ -150,16 +172,19 @@ class ConceptRetriever:
             metadata = vector.get("metadata") or {}
             concept_id = metadata.get("concept_id")
             if not concept_id:
-                # 沒有 metadata 時退回由 key 推導（key 格式為 `<concept_id>#<aspect>`）
+                # 無 metadata 時容錯：由 Key 格式 `<concept_id>#<aspect>` 推導 concept_id
                 concept_id = str(vector.get("key", "")).split("#")[0]
             if not concept_id:
                 continue
-            # 索引距離度量為 cosine，相似度取 1 - distance
             similarity = 1.0 - float(vector.get("distance", 1.0))
             scores[concept_id] = max(scores.get(concept_id, -1.0), similarity)
         return scores
 
     def _offline_vectors(self) -> tuple[list[float], ...]:
+        """快取離線檢索所需的子區塊向量矩陣。
+
+        將概念文字現算為 Embedding 矩陣並快取於記憶體，防止測試或降級模式下重複呼叫模型 API。
+        """
         if self._offline_matrix is None:
             logger.info("計算離線概念向量：chunks=%s", len(self.chunks))
             vectors = self.embedder.embed_documents([chunk.embedding_text for chunk in self.chunks])
@@ -167,6 +192,7 @@ class ConceptRetriever:
         return self._offline_matrix
 
     def _query_offline(self, query_vector: Sequence[float]) -> dict[str, float]:
+        """採用純記憶體內積計算相似度（降級 / 測試路徑）。"""
         matrix = self._offline_vectors()
         scores: dict[str, float] = {}
         for chunk, vector in zip(self.chunks, matrix):
@@ -174,11 +200,15 @@ class ConceptRetriever:
             scores[chunk.concept_id] = max(scores.get(chunk.concept_id, -1.0), similarity)
         return scores
 
-    # -- 對外 ---------------------------------------------------------------
+    # -- 對外檢索介面 --------------------------------------------------------
 
     def retrieve(self, query_text: str, top_k: int | None = None) -> tuple[CandidateConcept, ...]:
-        """回傳依相似度遞減排序的 Top-K 候選概念。"""
-        # 明確傳 0 代表「不要候選」，不能被 or 運算吃掉退回預設值
+        """檢索與查詢文本最相關的 Top-K 候選概念，按相似度由高至低排序。
+
+        若線上 S3 Vectors 發生權限不足或索引不存在時，自動降級為離線內積計算，
+        確保主 Batch Extractor Pipeline 不因向量庫服務異常而整批中斷。
+        """
+        # 明確傳入 top_k=0 表示不請求候選，需避免被 Python bool(0)==False 退回預設值
         limit = self.top_k if top_k is None else top_k
         if limit <= 0 or not query_text.strip():
             return ()
@@ -190,7 +220,7 @@ class ConceptRetriever:
             try:
                 scores = self._query_online(query_vector, limit * SUBCHUNKS_PER_CONCEPT)
             except (ClientError, BotoCoreError, KeyError) as exc:
-                # 索引不存在或權限不足時不讓整個 batch 掛掉，改用離線內積
+                # 服務異常時降級為離線計算，防止整個 Batch 批次任務吞例外掛掉
                 logger.warning(
                     "概念向量索引不可用，降級為離線內積：index=%s reason=%s", self.index_name, exc
                 )
@@ -222,9 +252,10 @@ def build_index_payload(
     chunks: Sequence[ConceptChunk],
     embedder: EmbeddingProvider,
 ) -> list[dict]:
-    """產生 S3 Vectors 的 put_vectors payload。
+    """生成寫入 S3 Vectors 的向量 Payload 清單。
 
-    metadata 帶 `concept_id` 供查詢端聚合；key 用 `chunk_id`，重跑索引時是覆寫而非新增。
+    使用 `chunk_id` 作為向量 Key，確保重複執行建置腳本時具覆寫冪等性（Idempotent），
+    並於 metadata 攜帶 `concept_id` 供線上查詢端做 Max-Pooling 聚合。
     """
     vectors = embedder.embed_documents([chunk.embedding_text for chunk in chunks])
     payload = []
@@ -249,10 +280,14 @@ def put_index_payload(
     index_name: str,
     payload: Sequence[dict],
 ) -> int:
-    """分批寫入向量；回傳寫入筆數。"""
+    """將向量 Payload 分批寫入 S3 Vectors 索引，回傳成功寫入筆數。
+
+    自動依 `PUT_VECTORS_BATCH_SIZE` (500 筆) 切分 Payload 批次發送。
+    """
     written = 0
     for start in range(0, len(payload), PUT_VECTORS_BATCH_SIZE):
         batch = list(payload[start : start + PUT_VECTORS_BATCH_SIZE])
         client.put_vectors(vectorBucketName=vector_bucket, indexName=index_name, vectors=batch)
         written += len(batch)
     return written
+

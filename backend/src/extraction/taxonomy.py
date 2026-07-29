@@ -1,17 +1,17 @@
-"""可配置分類體系的載入與查詢。
+"""可配置分類體系的載入與查詢模組。
 
-事件分兩層分類（規範見 docs/framework.md 的「分類體系」）：
-- 高階類別 `type`：對外契約，與 daily_summaries.sections 一一對應
-- 細分類節點 `concept_id`：對內使用，來自可抽換的本體論資產
+提供兩層事件分類體系（對內細分類 `concept_id` 與對外高階類別 `type`）的動態載入、
+階層解析與完整性校驗。架構規範與規格詳見 `docs/framework.md` 的「分類體系」章節。
 
 三份資產各自獨立，程式不硬編碼任何類別字串：
 - `unified_care_ontology.json`：節點體系（階層、定義、同義詞、屬性）
 - `high_level_types.json`：高階類別定義與預設類別
 - `concept_type_map.json`：節點 → 高階類別映射，以及寫入 event 的 `taxonomy_version`
 
-映射採「先精確、再沿祖先鏈」解析，因此只需登記能決定分類的層級，葉節點自動繼承；
-個別葉節點需要覆寫時直接登記完整 `concept_id` 即可。都找不到時退回預設類別並告警，
-不靜默丟棄事件。
+本模組設計目的：
+- 隔離程式邏輯與本體論資產（JSON），擴充或修正分類時無需修改 Python 程式碼。
+- 提供「精確匹配優先、父祖鏈繼承次之」的解析機制，簡化資產映射檔的維護成本。
+- 於載入階段進行資產結構完整性校驗，確保部署期即抓出未映射節點，避免運行時錯誤。
 """
 
 from dataclasses import dataclass
@@ -25,6 +25,7 @@ from .config import TAXONOMY_ASSETS_DIR
 
 logger = logging.getLogger(__name__)
 
+# 資產檔案名稱常數：獨立管理本體論樹狀結構、高階類別、映射關係與同義詞典
 ONTOLOGY_FILE = "unified_care_ontology.json"
 HIGH_LEVEL_TYPES_FILE = "high_level_types.json"
 CONCEPT_TYPE_MAP_FILE = "concept_type_map.json"
@@ -33,12 +34,20 @@ SYNONYM_DICTIONARY_FILE = "synonym_dictionary.json"
 
 
 class TaxonomyError(ValueError):
-    """分類體系資產不一致；屬部署期錯誤，必須讓工作失敗而非降級執行。"""
+    """分類體系資產不一致錯誤。
+
+    此類錯誤源於資產檔配置缺失或關聯破壞，屬於部署階段即可發覺的配置問題，
+    必須直接使模組載入失敗阻斷部署，而非於運行階段進行降級處理。
+    """
 
 
 @dataclass(frozen=True)
 class ConceptNode:
-    """本體論的單一節點。"""
+    """本體論階層樹中的單一節點定義。
+
+    採用 `frozen=True` 確保節點定義在記憶體中具不可變性（Immutable），
+    避免多執行緒或跨請求呼叫時誤修改本體論結構。
+    """
 
     concept_id: str
     display_name: str
@@ -56,7 +65,11 @@ class ConceptNode:
 
 @dataclass(frozen=True)
 class HighLevelType:
-    """對外的高階事件類別。"""
+    """對外公開的高階事件類別定義。
+
+    對應前端畫面呈現與每日摘要區塊 (`daily_summaries.sections`) 的分類標籤。
+    詳見 `docs/framework.md`。
+    """
 
     id: str
     display_name: str
@@ -65,7 +78,10 @@ class HighLevelType:
 
 @dataclass(frozen=True)
 class Taxonomy:
-    """已驗證的分類體系；不可變，可安全在 Lambda warm start 間重用。"""
+    """已校驗且封裝完畢的不可變分類體系實例。
+
+    設計為不可變物件，可安全地在 AWS Lambda Warm Start 容器生命週期中被多個請求重用。
+    """
 
     taxonomy_version: str
     ontology_version: str
@@ -81,16 +97,23 @@ class Taxonomy:
 
     @property
     def type_ids(self) -> tuple[str, ...]:
-        """高階類別 ID，順序即為摘要呈現順序。"""
+        """取得高階類別 ID 列表。
+
+        傳回順序維持 `high_level_types.json` 定義之順序，此順序決定 UI 與摘要呈現時的區域順序。
+        """
         return tuple(t.id for t in self.types)
 
     # -- 節點查詢 ------------------------------------------------------------
 
     def get(self, concept_id: str) -> ConceptNode | None:
+        """依據 concept_id 取得節點實例，若不存在則傳回 None。"""
         return self.nodes.get(concept_id)
 
     def ancestors(self, concept_id: str) -> tuple[str, ...]:
-        """由該節點的父節點往上到根節點；節點不存在時回空 tuple。"""
+        """取得由指定節點之父節點一路向上至根節點的祖先鏈。
+
+        提供自底向上的節點回溯，用於類別映射繼承解析。內建 `seen` 集合以防止資產壞軌時出現無限循環。
+        """
         node = self.nodes.get(concept_id)
         if node is None:
             return ()
@@ -105,15 +128,20 @@ class Taxonomy:
         return tuple(chain)
 
     def leaf_ids(self) -> tuple[str, ...]:
+        """取得所有葉節點（is_leaf=True）的 ID 列表。
+
+        葉節點為實際被事件萃取 Pipeline 輸出的最小分類單元，用於部署期完整性校驗。
+        """
         return tuple(cid for cid, node in self.nodes.items() if node.is_leaf)
 
     # -- 分類解析 ------------------------------------------------------------
 
     def resolve_type(self, concept_id: str) -> tuple[str, str | None]:
-        """回傳 `(高階類別, 命中映射的 concept_id)`。
+        """將細分類 `concept_id` 解析為對外高階類別 `type`。
 
-        沿「先精確、再祖先鏈」解析；完全找不到時回傳預設類別且第二個值為 None，
-        呼叫端可據此決定是否告警或計數。
+        傳回 `(高階類別, 命中映射的 concept_id)`。
+        解析採用「先精確匹配、再沿祖先鏈回溯」策略，減少重複在映射檔中登記所有子節點的維護成本。
+        若沿祖先鏈皆無匹配，則傳回預設類別且第二個元素為 None。
         """
         mapped = self.mappings.get(concept_id)
         if mapped is not None:
@@ -125,11 +153,13 @@ class Taxonomy:
         return self.default_type, None
 
     def high_level_type(self, concept_id: str) -> str:
-        """取得 `events.type`；無法映射時退回預設類別並告警。"""
+        """取得寫入 `events.type` 的高階類別字串。
+
+        若發生未涵蓋之 concept_id，僅發出 Warning 告警並退回預設類別，不直接拋出例外丟棄事件，
+        因為抽取出的事件數據本體仍具業務價值，需留下記錄供維護者補充映射表。
+        """
         event_type, matched = self.resolve_type(concept_id)
         if matched is None:
-            # 只告警不丟棄：分類體系擴充時新節點可能還沒登記映射，
-            # 事件本身仍有價值，但必須留下痕跡以便補映射
             logger.warning(
                 "concept_id 無法映射到高階類別，退回預設值：concept_id=%s default_type=%s taxonomy_version=%s",
                 concept_id,
@@ -139,11 +169,15 @@ class Taxonomy:
         return event_type
 
     def unmapped_leaf_ids(self) -> tuple[str, ...]:
-        """所有無法經精確或祖先鏈映射的葉節點；驗證用。"""
+        """找出無法透過精確匹配或祖先鏈映射至高階類別的所有葉節點。
+
+        主要用於 `load_taxonomy` 靜態校驗，避免遺漏映射的資產部署至線上環境。
+        """
         return tuple(cid for cid in self.leaf_ids() if self.resolve_type(cid)[1] is None)
 
 
 def _read_json(path: Path) -> Any:
+    """讀取並解析 JSON 資產檔。若檔案不存在則判定為部署檔缺失，拋出 TaxonomyError。"""
     if not path.is_file():
         raise TaxonomyError(f"分類體系資產缺失：{path}")
     with path.open(encoding="utf-8") as fp:
@@ -151,6 +185,10 @@ def _read_json(path: Path) -> Any:
 
 
 def _build_nodes(raw: Any) -> dict[str, ConceptNode]:
+    """解析並構建本體論節點字典，同步校驗雙向樹狀關聯。
+
+    於構建時強制檢查 parent 與 children 節點存在性，避免無效指標破壞後續祖先鏈走訪。
+    """
     nodes_raw = raw.get("nodes") if isinstance(raw, dict) else None
     if not isinstance(nodes_raw, list) or not nodes_raw:
         raise TaxonomyError("本體論資產不含 nodes 陣列")
@@ -177,6 +215,7 @@ def _build_nodes(raw: Any) -> dict[str, ConceptNode]:
             own_properties=tuple(entry.get("own_properties") or ()),
         )
 
+    # 校驗樹狀關聯雙向指標完整性，預防懸空節點破壞祖先樹遍歷
     for node in nodes.values():
         if node.parent is not None and node.parent not in nodes:
             raise TaxonomyError(f"節點 {node.concept_id} 的 parent 不存在：{node.parent}")
@@ -187,6 +226,7 @@ def _build_nodes(raw: Any) -> dict[str, ConceptNode]:
 
 
 def _build_types(raw: Any) -> tuple[tuple[HighLevelType, ...], str, str]:
+    """解析並構建高階類別定義，確保 default_type 落在合法清單中。"""
     types_raw = raw.get("types") if isinstance(raw, dict) else None
     if not isinstance(types_raw, list) or not types_raw:
         raise TaxonomyError("高階類別資產不含 types 陣列")
@@ -215,10 +255,10 @@ def _build_types(raw: Any) -> tuple[tuple[HighLevelType, ...], str, str]:
 
 
 def load_taxonomy(assets_dir: Path | str | None = None) -> Taxonomy:
-    """從資產目錄載入並驗證分類體系。
+    """載入並驗證分類體系實例。
 
-    資產內容在部署包內固定，因此依目錄快取；測試要抽換體系時傳入不同目錄即可，
-    快取以路徑為 key 不會互相污染。
+    透過解析後的絕對路徑字串作為 LRU 快取 Key，能在 AWS Lambda Warm Start 期間
+    避免重複讀取解析 JSON 檔，同時允許測試案例傳入自訂資產目錄而不致發生快取污染。
     """
     resolved = Path(assets_dir) if assets_dir is not None else TAXONOMY_ASSETS_DIR
     return _load_taxonomy_cached(str(resolved.resolve()))
@@ -260,9 +300,10 @@ def _load_taxonomy_cached(assets_dir: str) -> Taxonomy:
         synonym_dictionary=_read_json(base / SYNONYM_DICTIONARY_FILE),
     )
 
-    # 葉節點是實際會寫進 event 的分類；有任何一個落到預設類別就是資產漏登記，
-    # 屬部署期錯誤，不能等到跑 batch 才用告警發現
+    # 葉節點是實際會被萃取出來寫入事件的分類單元；若於載入階段發現無對應高階類別，
+    # 屬於資產漏登記的部署期錯誤，必須立即中斷載入，絕不能延遲至批次處理階段才用警告發現。
     unmapped = taxonomy.unmapped_leaf_ids()
     if unmapped:
         raise TaxonomyError(f"以下葉節點無法映射到高階類別：{', '.join(unmapped)}")
     return taxonomy
+

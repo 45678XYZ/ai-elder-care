@@ -41,6 +41,15 @@ resource "aws_api_gateway_authorizer" "cognito" {
   identity_source = "method.request.header.Authorization"
 }
 
+# 請求格式驗證器：在最前線檢查必填 Querystring / Headers 與 Request Body 格式，
+# 無效請求在 Gateway 直接擋下 (400)，不觸發後端 Lambda 節省算力與費用。
+resource "aws_api_gateway_request_validator" "validator" {
+  name                        = "${var.project_name}-request-validator"
+  rest_api_id                 = aws_api_gateway_rest_api.api.id
+  validate_request_body       = true
+  validate_request_parameters = true
+}
+
 # --- GET /events（照護者事件時間軸）---
 
 resource "aws_api_gateway_resource" "events" {
@@ -50,11 +59,12 @@ resource "aws_api_gateway_resource" "events" {
 }
 
 resource "aws_api_gateway_method" "get_events" {
-  rest_api_id   = aws_api_gateway_rest_api.api.id
-  resource_id   = aws_api_gateway_resource.events.id
-  http_method   = "GET"
-  authorization = "COGNITO_USER_POOLS"
-  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.events.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
 
   request_parameters = {
     "method.request.querystring.elder_id"   = true
@@ -74,13 +84,13 @@ resource "aws_api_gateway_integration" "get_events" {
   # proxy 整合一律以 POST 呼叫 Lambda，與對外的 HTTP method 無關
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.api_events.invoke_arn
+  uri                     = module.api_events.lambda_function_invoke_arn
 }
 
 resource "aws_lambda_permission" "get_events" {
   statement_id  = "AllowApiGatewayGetEvents"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.api_events.function_name
+  function_name = module.api_events.lambda_function_name
   principal     = "apigateway.amazonaws.com"
 
   # 收斂到具體 method，避免整個 API 都能叫這支 Lambda
@@ -190,11 +200,12 @@ resource "aws_api_gateway_resource" "chat_session_close" {
 }
 
 resource "aws_api_gateway_method" "close_session" {
-  rest_api_id   = aws_api_gateway_rest_api.api.id
-  resource_id   = aws_api_gateway_resource.chat_session_close.id
-  http_method   = "POST"
-  authorization = "COGNITO_USER_POOLS"
-  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.chat_session_close.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
 
   request_parameters = {
     "method.request.path.session_id" = true
@@ -208,13 +219,13 @@ resource "aws_api_gateway_integration" "close_session" {
 
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.session_closer.invoke_arn
+  uri                     = module.session_closer.lambda_function_invoke_arn
 }
 
 resource "aws_lambda_permission" "close_session" {
   statement_id  = "AllowApiGatewayCloseSession"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.session_closer.function_name
+  function_name = module.session_closer.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/chat/sessions/*/close"
 }
@@ -237,6 +248,7 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_method.close_session,
       aws_api_gateway_integration.close_session,
       aws_api_gateway_authorizer.cognito,
+      aws_api_gateway_request_validator.validator,
     ]))
   }
 

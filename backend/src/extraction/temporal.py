@@ -1,33 +1,34 @@
-"""時間正規化與相對時間解析。
+"""時間正規化與相對時間解析模組。
 
-改寫自 aws-hackathon 的 `temporal_resolver`，三個關鍵差異：
+提供將自然語言相對時間表達（如「昨天早上」、「大前天下午三點」）轉譯為標準 ISO 8601
+絕對時間戳，並進行台灣時區 (+08:00) 與固定毫秒精度正規化。
+架構規範與 DynamoDB `events` 資料表 `event_time_key` 設計詳見 `docs/framework.md`。
 
-1. **一律帶台灣時區與固定毫秒精度**。`ts` 會被串進 `event_time_key`，字串排序即時間排序，
-   精度不一致會讓排序鍵錯亂（規範見 docs/framework.md 的 events 表）。
-2. **參考時間必填，不得使用 `datetime.now()`**。batch 可能被 retry、duplicate delivery 或
-   DLQ replay 重跑，只要參考時間會漂移，同一段對話就會算出不同的 Slot 與 canonical key，
-   冪等性直接破功。參考時間一律取自 turn 的 `created_at`。
-3. **日界以 +08:00 計算**。跨日的相對時間（「昨天晚上」）必須落在台灣日界內。
+本模組設計目的與核心機制：
+- **固定毫秒精度與台灣時區 (+08:00)**：`ts` 字串會寫入 DynamoDB 作為 `event_time_key` (`SK`)。在 DynamoDB 中，字串排序即時間排序；若毫秒位數不一致（如有的帶毫秒、有的不帶），會導致 SK 字典排序與實際時間點錯亂。
+- **參考時間 mandatory 要求（嚴禁 `datetime.now()`）**：批次任務 (Batch Job) 可能因 SQS Retry、重覆派送或 DLQ Replay 延後數天執行。若參考時間隨執行當下時間漂移，同一段對話將算出不同的時間戳與 Canonical Key，使冪等性徹底破功。參考時間一律取自對話輪次的 `created_at`。
+- **台灣日界統一計算**：每日摘要與例行公事追溯皆以台灣當地下午與半夜日界（+08:00 的 00:00 至 23:59）為判斷標準。
 """
 
 from datetime import date, datetime, timedelta, timezone
 import re
 import unicodedata
 
+# 台灣標準時區 (+08:00)；全系統事件時間儲存與每日摘要劃分之唯一基準時區
 TZ_TAIPEI = timezone(timedelta(hours=8), name="+08:00")
 
-# 相對時間的時段對照；沒有明確鐘點時代表該時段的代表時刻
+# 相對時間時段對照表；當對話僅提到時段（如「早上」）而無明確幾點幾分時，提供符合長者日常作息之代表時刻
 _PERIOD_HOURS: tuple[tuple[tuple[str, ...], int], ...] = (
     (("凌晨", "深夜", "半夜"), 3),
     (("清晨", "早晨", "早上", "上午", "今早"), 8),
     (("中午", "正午"), 12),
     (("下午", "午後", "過午"), 14),
     (("傍晚",), 18),
-    # 「昨晚」「今晚」本身就帶時段語意，不能只靠「晚上」比對
+    # 「昨晚」「今晚」本身即帶時段語意，需包含於關鍵字比對中
     (("晚上", "夜間", "夜裡", "晚間", "昨晚", "今晚", "昨夜"), 20),
 )
 
-# 相對日期；順序有意義，較長的詞要先比對（大前天 先於 前天）
+# 相對日期對照表；陣列順序極具意義，字串較長者（如「大前天」）必須排在較短者（如「前天」）之前比對，防止子字串誤判
 _DAY_OFFSETS: tuple[tuple[str, int], ...] = (
     ("大前天", -3),
     ("前天", -2),
@@ -44,6 +45,7 @@ _DAY_OFFSETS: tuple[tuple[str, int], ...] = (
     ("當下", 0),
 )
 
+# 中文數字至整數映射表；用於解析「三天前」、「兩點半」等中文數字時間表達
 _ZH_NUMERALS: dict[str, int] = {
     "零": 0,
     "一": 1,
@@ -69,24 +71,32 @@ _ZH_HOUR_PATTERN = re.compile(r"([0-9]{1,2}|十[一二]?|[一二兩三四五六�
 
 
 class TemporalError(ValueError):
-    """時間字串無法解析。"""
+    """相對或絕對時間字串格式錯誤、無效或無法解析時拋出之例外。"""
 
 
 def _to_int_zh(token: str) -> int | None:
+    """將阿拉伯數字或中文數字標記轉換為整數。"""
     if token.isdigit():
         return int(token)
     return _ZH_NUMERALS.get(token)
 
 
 def to_taipei(value: datetime) -> datetime:
-    """轉成台灣時區；naive 視為已經是台灣時間。"""
+    """將 datetime 物件統一轉換為台灣時區 (+08:00)。
+
+    若傳入之 datetime 為 naive（無時區資訊），預設將其視為台灣本地時間，
+    避免未帶時區的 timestamp 被系統誤認為 UTC 造成 8 小時時差偏差。
+    """
     if value.tzinfo is None:
         return value.replace(tzinfo=TZ_TAIPEI)
     return value.astimezone(TZ_TAIPEI)
 
 
 def parse_ts(value: str | datetime) -> datetime:
-    """解析 ISO 8601 字串或 datetime，回傳帶台灣時區的 datetime。"""
+    """將 ISO 8601 字串或 datetime 物件解析為帶有台灣時區 (+08:00) 的 datetime 物件。
+
+    對結尾帶有 'Z' 或 'z' 的 UTC 字串進行標準化替換，確保跨系統傳播的時間字串均能正確轉譯。
+    """
     if isinstance(value, datetime):
         return to_taipei(value)
     text = str(value).strip()
@@ -101,33 +111,44 @@ def parse_ts(value: str | datetime) -> datetime:
 
 
 def format_ts(value: datetime) -> str:
-    """輸出固定毫秒精度、帶 +08:00 的 ISO 8601 字串。"""
+    """輸出固定 3 位毫秒精度與 +08:00 時區標記的標準 ISO 8601 時間字串。
+
+    強制的格式固定 (`YYYY-MM-DDTHH:MM:SS.mmm+08:00`) 是為了確保寫入 DynamoDB 
+    的 `event_time_key` 在執行 SK 字典順序排序時，字串排序能完全等同於真實時間先後排序。
+    """
     taipei = to_taipei(value)
     milliseconds = taipei.microsecond // 1000
     return f"{taipei:%Y-%m-%dT%H:%M:%S}.{milliseconds:03d}+08:00"
 
 
 def normalize_ts(value: str | datetime) -> str:
-    """把任意合法時間表示正規化成 `event_time_key` 可用的形式。"""
+    """將任意合法時間表示統一正規化為 `event_time_key` 使用的標準字串格式。"""
     return format_ts(parse_ts(value))
 
 
 def day_key(value: str | datetime) -> str:
-    """台灣日界下的 `YYYY-MM-DD`。"""
+    """計算台灣日界下的日期字串 (`YYYY-MM-DD`)。
+
+    用於作為 DynamoDB `events` 與 `daily_summaries` 表的日期 Partition Key。
+    """
     return f"{parse_ts(value):%Y-%m-%d}"
 
 
 def day_start(day: str) -> str:
-    """該日台灣日界起點。"""
+    """計算指定日期在台灣時區下的當日起點時間戳 (`YYYY-MM-DD T00:00:00.000+08:00`)。"""
     return f"{day}T00:00:00.000+08:00"
 
 
 def day_end(day: str) -> str:
-    """該日台灣日界終點；查詢區間上界與 occurrence cutoff 都用這個值。"""
+    """計算指定日期在台灣時區下的當日終點時間戳 (`YYYY-MM-DD T23:59:59.999+08:00`)。
+
+    用於時間範圍查詢（GSI Query）的上界，以及計算例行公事（routines）未完成裁定的邊界點。
+    """
     return f"{day}T23:59:59.999+08:00"
 
 
 def _match_day_offset(expr: str) -> int | None:
+    """從自然語言中比對相對日期的位移天數（如「昨天」為 -1，「大前天」為 -3）。"""
     for keyword, offset in _DAY_OFFSETS:
         if keyword in expr:
             return offset
@@ -147,6 +168,7 @@ def _match_day_offset(expr: str) -> int | None:
 
 
 def _match_period_hour(expr: str) -> int | None:
+    """從自然語言中比對時段廣義小時數（如「早上」對應 8 點，「晚上」對應 20 點）。"""
     for keywords, hour in _PERIOD_HOURS:
         if any(keyword in expr for keyword in keywords):
             return hour
@@ -154,6 +176,7 @@ def _match_period_hour(expr: str) -> int | None:
 
 
 def _match_explicit_time(expr: str) -> tuple[int, int] | None:
+    """從自然語言中比對具體鐘點與分鐘數（如「15:30」、「三點半」）。"""
     match = _CLOCK_PATTERN.search(expr)
     if match:
         hour, minute = int(match.group(1)), int(match.group(2))
@@ -178,10 +201,11 @@ def _match_explicit_time(expr: str) -> tuple[int, int] | None:
 
 
 def resolve_expression(raw_expr: str | None, reference: str | datetime) -> datetime:
-    """把相對時間表達解析成絕對時間。
+    """將對話中的相對時間表達轉譯為精確的絕對時間 datetime 物件。
 
-    `reference` 必填，一律傳入來源 turn 的 `created_at`；同樣的輸入必然得到同樣的輸出，
-    這是 batch retry 冪等的前提。無法辨識時回傳參考時間本身，不猜測。
+    `reference` 為必須傳入的參考基準時間（取自對話輪次的 `created_at`）。
+    確定性的參考時間能保證相同的相對時間輸入恆得到相同的絕對時間產出，為批次任務重試與冪等性的重要基礎。
+    當僅有日期而缺乏具體時刻時，預設沿用參考時間之時刻，避免盲目捏造為 00:00。
     """
     ref = parse_ts(reference)
     if raw_expr is None or not str(raw_expr).strip():
@@ -241,10 +265,10 @@ def resolve_observed_at(
     raw_expr: str | None,
     reference: str | datetime,
 ) -> str:
-    """決定事件的 `ts`。
+    """決定萃取事件最終使用的絕對時間戳 `ts`。
 
-    模型給的 `observed_at` 若是合法絕對時間就採用並正規化；否則退回用
-    `raw_temporal_expression`（再退回 `observed_at` 原字串）配合參考時間推導。
+    優先採用 LLM 模型輸出的 `observed_at`（若為合法 ISO 8601 時間字串則標準化輸出）；
+    若模型給出的時間非法或為空，則退回使用相對時間表達 `raw_temporal_expression` 搭配參考時間推導。
     """
     if observed_at:
         try:

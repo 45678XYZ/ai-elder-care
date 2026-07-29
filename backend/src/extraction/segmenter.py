@@ -1,19 +1,13 @@
-"""有監督分塊模型（`pairwise_v2`）的執行期推論。
+"""有監督主題邊界分塊模型 (`pairwise_v2`) 執行期純 Python 推論模組。
 
-離線訓練在 `aws-hackathon`（資料策略與上線 gate 見 docs/feature_events-extraction.md §7），
-這裡只負責把導出的純 Python artifact 載入並推論。三個設計選擇值得說明：
+提供載入 JSON 格式導出之 Gradient Boosting 決策樹模型資產，對對話輪次縫隙進行主題邊界機率預測。
+離線訓練資料策略、上線 Gate 與評測規範詳見 `docs/feature_events-extraction.md` §7。
 
-- **不載 `.pkl`**。sklearn 的 pickle 綁版本、反序列化本身也是風險面；改成把訓練好的
-  GradientBoosting 導出為 JSON 決策樹，執行期零機器學習依賴、artifact 可 code review。
-- **特徵與 embedding 維度無關**。原版特徵是 `[cos_sim, mean, max, std, abs_diff(D), dot_prod(D)]`，
-  維度隨 embedding 模型改變，模型因此綁死某個座標系（這正是舊 MiniLM artifact 不能沿用的原因）。
-  這裡改用約十來個尺度不變的統計量，換 embedding 模型只要重抽特徵重訓，feature spec 不用動。
-- **長度類特徵做對話內正規化**。訓練文本是機翻的中文，與真實 ASR 逐字稿的字數分布不同；
-  用對話內 z-score 讓這類特徵跨語言可轉移。
-
-artifact 尚未 vendored：需要先在離線環境以 Bedrock embedding 重訓，並在人工標註的
-Test-Real 上勝過「embedding_depth 無監督」與「每 3 輪機械切分」兩個基線才可設為預設。
-在那之前 `CHUNKER_TYPE` 維持 `llm_prompt`／`embedding_depth`。
+本模組設計目的與核心機制：
+- **純 JSON 導出與零 ML 套件依賴 (No `.pkl`)**：將訓練完成之決策樹導出為 JSON 結構。避開 Python Pickle 綁定特定 scikit-learn 版本與反序列化安全疑慮；Lambda 執行期零機器學習套件依賴，且資產可進行 Code Review。
+- **維度無關之特徵表示法 (Dimension-Invariant Features)**：舊版特徵直接包含原始向量元素，導致模型綁死特定 Embedding 維度（如 MiniLM-384）。本模組採用 13 個維度無關之統計特徵 (`FEATURE_SPEC`)，更換向量模型時僅需重新提取特徵訓練，無需修改特徵規格。
+- **對話內長度 z-score 正規化 (`_z_scores`)**：對對話內各輪次文字長度進行 z-score 計算，消除跨語系與不同 ASR 逐字稿的字數分佈偏差。
+- **無資產時之安全降級 (`load_segmenter`)**：預設若找不到 `pairwise_v2.json` 則傳回 `None`，引導 `plan_boundaries` 退回機械切分並發出警告，防止缺少選配資產導致整個批次任務失敗。
 """
 
 from collections.abc import Sequence
@@ -30,9 +24,10 @@ from .config import SEGMENTER_ASSETS_DIR
 
 logger = logging.getLogger(__name__)
 
+# 決策樹模型資產 JSON 檔名
 SEGMENTER_ARTIFACT_FILE = "pairwise_v2.json"
 
-# 特徵順序即 artifact 的 feature_spec；載入時會比對，不一致直接拒絕
+# 特徵規格清單；特徵順序必須與模型資產之 `feature_spec` 嚴格一致，載入時會自動進行雙向校驗
 FEATURE_SPEC: tuple[str, ...] = (
     "adjacent_cosine",
     "depth_score",
@@ -51,12 +46,12 @@ FEATURE_SPEC: tuple[str, ...] = (
 
 
 class SegmenterError(ValueError):
-    """artifact 缺失或與程式的 feature spec 不一致。"""
+    """資產檔缺失、向量維度不相符或特徵規格不一致時拋出之例外。"""
 
 
 @dataclass(frozen=True)
 class PairwiseSegmenter:
-    """決策樹集合的純 Python 推論器。"""
+    """純 Python 決策樹集合推論器模型。"""
 
     artifact_version: str
     embedding_model_id: str
@@ -71,11 +66,14 @@ class PairwiseSegmenter:
     def predict_boundary_probabilities(
         self, turns: Sequence[Turn], embedder
     ) -> tuple[float, ...]:
-        """回傳每個相鄰縫隙是主題邊界的機率（長度為 turn 數 - 1）。"""
+        """預測對話中每個相鄰縫隙為主題轉折邊界之機率（回傳清單長度為 turn 數 - 1）。
+
+        強烈校驗傳入之 embedder 向量維度是否與資產紀錄相符，防止用錯誤的向量座標系推論導致亂猜。
+        """
         if len(turns) < 2:
             return ()
         if getattr(embedder, "dimension", self.embedding_dim) != self.embedding_dim:
-            # 換 embedding 模型就是換座標系，用舊模型推論等於亂猜
+            # 換 embedding 模型即更換向量座標系，維度不符直接拒絕推論
             raise SegmenterError(
                 f"embedding 維度與 artifact 不符：artifact={self.embedding_dim} "
                 f"embedder={getattr(embedder, 'dimension', None)}"
@@ -86,6 +84,7 @@ class PairwiseSegmenter:
         return tuple(self._predict_one(row) for row in features)
 
     def _predict_one(self, features: Sequence[float]) -> float:
+        """走訪所有決策樹並透過 Sigmoid 函式轉譯為機率值。"""
         raw = self.init_score
         for tree in self.trees:
             raw += self.learning_rate * _walk_tree(tree, features)
@@ -93,6 +92,7 @@ class PairwiseSegmenter:
 
 
 def _walk_tree(node: dict[str, Any], features: Sequence[float]) -> float:
+    """純 Python 遞迴走訪單一 JSON 決策樹節點。"""
     while "value" not in node:
         index = int(node["feature"])
         node = node["left"] if features[index] <= float(node["threshold"]) else node["right"]
@@ -104,10 +104,9 @@ def load_segmenter(
     *,
     required: bool = False,
 ) -> PairwiseSegmenter | None:
-    """載入 artifact。
+    """載入決策樹模型 JSON 資產。
 
-    預設「找不到就回 None」：`pairwise_v2` 是選配模式，artifact 未 vendored 時
-    `plan_boundaries` 會退回機械切分並告警，而不是讓整個 batch 失敗。
+    預設 `required=False` 時若找不到檔案會傳回 `None`，允許上層 `plan_boundaries` 平滑降級至預設模式。
     """
     base = Path(assets_dir) if assets_dir is not None else SEGMENTER_ASSETS_DIR
     path = base / SEGMENTER_ARTIFACT_FILE
@@ -143,11 +142,12 @@ def load_segmenter(
 
 
 # -----------------------------------------------------------------------------
-# 特徵
+# 特徵提取邏輯
 # -----------------------------------------------------------------------------
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    """計算兩向量之餘弦相似度。"""
     left_norm = math.sqrt(sum(value * value for value in left))
     right_norm = math.sqrt(sum(value * value for value in right))
     if left_norm == 0 or right_norm == 0:
@@ -156,6 +156,7 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
 
 
 def _mean_vector(vectors: Sequence[Sequence[float]]) -> list[float]:
+    """計算向量集合之平均向量（質心）。"""
     if not vectors:
         return []
     dimension = len(vectors[0])
@@ -163,7 +164,10 @@ def _mean_vector(vectors: Sequence[Sequence[float]]) -> list[float]:
 
 
 def _z_scores(values: Sequence[float]) -> list[float]:
-    """對話內 z-score；讓長度類特徵跨語言與跨語料可轉移。"""
+    """計算對話內數值之 z-score。
+
+    主要用於文字長度特徵正規化，使字數特徵能跨語言與跨 ASR 語料分佈進行轉移；當標準差為 0 時傳回全零陣列防範除以零。
+    """
     if not values:
         return []
     mean = statistics.fmean(values)
@@ -174,6 +178,7 @@ def _z_scores(values: Sequence[float]) -> list[float]:
 
 
 def _percentile_rank(values: Sequence[float], value: float) -> float:
+    """計算特定數值在序列中之百分位排名。"""
     if not values:
         return 0.0
     below = sum(1 for candidate in values if candidate < value)
@@ -183,7 +188,7 @@ def _percentile_rank(values: Sequence[float], value: float) -> float:
 def extract_features(
     turns: Sequence[Turn], vectors: Sequence[Sequence[float]]
 ) -> list[list[float]]:
-    """為每個相鄰縫隙抽特徵；順序與 `FEATURE_SPEC` 一致。"""
+    """為每個相鄰縫隙提取 13 維度無關之統計特徵；輸出順序與 `FEATURE_SPEC` 嚴格一致。"""
     if len(turns) != len(vectors):
         raise SegmenterError("turn 數與向量數不一致")
     gaps = len(turns) - 1

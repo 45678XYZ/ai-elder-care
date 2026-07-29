@@ -2,17 +2,9 @@
 #
 # functions：chat / elders / summaries / events / routines / stats / summary_generator
 #
-# 目前僅建置 auth 需要的 Cognito pre-token-generation trigger。其餘 handler 的統一
-# 打包／部署（archive_file 或 build script）、API Gateway 整合與共用 IAM 仍為 TODO。
+# 改用官方認證 Lambda 社群模組 (terraform-aws-modules/lambda/aws) 處理自動打包與依賴安裝。
 
 # --- pre-token-generation trigger：發 ID token 前注入 elder_id claim ---
-
-# 自成一包的單檔 Lambda（不含 src.shared），直接壓縮該檔即可。
-data "archive_file" "pre_token" {
-  type        = "zip"
-  source_file = "${path.module}/../backend/src/handlers/pre_token_generation.py"
-  output_path = "${path.module}/build/pre_token_generation.zip"
-}
 
 resource "aws_iam_role" "pre_token" {
   name = "${var.project_name}-pre-token-trigger"
@@ -47,19 +39,25 @@ resource "aws_iam_role_policy" "pre_token_ddb" {
   })
 }
 
-resource "aws_lambda_function" "pre_token" {
+module "pre_token" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-pre-token-trigger"
-  role          = aws_iam_role.pre_token.arn
+  description   = "Cognito pre-token-generation trigger"
   handler       = "pre_token_generation.handler"
   runtime       = "python3.11"
 
-  filename         = data.archive_file.pre_token.output_path
-  source_code_hash = data.archive_file.pre_token.output_base64sha256
+  create_role = false
+  lambda_role = aws_iam_role.pre_token.arn
 
-  environment {
-    variables = {
-      ELDER_ACCOUNTS_TABLE = aws_dynamodb_table.elder_accounts.name
-    }
+  source_path   = "${path.module}/../backend/src/handlers/pre_token_generation.py"
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = {
+    ELDER_ACCOUNTS_TABLE = aws_dynamodb_table.elder_accounts.name
   }
 }
 
@@ -67,24 +65,29 @@ resource "aws_lambda_function" "pre_token" {
 resource "aws_lambda_permission" "pre_token_cognito" {
   statement_id  = "AllowCognitoInvoke"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.pre_token.function_name
+  function_name = module.pre_token.lambda_function_name
   principal     = "cognito-idp.amazonaws.com"
   source_arn    = aws_cognito_user_pool.accounts.arn
 }
 
 # --- 生活記錄（Module B）批次萃取 ---
 #
-# 三支 Lambda 共用同一個部署包（backend/src），差別只在 handler 與環境變數。
-# 部署包內容先由 `python -m scripts.package_lambda` 整理到 terraform/build/backend，
-# 因為 backend/ 底下有 .venv 與 tests 不該進包；資產（分類體系、概念 sub-chunk）必須隨包發佈。
-
-data "archive_file" "backend" {
-  type        = "zip"
-  source_dir  = "${path.module}/build/backend"
-  output_path = "${path.module}/build/backend.zip"
-}
+# 多支 Lambda 共用同一個部署包來源（backend/src + backend/requirements.txt），
+# 差別只在 handler 與環境變數。
 
 locals {
+  # 部署包來源：自動將 backend/src 配至 zip 內的 src/，並由 pip_requirements 自動安裝依賴套件
+  backend_source_path = [
+    {
+      path          = "${path.module}/../backend/src"
+      prefix_in_zip = "src"
+    },
+    {
+      path             = "${path.module}/../backend/requirements.txt"
+      pip_requirements = true
+    }
+  ]
+
   # 萃取行為一律由環境變數驅動，程式不寫死（見 docs/framework.md 後端環境變數）
   extraction_env = {
     TABLE_ELDERS          = aws_dynamodb_table.elders.name
@@ -259,29 +262,35 @@ resource "aws_sns_topic" "batch_alerts" {
   name = "${var.project_name}-batch-alerts"
 }
 
-resource "aws_lambda_function" "batch_extractor" {
+module "batch_extractor" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-batch-extractor"
-  role          = aws_iam_role.extraction.arn
+  description   = "Module B 生活記錄批次萃取器"
   handler       = "src.handlers.batch_extractor.handler"
   runtime       = "python3.11"
-
-  filename         = data.archive_file.backend.output_path
-  source_code_hash = data.archive_file.backend.output_base64sha256
 
   # 一個 session 要跑 chunk 數 × 兩次模型呼叫；timeout 必須小於 SQS visibility timeout
   timeout     = var.batch_lambda_timeout
   memory_size = 1024
 
-  environment {
-    variables = merge(local.extraction_env, {
-      BATCH_LEASE_SECONDS = tostring(var.batch_lambda_timeout * 2)
-    })
-  }
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = merge(local.extraction_env, {
+    BATCH_LEASE_SECONDS = tostring(var.batch_lambda_timeout * 2)
+  })
 }
 
 resource "aws_lambda_event_source_mapping" "batch_extractor" {
   event_source_arn = aws_sqs_queue.batch.arn
-  function_name    = aws_lambda_function.batch_extractor.arn
+  function_name    = module.batch_extractor.lambda_function_arn
 
   # 一次一則：單則失敗不牽連其他 session；handler 仍回報 partial batch failure
   batch_size                         = 1
@@ -289,69 +298,87 @@ resource "aws_lambda_event_source_mapping" "batch_extractor" {
   maximum_batching_window_in_seconds = 0
 }
 
-resource "aws_lambda_function" "session_closer" {
+module "session_closer" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-session-closer"
-  role          = aws_iam_role.extraction.arn
+  description   = "Session 關閉與離線 materialization 觸發器"
   handler       = "src.handlers.session_closer.handler"
   runtime       = "python3.11"
 
-  filename         = data.archive_file.backend.output_path
-  source_code_hash = data.archive_file.backend.output_base64sha256
-
   timeout     = 60
   memory_size = 512
 
-  environment {
-    variables = merge(local.extraction_env, {
-      SESSION_IDLE_MINUTES = tostring(var.session_idle_minutes)
-    })
-  }
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = merge(local.extraction_env, {
+    SESSION_IDLE_MINUTES = tostring(var.session_idle_minutes)
+  })
 }
 
-resource "aws_lambda_function" "dlq_reconciler" {
+module "dlq_reconciler" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-dlq-reconciler"
-  role          = aws_iam_role.extraction.arn
+  description   = "DLQ 訊息對賬與告警器"
   handler       = "src.handlers.dlq_reconciler.handler"
   runtime       = "python3.11"
 
-  filename         = data.archive_file.backend.output_path
-  source_code_hash = data.archive_file.backend.output_base64sha256
-
   timeout     = 60
   memory_size = 512
 
-  environment {
-    variables = merge(local.extraction_env, {
-      BATCH_ALERT_TOPIC_ARN = aws_sns_topic.batch_alerts.arn
-    })
-  }
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = merge(local.extraction_env, {
+    BATCH_ALERT_TOPIC_ARN = aws_sns_topic.batch_alerts.arn
+  })
 }
 
 resource "aws_lambda_event_source_mapping" "dlq_reconciler" {
   event_source_arn = aws_sqs_queue.batch_dlq.arn
-  function_name    = aws_lambda_function.dlq_reconciler.arn
+  function_name    = module.dlq_reconciler.lambda_function_arn
   batch_size       = 10
 }
 
 # 照護者端資料 API：目前 GET /events 與 /summaries 已實作。
 # 其餘 handler（chat/elders/routines/stats）由各模組補上自己的 Lambda 與路由，
 # 共用同一個部署包與同一組資料表環境變數。
-resource "aws_lambda_function" "api_events" {
+module "api_events" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-api-events"
-  role          = aws_iam_role.extraction.arn
+  description   = "照護者端事件時間軸 API"
   handler       = "src.handlers.events.handler"
   runtime       = "python3.11"
-
-  filename         = data.archive_file.backend.output_path
-  source_code_hash = data.archive_file.backend.output_base64sha256
 
   # 只做一次 GSI Query 與投影，不呼叫模型
   timeout     = 15
   memory_size = 512
 
-  environment {
-    variables = local.extraction_env
-  }
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = local.extraction_env
 }
 
 # --- 每日摘要（見 docs/feature_daily-summarization.md）---

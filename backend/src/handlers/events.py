@@ -1,9 +1,10 @@
-"""生活事件 API。規格見 docs/api.md。
+"""GET /events — 生活事件時間軸 API。規格見 docs/api.md。
 
-- GET /events?elder_id=&from=&to=&type=   事件時間軸；`type` 與摘要 sections 一一對應
-
-回應只公開 api.md 列出的欄位。canonical key、extraction track、revision、chunk、
-`concept_id`、`structured_detail` 與 evidence 清單都是後端內部資訊，一律不外流。
+處理流程：
+1. 驗證權限：確認請求者具備指定 elder_id 的讀取權限
+2. 參數校驗：校驗 from / to 日期格式（YYYY-MM-DD）、type 分類與 limit 分頁範圍
+3. 資料查詢：從 DynamoDB events 表依條件倒序查詢事件
+4. 資料投影：僅暴露 api.md 規範之公開白名單欄位，過濾後端內部萃取細節
 """
 
 from datetime import datetime
@@ -17,7 +18,7 @@ from src.shared.models import EventType
 
 logger = logging.getLogger(__name__)
 
-# 回應允許出現的欄位；以白名單而非黑名單，避免資料層新增內部欄位時無聲外流
+# 回應允許出現的欄位；採白名單機制而非黑名單，防止資料層新增內部欄位時無聲外流
 PUBLIC_EVENT_FIELDS: tuple[str, ...] = (
     "event_id",
     "elder_id",
@@ -35,6 +36,7 @@ _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def handler(event, context):
+    """GET /events 入口；解析查詢參數、校驗權限並回傳公開事件時間軸。"""
     params = event.get("queryStringParameters") or {}
 
     elder_id = (params.get("elder_id") or "").strip()
@@ -76,7 +78,7 @@ def handler(event, context):
             next_token=(params.get("next_token") or "").strip() or None,
         )
     except db.DBError as exc:
-        # next_token 由後端編碼，前端原樣帶回；解不開代表被改過或跨版本，屬請求問題
+        # next_token 由後端編碼，前端原樣帶回；解碼失敗代表遭改動或跨版本失效，應歸類為用戶端請求錯誤
         if "next_token" in str(exc):
             return responses.error(400, "INVALID_PARAMETER", "無效的 next_token")
         logger.exception("查詢事件時間軸失敗：elder_id=%s", elder_id)
@@ -89,9 +91,13 @@ def handler(event, context):
 
 
 def _to_public_event(item: dict[str, Any]) -> dict[str, Any]:
-    """投影成 api.md 的事件物件；缺值欄位省略而非回 null。"""
+    """將資料層 event 實體投影為符合 api.md 規範之公開字典。
+
+    若欄位值為 None 則直接省略不寫入字典（避免回應帶 null 鍵），維持 API 回應一致性。
+    """
     return {
         field: item[field]
         for field in PUBLIC_EVENT_FIELDS
         if item.get(field) is not None
     }
+

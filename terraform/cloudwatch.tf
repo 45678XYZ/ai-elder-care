@@ -41,7 +41,7 @@ resource "aws_cloudwatch_metric_alarm" "batch_extractor_errors" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    FunctionName = aws_lambda_function.batch_extractor.function_name
+    FunctionName = module.batch_extractor.lambda_function_name
   }
 
   alarm_actions = [aws_sns_topic.batch_alerts.arn]
@@ -123,6 +123,48 @@ resource "aws_cloudwatch_metric_alarm" "summary_partial_persistent" {
 
   dimensions = {
     DataStatus = "partial"
+  }
+
+  alarm_actions = [aws_sns_topic.batch_alerts.arn]
+}
+
+
+# API Gateway 5XX 錯誤告警：前端收到 5XX 代表後端 Lambda 崩潰或 API GW 整合失敗
+resource "aws_cloudwatch_metric_alarm" "api_gateway_5xx" {
+  alarm_name          = "${var.project_name}-api-gateway-5xx"
+  alarm_description   = "API Gateway 出現 5XX 伺服器端錯誤"
+  namespace           = "AWS/ApiGateway"
+  metric_name         = "5XXError"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 5
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ApiName = aws_api_gateway_rest_api.api.name
+    Stage   = aws_api_gateway_stage.v1.stage_name
+  }
+
+  alarm_actions = [aws_sns_topic.batch_alerts.arn]
+}
+
+# session_closer 未處理例外告警
+resource "aws_cloudwatch_metric_alarm" "session_closer_errors" {
+  alarm_name          = "${var.project_name}-session-closer-errors"
+  alarm_description   = "session closer 執行出現未預期例外"
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 5
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = module.session_closer.lambda_function_name
   }
 
   alarm_actions = [aws_sns_topic.batch_alerts.arn]

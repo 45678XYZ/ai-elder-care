@@ -1,20 +1,16 @@
-"""對話分塊：把 closed session 的 frozen turns 切成主題邊界。
+"""對話主題分塊模組 (Dialogue Topic Chunker)。
 
-三種模式（`CHUNKER_TYPE` 切換）：
+提供將已結束對話輪次 (Frozen Session Turns) 切分為主題獨立、問答脈絡完整 (QA Pair Closure)
+之主題對話塊 (Chunks)。架構規範與決策詳見 `docs/framework.md` 與 `docs/feature_events-extraction.md` §6。
 
-| 模式 | 作法 | 執行期依賴 |
-|---|---|---|
-| `llm_prompt`（預設） | 移植 hackathon 的 Refined EST + QA Pair Closure prompt，走 Bedrock structured outputs（schema 固定，grammar 快取命中率最高） | Bedrock |
-| `embedding_depth` | 每 turn 取 embedding，算相鄰餘弦相似度的 TextTiling depth score，門檻用自適應 `mean + k·std` | Bedrock embedding |
-| `pairwise_v2` | 離線訓練的決策樹 artifact，Lambda 端純 Python 推論 | 無（artifact 內含） |
-
-不移植任何 `.pkl`：原 TF-IDF 版對中文退化成固定 3 輪機械切分，新多語言版又把特徵綁死
-MiniLM-384 座標系（理由詳見 docs/feature_events-extraction.md §6）。因此 embedder 一律
-以介面注入，門檻用自適應式而非絕對值，換 embedding 模型不需重調參數。
-
-無論哪個模式，邊界都必須通過 `validate_boundaries`；不通過就退回固定 turn 數切分。
-framework 允許 chunk planner 非確定性（首次 manifest 條件式持久化後重用），所以用 embedding
-或 LLM 都不破壞冪等。
+本模組設計目的與核心機制：
+- **三種切分模式 (`CHUNKER_TYPE`)**：
+  1. `llm_prompt`（預設）：採用 Refined EST 認知事件分割與問答閉環 (QA Pair Closure) 提示詞，配合 Bedrock Structured Outputs（固定 Schema，享有高快取命中率）。
+  2. `embedding_depth`：基於相鄰 Turn 向量餘弦相似度，計算 TextTiling Depth Score 凹谷深度，配合自適應門檻 `mean + k * std` 切分。
+  3. `pairwise_v2`：採用離線訓練之決策樹模型，於 Lambda 端進行純 Python 輕量化邊界推論。
+- **問答閉環原則 (QA Pair Closure)**：劃分主題區塊時，強制將「發起新話題的提問輪」作為新區塊起點，確保提問與對應的回答（如「有啊」、「吃了」）留在同一區塊內，避免答非所問或語意脫節。
+- **極致容錯與防護網 (`plan_boundaries`)**：無論採用哪種模式，邊界均需通過 `validate_boundaries`；若 LLM 呼叫或演算法失敗，自動降級退回固定 Turn 數之機械切分並標記 `fallback_used = True`。
+- **去除過時寫死模型**：棄用舊版 TF-IDF 與硬編碼 `.pkl` 檔（免除綁死 MiniLM-384 向量座標系），改以介面注入 Embedder 並採統計自適應門檻，更換向量模型時毋需重先微調參數。
 """
 
 from collections.abc import Sequence
@@ -33,7 +29,7 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-# 邊界輸出的固定 schema；形狀永不變，grammar 可長期快取
+# 邊界輸出的固定 JSON Schema；結構永遠保持恆定，允許 Bedrock 長期快取結構約束語法 (Grammar Caching)
 BOUNDARY_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -52,6 +48,7 @@ BOUNDARY_SCHEMA = {
     "required": ["boundaries", "cognitive_event_goals"],
 }
 
+# 認知事件分割 (EST) 與問答閉環 (QA Pair Closure) 提示詞
 REFINED_EST_PROMPT = """你是長者照護對話的認知與問答脈絡分析專家。
 請依 EST 認知事件分割理論找出這段對話的主題轉折點。
 
@@ -67,23 +64,22 @@ REFINED_EST_PROMPT = """你是長者照護對話的認知與問答脈絡分析�
 {formatted_transcript}
 """
 
-# 預設每塊的目標 turn 數；LLM 或 depth score 失效時的機械切分粒度
+# 預設每塊的預期 Turn 數；當 LLM 或深度分數演算法異常時退回之機械切分預設粒度
 DEFAULT_FALLBACK_SIZE = 4
 
-# 自適應門檻的標準差倍數；越大越保守（切得越少）
+# 自適應門檻之標準差倍數；數值越大門檻越高（切分出的區塊越少且越保守）
 DEFAULT_DEPTH_K = 0.5
-
 
 _MODE_HANDLERS = frozenset({CHUNKER_LLM_PROMPT, CHUNKER_EMBEDDING_DEPTH, CHUNKER_PAIRWISE_V2})
 
 
 class ChunkerError(ValueError):
-    """分塊輸入或設定不合法（模式名稱錯誤、turns 為空）。"""
+    """對話分塊輸入格式不合規、模式未支援或設定錯誤時拋出之例外。"""
 
 
 @dataclass(frozen=True)
 class Turn:
-    """frozen session 的單一 turn（分塊只需要這幾個欄位）。"""
+    """單一對話輪次資料容器；僅包含主題分塊所必需之基本欄位。"""
 
     conversation_id: str
     speaker: str
@@ -93,10 +89,10 @@ class Turn:
 
 @dataclass(frozen=True)
 class BoundaryPlan:
-    """分塊結果。
+    """對話主題劃分計畫與結果容器。
 
-    `fallback_used` 讓上層能觀測「有多少 session 其實是機械切分」——這個比例若偏高，
-    代表模型或門檻需要調整，而不是安靜地當成正常。
+    `fallback_used` 欄位用於監控與觀測「有多少比例的 Session 降級使用機械切分」——
+    若此比例異常偏高，代表模型回應格式不穩定或演算法門檻需調整。
     """
 
     boundaries: tuple[int, ...]
@@ -107,7 +103,7 @@ class BoundaryPlan:
 
 
 def format_transcript(turns: Sequence[Turn]) -> str:
-    """帶 turn index 的逐字稿；LLM 要靠 index 回報邊界。"""
+    """將對話輪次格式化為帶有索引 (Turn Index) 的文字逐字稿，供 LLM 準確回報邊界索引。"""
     return "\n".join(
         f"Turn {index} | {turn.speaker}：{turn.text}" for index, turn in enumerate(turns)
     )
@@ -119,11 +115,10 @@ def validate_boundaries(
     *,
     min_turns: int = 0,
 ) -> tuple[int, ...]:
-    """驗證並正規化邊界。
+    """校驗並標準化劃分邊界索引清單。
 
-    要求：整數、落在 `[0, total_turns)`、含 0、去重遞增。`min_turns > 0` 時額外要求
-    每個區塊至少該長度——這是保底規則，評測時要能關掉（設 0），否則分不清是模型好
-    還是保底規則剛好對。
+    要求：必須為整數、涵蓋 [0, total_turns) 範圍、開頭包含 0、去除重複並嚴格遞增。
+    `min_turns > 0` 提供最小區塊長度保底；在模型品質評測時應設為 0 以展現真實演算法切分能力。
     """
     if total_turns <= 0:
         raise ChunkerError("turn 數必須大於 0")
@@ -149,7 +144,7 @@ def validate_boundaries(
 
 
 def fallback_boundaries(total_turns: int, size: int = DEFAULT_FALLBACK_SIZE) -> tuple[int, ...]:
-    """固定 turn 數的機械切分；所有模式失敗時的保底。"""
+    """計算固定 Turn 數之機械切分邊界；作為全模式失敗時的最底層保底防護網。"""
     step = max(1, size)
     return tuple(range(0, total_turns, step))
 
@@ -166,11 +161,11 @@ def plan_boundaries(
     segmenter=None,
     model_id: str | None = None,
 ) -> BoundaryPlan:
-    """依設定的模式規劃主題邊界；任何失敗都退回機械切分。"""
+    """依指定之分塊模式規劃主題邊界；捕捉任何運行例外並自動降級退回機械切分。"""
     if not turns:
         raise ChunkerError("frozen turns 為空，無法分塊")
 
-    # 模式名稱寫錯是部署設定問題，不該被 fallback 掩蓋
+    # 模式名稱錯誤屬於部署設定問題，應立即拋出例外而非默默降級掩蓋問題
     if chunker_type not in _MODE_HANDLERS:
         raise ChunkerError(f"未知的分塊模式：{chunker_type}")
 
@@ -208,6 +203,7 @@ def plan_boundaries(
 def _llm_prompt_boundaries(
     turns: Sequence[Turn], *, client=None, model_id: str | None = None
 ) -> BoundaryPlan:
+    """利用 Bedrock Structured Outputs 執行基於 EST 與 QA 閉環之 LLM 主題分塊。"""
     prompt = REFINED_EST_PROMPT.format(
         total_turns=len(turns), formatted_transcript=format_transcript(turns)
     )
@@ -226,6 +222,7 @@ def _llm_prompt_boundaries(
 
 
 def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
+    """計算兩向量之餘弦相似度。"""
     left_norm = math.sqrt(sum(value * value for value in left))
     right_norm = math.sqrt(sum(value * value for value in right))
     if left_norm == 0 or right_norm == 0:
@@ -234,10 +231,10 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
 
 
 def depth_scores(similarities: Sequence[float]) -> tuple[float, ...]:
-    """TextTiling depth score。
+    """計算 TextTiling Depth Score (TextTiling 深度分數)。
 
-    depth 是「從這個縫隙往左右各爬到區域高點的落差之和」，比單純的相似度低點穩健：
-    整段對話相似度普遍偏低時不會到處都切，普遍偏高時也還抓得到轉折。
+    Depth 是指「從特定轉折點向左右兩側波峰爬升之落差和」；
+    相較於直接設定相似度絕對低點，Depth 分數在全文相似度普遍偏高或偏低時更具穩健性。
     """
     scores: list[float] = []
     for index, value in enumerate(similarities):
@@ -258,6 +255,7 @@ def depth_scores(similarities: Sequence[float]) -> tuple[float, ...]:
 def _embedding_depth_boundaries(
     turns: Sequence[Turn], *, embedder, depth_k: float
 ) -> BoundaryPlan:
+    """基於對話輪次 Embedding 向量之 TextTiling 深度分數與自適應門檻分塊。"""
     if embedder is None:
         raise ChunkerError("embedding_depth 模式需要 embedder")
 
@@ -268,7 +266,7 @@ def _embedding_depth_boundaries(
     similarities = [_cosine(vectors[index], vectors[index + 1]) for index in range(len(turns) - 1)]
     scores = depth_scores(similarities)
 
-    # 自適應門檻：換 embedding 模型時相似度的絕對尺度會變，但分布位置不變
+    # 採用基於 mean + k * std 之自適應門檻；當更換 Embedding 模型時，絕對數值尺度會改變但分布位置相對穩定
     threshold = statistics.fmean(scores) + depth_k * (
         statistics.pstdev(scores) if len(scores) > 1 else 0.0
     )
@@ -285,11 +283,7 @@ def _embedding_depth_boundaries(
 
 
 def _pairwise_v2_boundaries(turns: Sequence[Turn], *, embedder, segmenter) -> BoundaryPlan:
-    """有監督分塊；模型 artifact 由離線訓練導出成純 Python 資產。
-
-    artifact 缺失時視為失敗，由 `plan_boundaries` 退回機械切分並告警——這比安靜地
-    改用別的模式好，因為那會讓上線 gate 的判定失去意義。
-    """
+    """基於離線訓練導出之決策樹 Artifact 進行有監督主題邊界推論。"""
     if segmenter is None:
         raise ChunkerError("pairwise_v2 模式需要已載入的 segmenter artifact")
     if embedder is None:
