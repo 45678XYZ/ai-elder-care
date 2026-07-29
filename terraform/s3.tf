@@ -1,29 +1,19 @@
 # S3 Buckets
 
 # =============================================================================
-# 1. TTS 音檔 Bucket（提供 Presigned URL 讓前端播放對話語音）
+# 1. TTS 音檔 Bucket（提供 Presigned URL 讓 Flutter App 播放對話語音）
 # =============================================================================
 
 resource "aws_s3_bucket" "audio" {
-  bucket        = "${var.project_name}-audio"
+  bucket = "${var.project_name}-audio"
   tags = {
     Project     = var.project_name
     Environment = "production"
   }
 }
 
-# 設定 CORS：允許任何前端網站直接拉取音檔
-resource "aws_s3_bucket_cors_configuration" "audio_cors" {
-  bucket = aws_s3_bucket.audio.id
-
-  cors_rule {
-    allowed_headers = ["*"]
-    allowed_methods = ["GET", "HEAD"]
-    allowed_origins = ["*"]
-    expose_headers  = []
-    max_age_seconds = 3000
-  }
-}
+# 注意：此 Bucket 不需要 CORS 設定。
+# Flutter App 透過原生 HTTP 客戶端存取 Presigned URL，不走瀏覽器，因此不受 CORS 限制。
 
 # 設定生命週期：1 天後自動刪除（因為 presigned URL 只有 15 分鐘，留著也沒用且浪費錢）
 resource "aws_s3_bucket_lifecycle_configuration" "audio_lifecycle" {
