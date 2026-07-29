@@ -13,6 +13,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+.hypothesis/
 *.egg-info/
 
 # --- Terraform ---
