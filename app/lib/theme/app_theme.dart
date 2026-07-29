@@ -55,13 +55,16 @@ abstract final class AppColors {
 }
 
 /// §2.6 事件分類。dot 只能放在 card / nest 底上。
-/// 值與 api.md（GET /events）的 `type` 字串一一對應。
+///
+/// 值與 api.md（GET /events）的 `type` 字串一一對應，**宣告順序就是摘要 sections
+/// 的呈現順序**（後端 `SUMMARY_SECTION_KEYS` 直接取 `EventType` 的順序）。
 enum EventCategory {
   diet,
   activity,
   sleep,
   medication,
   wellbeing,
+  safety,
   other;
 
   /// api.md 的 `type` 字串 → 分類；未知或 null 一律歸 other（承 api.md 分類原則）。
@@ -71,9 +74,14 @@ enum EventCategory {
         'sleep' => sleep,
         'medication' => medication,
         'wellbeing' => wellbeing,
+        'safety' => safety,
         _ => other,
       };
 }
+
+/// 時間軸圓點的形狀。§9 顏色不得單用承載資訊，所以圓點再分一層形狀：
+/// [square] 給飲食、[diamond] 給安全，其餘 [circle]。
+enum EventDotShape { circle, square, diamond }
 
 extension EventCategoryStyle on EventCategory {
   String get label => switch (this) {
@@ -82,16 +90,27 @@ extension EventCategoryStyle on EventCategory {
         EventCategory.sleep => '睡眠',
         EventCategory.medication => '用藥',
         EventCategory.wellbeing => '身心',
+        EventCategory.safety => '安全',
         EventCategory.other => '其他',
       };
 
-  /// 深階文字色，紙底上皆 >=7:1
+  /// 深階文字色，紙底（最深 #e4dccb）上皆 >=7:1。
+  ///
+  /// 七類的色相刻意鋪開約 60° 一階：紅 6°（用藥）→ 琥珀 44°（飲食）→ 綠 133°（活動）
+  /// → 青 191°（身心）→ 靛 253°（睡眠）→ 紫紅 320°（安全），加上低彩度的其他。
+  ///
+  /// 這組是修過的。原本 `medication` 與 `wellbeing` 用同一個紅（#7D281F），畫面上根本
+  /// 分不出來；`safety` 一開始接 §2.5 的 warn 橙，想跟摘要的 `alerts` 共用一組色，但橙
+  /// 夾在紅（用藥）與琥珀（飲食）之間，深色階下三者看起來是同一色。語意上的連結比不過
+  /// 「讀得出是哪一類」，所以 safety 讓出橙、改用沒人用的紫紅，身心接青。
+  /// 摘要的警訊列本身仍是 warn 橙，不受影響。
   Color get fg => switch (this) {
         EventCategory.diet => const Color(0xFF584200),
         EventCategory.activity => const Color(0xFF1F4E27),
         EventCategory.sleep => const Color(0xFF453F6D),
         EventCategory.medication => const Color(0xFF7D281F),
-        EventCategory.wellbeing => const Color(0xFF7D281F),
+        EventCategory.wellbeing => const Color(0xFF0E4A5C),
+        EventCategory.safety => const Color(0xFF75205A),
         EventCategory.other => const Color(0xFF4F4335),
       };
 
@@ -100,7 +119,8 @@ extension EventCategoryStyle on EventCategory {
         EventCategory.activity => const Color(0xFFDFF6DE),
         EventCategory.sleep => const Color(0xFFEAEDFF),
         EventCategory.medication => const Color(0xFFFFE5E1),
-        EventCategory.wellbeing => const Color(0xFFFFE5E1),
+        EventCategory.wellbeing => const Color(0xFFD9EFF5),
+        EventCategory.safety => const Color(0xFFF7E1F0),
         EventCategory.other => const Color(0xFFF2ECE1),
       };
 
@@ -109,13 +129,26 @@ extension EventCategoryStyle on EventCategory {
         EventCategory.activity => const Color(0xFF4D9351),
         EventCategory.sleep => const Color(0xFF676BA5),
         EventCategory.medication => const Color(0xFFC25D58),
-        EventCategory.wellbeing => const Color(0xFFC25D58),
+        EventCategory.wellbeing => const Color(0xFF2E8296),
+        EventCategory.safety => const Color(0xFFA63C82),
         EventCategory.other => const Color(0xFF4F4335),
       };
 
-  /// §9 顏色不得單用承載資訊；時間軸圓點另以形狀區分
-  BoxShape get dotShape =>
-      this == EventCategory.diet ? BoxShape.rectangle : BoxShape.circle;
+  /// §9 顏色不得單用承載資訊；時間軸圓點另以形狀區分。圓點只有 14px，色相分得開
+  /// 也可能因為太小而看不準，形狀是第二層線索。
+  ///
+  /// 刻意保持窮盡列舉而不用 `_`：再加分類時這裡會編譯失敗，逼人正面決定新分類
+  /// 要不要一個自己的形狀。
+  EventDotShape get dotShape => switch (this) {
+        EventCategory.diet => EventDotShape.square,
+        EventCategory.safety => EventDotShape.diamond,
+        EventCategory.activity ||
+        EventCategory.sleep ||
+        EventCategory.medication ||
+        EventCategory.wellbeing ||
+        EventCategory.other =>
+          EventDotShape.circle,
+      };
 }
 
 /// §4 間距（收斂為五階）

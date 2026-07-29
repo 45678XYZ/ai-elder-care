@@ -1,7 +1,8 @@
 import 'package:ai_elder_care/caregiver/screens/elders_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/stats_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/summaries_screen.dart';
-import 'package:ai_elder_care/caregiver/screens/timeline_screen.dart';
+import 'package:ai_elder_care/caregiver/screens/timeline_screen.dart'
+    show TimelineScreen, filterBarKey;
 import 'package:ai_elder_care/elder/screens/today_screen.dart';
 import 'package:ai_elder_care/shared/screens/role_select_screen.dart';
 import 'package:ai_elder_care/shared/services/calendar_tear_store.dart';
@@ -220,11 +221,15 @@ void main() {
   });
 
   group('摘要畫面', () {
-    testWidgets('六類固定全列，沒提到的顯示提示而不是留白', (tester) async {
+    testWidgets('七類固定全列，沒提到的顯示提示而不是留白', (tester) async {
       await pumpTall(tester, const SummariesScreen());
 
       // 假資料今天的 other 為 null
       expect(find.text('今日對話未提及'), findsWidgets);
+      // 七類的標籤每天都要出現，包含新增的安全類（三天摘要 → 每個標籤三次）
+      for (final c in EventCategory.values) {
+        expect(find.text(c.label), findsNWidgets(3));
+      }
     });
 
     testWidgets('partial 摘要要明講尚未涵蓋整天', (tester) async {
@@ -244,6 +249,48 @@ void main() {
 
       // 過濾到只剩睡眠那一筆
       expect(find.textContaining('半夜起來一次'), findsOneWidget);
+    });
+
+    testWidgets('安全類事件會出現在時間軸', (tester) async {
+      await pumpTall(tester, const TimelineScreen());
+
+      expect(find.textContaining('扶著把手沒有跌倒'), findsWidgets);
+    });
+
+    testWidgets('安全類可以單獨過濾出來', (tester) async {
+      await pumpTall(tester, const TimelineScreen());
+
+      // 事件卡上也有「安全」膠囊，所以要指名過濾列裡的那顆
+      final chip = find.descendant(
+        of: find.byKey(filterBarKey),
+        matching: find.text('安全'),
+      );
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('扶著把手沒有跌倒'), findsOneWidget);
+      // 其他分類要被濾掉
+      expect(find.textContaining('膝蓋疼痛'), findsNothing);
+    });
+
+    testWidgets('七類的過濾膠囊全部看得到，不會被切在畫面外', (tester) async {
+      // 分類滿七類之後，橫向捲動的過濾列一屏只放得下五顆，剩下的躲在畫面外而且
+      // 沒有任何提示。用一般手機寬度驗，不是那個很高的測試視窗。
+      await pumpScreen(tester, const TimelineScreen());
+      final viewWidth = tester.view.physicalSize.width;
+
+      for (final c in EventCategory.values) {
+        final chip = find.descendant(
+          of: find.byKey(filterBarKey),
+          matching: find.text(c.label),
+        );
+        expect(chip, findsOneWidget, reason: '${c.label} 的膠囊不在過濾列裡');
+        final rect = tester.getRect(chip);
+        expect(rect.left, greaterThanOrEqualTo(0.0),
+            reason: '${c.label} 的膠囊被切在畫面左外側');
+        expect(rect.right, lessThanOrEqualTo(viewWidth),
+            reason: '${c.label} 的膠囊被切在畫面右外側');
+      }
     });
 
     testWidgets('還有下一頁時給載入更多', (tester) async {

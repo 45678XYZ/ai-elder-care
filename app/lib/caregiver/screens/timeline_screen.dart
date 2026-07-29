@@ -12,7 +12,7 @@ import '../../theme/app_theme.dart';
 
 /// S6 `/care/timeline` — 生活事件時間軸。
 ///
-/// `GET /events`：六類過濾、`next_token` 分頁（游標是不透明字串，原樣帶回）。
+/// `GET /events`：七類過濾、`next_token` 分頁（游標是不透明字串，原樣帶回）。
 ///
 /// 這個畫面刻意在頁尾說明資料可見時機：例行公事完成與高風險事件在對話當下就查得到，
 /// 一般生活事件要等 session 關閉且批次整理完才會出現（api.md hybrid 處理）。
@@ -192,6 +192,9 @@ class _TimelineScreenState extends State<TimelineScreen> {
       a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
+/// 分類過濾列的 key。事件卡上也有同名的分類膠囊，要靠這個指名過濾列裡的那顆。
+const filterBarKey = ValueKey('timeline-filter-bar');
+
 class _FilterBar extends StatelessWidget {
   const _FilterBar({required this.selected, required this.onChanged});
 
@@ -201,57 +204,50 @@ class _FilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return SizedBox(
-      height: 52,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+    // 換行而不是橫向捲動：分類滿七類之後，一屏只放得下五顆，剩下的躲在畫面外，
+    // 而橫向捲動沒有任何視覺提示，等於那兩類不存在。換行雖然多吃一列高度，
+    // 但七類全部看得到，兩倍字級下也只是再多換幾行。
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, AppSpacing.sm),
+      child: Wrap(
+        key: filterBarKey,
+        spacing: AppSpacing.sm,
+        runSpacing: AppSpacing.sm,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          // 「全部」不屬於六類，另外畫
-          Padding(
-            padding: const EdgeInsets.only(right: AppSpacing.sm),
-            child: Center(
-              child: Semantics(
-                button: true,
-                selected: selected == null,
-                child: InkWell(
-                  onTap: () => onChanged(null),
+          // 「全部」不屬於七類，另外畫
+          Semantics(
+            button: true,
+            selected: selected == null,
+            child: InkWell(
+              onTap: () => onChanged(null),
+              borderRadius: const BorderRadius.all(AppRadius.pill),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color:
+                      selected == null ? AppColors.barDark : Colors.transparent,
                   borderRadius: const BorderRadius.all(AppRadius.pill),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: selected == null
-                          ? AppColors.barDark
-                          : Colors.transparent,
-                      borderRadius: const BorderRadius.all(AppRadius.pill),
-                      border: Border.all(
-                        color: selected == null
-                            ? AppColors.barDark
-                            : AppColors.border,
-                      ),
-                    ),
-                    child: Text('全部',
-                        style: text.labelSmall?.copyWith(
-                          color: selected == null
-                              ? AppColors.onDark
-                              : AppColors.inkSecondary,
-                        )),
+                  border: Border.all(
+                    color:
+                        selected == null ? AppColors.barDark : AppColors.border,
                   ),
                 ),
+                child: Text('全部',
+                    style: text.labelSmall?.copyWith(
+                      color: selected == null
+                          ? AppColors.onDark
+                          : AppColors.inkSecondary,
+                    )),
               ),
             ),
           ),
           for (final c in EventCategory.values)
-            Padding(
-              padding: const EdgeInsets.only(right: AppSpacing.sm),
-              child: Center(
-                child: EventTypeChip(
-                  c,
-                  selected: selected == c,
-                  onTap: () => onChanged(selected == c ? null : c),
-                ),
-              ),
+            EventTypeChip(
+              c,
+              selected: selected == c,
+              onTap: () => onChanged(selected == c ? null : c),
             ),
         ],
       ),

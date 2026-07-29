@@ -539,12 +539,15 @@ class _RoutineCard extends StatelessWidget {
     );
   }
 
+  /// routine `type` 與 events 共用七類（api.md），所以 `safety` 也要有 icon——
+  /// 表單雖然不給這個選項，對話中建立的 routine 仍可能是這一類。
   static IconData _iconFor(String type) => switch (type) {
         'medication' => Icons.medication_outlined,
         'diet' => Icons.restaurant_outlined,
         'activity' => Icons.directions_walk,
         'sleep' => Icons.bedtime_outlined,
         'wellbeing' => Icons.favorite_outline,
+        'safety' => Icons.shield_outlined,
         _ => Icons.event_note_outlined,
       };
 }
@@ -637,6 +640,9 @@ class _RoutineFormState extends State<_RoutineForm> {
   TimeOfDay _time = const TimeOfDay(hour: 9, minute: 0);
   bool _remind = true;
 
+  /// routine 的 type 與 events 共用七類，但這裡刻意只給六個選項：`safety`（跌倒、
+  /// 走失、詐騙、居家危害）是「發生了什麼」的事件分類，照護者手動排一件安全類的
+  /// 例行公事沒有對應情境。對話或後端建立的 safety routine 仍能正常顯示。
   static const _types = [
     ('medication', '服藥'),
     ('diet', '飲食'),

@@ -12,7 +12,7 @@ import '../../theme/app_theme.dart';
 
 /// S5 `/care/summary` — 照護者每日摘要。
 ///
-/// `GET /summaries`：固定六類 sections，null 顯示「今日對話未提及」而不是留白——
+/// `GET /summaries`：固定七類 sections，null 顯示「今日對話未提及」而不是留白——
 /// 「沒提到」本身是資訊，跟「沒資料」不一樣。
 ///
 /// 另外處理 api.md 的 hybrid 特性：摘要可能是 `partial`（當日還有對話沒整理完），
@@ -142,7 +142,7 @@ class _GenerateButton extends StatelessWidget {
   }
 }
 
-/// 單日摘要卡：日期塊 → 完整度 → 總覽 → 警訊 → 六類 → 例行公事。
+/// 單日摘要卡：日期塊 → 完整度 → 總覽 → 警訊 → 七類 → 例行公事。
 class _SummaryCard extends StatelessWidget {
   const _SummaryCard({super.key, required this.summary});
 
@@ -242,13 +242,15 @@ class _SummaryCard extends StatelessWidget {
     );
   }
 
-  /// 六類固定全列，null 也要出現——「今日對話未提及」本身就是給照護者的資訊。
+  /// 七類固定全列，null 也要出現——「今日對話未提及」本身就是給照護者的資訊。
+  /// 順序照 api.md 的 `EventType`。
   List<(EventCategory, String?)> _sectionEntries(SummarySections s) => [
         (EventCategory.diet, s.diet),
         (EventCategory.activity, s.activity),
         (EventCategory.sleep, s.sleep),
         (EventCategory.medication, s.medication),
         (EventCategory.wellbeing, s.wellbeing),
+        (EventCategory.safety, s.safety),
         (EventCategory.other, s.other),
       ];
 
@@ -331,7 +333,7 @@ class _SectionRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 固定寬度標籤欄，讓六類的內容左緣對齊；用 Wrap 之外的最小可預測排版
+          // 固定寬度標籤欄，讓七類的內容左緣對齊；用 Wrap 之外的最小可預測排版
           SizedBox(
             width: 56,
             child: Text(category.label,

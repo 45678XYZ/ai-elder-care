@@ -180,6 +180,7 @@ abstract final class DemoData {
             sleep: '昨晚睡約七小時，半夜起來一次。',
             medication: '血壓藥已按時服用。',
             wellbeing: '提到膝蓋疼痛，心情平穩。',
+            safety: '傍晚在浴室地板滑了一下，扶著把手沒有跌倒。',
             other: null,
           ),
           routines: const SummaryRoutines(completed: 1, missed: 1, items: [
@@ -190,7 +191,8 @@ abstract final class DemoData {
             SummaryRoutineItem(
                 routineId: 'rtn_002', title: '量血壓', status: 'pending'),
           ]),
-          alerts: const ['今日多次提到膝蓋疼痛'],
+          // safety 事件會餵進 alerts（後端 ALERT_EVENT_TYPES），兩邊看得出是同一件事
+          alerts: const ['傍晚在浴室差點滑倒', '今日多次提到膝蓋疼痛'],
           interactionCount: 6,
           dataStatus: SummaryDataStatus.partial,
           pendingSessionCount: 1,
@@ -206,6 +208,7 @@ abstract final class DemoData {
             sleep: '睡滿八小時。',
             medication: '血壓藥、血壓量測都完成。',
             wellbeing: '心情不錯，提到孫子要來。',
+            safety: null,
             other: '孫子小明週三會來訪。',
           ),
           routines: const SummaryRoutines(completed: 2, missed: 0, items: [
@@ -228,6 +231,7 @@ abstract final class DemoData {
             sleep: '約六小時，睡得不太安穩。',
             medication: '早上血壓藥有吃。',
             wellbeing: '說有點累，不太想出門。',
+            safety: null,
             other: null,
           ),
           routines: const SummaryRoutines(completed: 1, missed: 1, items: [
@@ -257,6 +261,16 @@ abstract final class DemoData {
           ts: base.add(const Duration(hours: 19, minutes: 30)),
           type: 'wellbeing',
           detail: '提到膝蓋疼痛，走路時比較明顯，語氣略顯無奈。',
+          source: 'conversation',
+          conversationId: 'cnv_01J9',
+        ),
+        // safety：跌倒、走失、詐騙、居家危害等安全事件，realtime rail 當下就寫入
+        LifeEvent(
+          eventId: 'evt_${second ? 'b' : 'a'}7',
+          elderId: elderId,
+          ts: base.add(const Duration(hours: 18, minutes: 45)),
+          type: 'safety',
+          detail: '在浴室地板滑了一下，扶著把手沒有跌倒，說地上有積水。',
           source: 'conversation',
           conversationId: 'cnv_01J9',
         ),

@@ -63,6 +63,8 @@ class DailySummary {
 }
 
 /// 摘要分類；類別定義與 null 的呈現規則見 docs/api.md。
+///
+/// 欄位順序與 api.md 的七類（`EventType`）一致，也就是摘要頁的呈現順序。
 class SummarySections {
   const SummarySections({
     this.diet,
@@ -70,6 +72,7 @@ class SummarySections {
     this.sleep,
     this.medication,
     this.wellbeing,
+    this.safety,
     this.other,
   });
 
@@ -78,6 +81,9 @@ class SummarySections {
   final String? sleep;
   final String? medication;
   final String? wellbeing;
+
+  /// 跌倒、走失、詐騙、居家危害等安全事件；與 [DailySummary.alerts] 語意一致。
+  final String? safety;
   final String? other;
 
   factory SummarySections.fromJson(Map<String, dynamic> json) =>
@@ -87,6 +93,7 @@ class SummarySections {
         sleep: json['sleep'] as String?,
         medication: json['medication'] as String?,
         wellbeing: json['wellbeing'] as String?,
+        safety: json['safety'] as String?,
         other: json['other'] as String?,
       );
 }

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
@@ -142,7 +144,8 @@ class EventTypeChip extends StatelessWidget {
   }
 }
 
-/// 時間軸圓點。飲食為方形、其餘圓形——分類不只靠顏色區分（app_theme 的 [EventCategory.dotShape]）。
+/// 時間軸圓點。飲食方形、安全菱形、其餘圓形——分類不只靠顏色區分
+/// （app_theme 的 [EventCategory.dotShape]）。
 class EventDot extends StatelessWidget {
   const EventDot(this.category, {super.key, this.size = 14});
 
@@ -150,17 +153,37 @@ class EventDot extends StatelessWidget {
   final double size;
 
   @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          color: category.dot,
-          shape: category.dotShape,
-          borderRadius: category.dotShape == BoxShape.rectangle
-              ? BorderRadius.circular(3)
-              : null,
-          // MASTER.md：圓點外環 0 0 0 1.5px <dot色>
-          border: Border.all(color: category.bg, width: 2),
-        ),
-      );
+  Widget build(BuildContext context) {
+    final shape = category.dotShape;
+    final diamond = shape == EventDotShape.diamond;
+    // 菱形是方形轉 45°。邊長收到 0.72（≈1/√2）讓它轉完仍落在 size×size 的框裡，
+    // 時間軸左欄的寬度與圓點對齊才不會因為多一種形狀而位移。
+    final side = diamond ? size * 0.72 : size;
+
+    final marker = Container(
+      width: side,
+      height: side,
+      decoration: BoxDecoration(
+        color: category.dot,
+        shape: shape == EventDotShape.circle
+            ? BoxShape.circle
+            : BoxShape.rectangle,
+        borderRadius: shape == EventDotShape.circle
+            ? null
+            : BorderRadius.circular(diamond ? 2 : 3),
+        // MASTER.md：圓點外環 0 0 0 1.5px <dot色>
+        border: Border.all(color: category.bg, width: 2),
+      ),
+    );
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Center(
+        child: diamond
+            ? Transform.rotate(angle: math.pi / 4, child: marker)
+            : marker,
+      ),
+    );
+  }
 }
