@@ -39,6 +39,8 @@ flowchart TB
         apis["資料 API Lambda<br/>elders / summaries / events<br/>routines / stats"]
         asr["後端 ASR"]
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
+        embed["Bedrock embedding model<br/>concept retrieval + turn segmentation"]
+        vectors[("S3 Vectors<br/>UCO concept index")]
         rules["deterministic safety rules"]
         polly["Polly TTS"]
         ddb[("DynamoDB<br/>conversations / events / summaries / routines")]
@@ -67,6 +69,9 @@ flowchart TB
     closer -->|enqueue after closed| queue
     queue --> batch
     batch -->|batch extraction| model
+    batch -->|text embedding| embed
+    embed -->|query vector| vectors
+    vectors -->|Top-K candidate concepts| batch
     batch -->|normal events + batch state| ddb
     queue -->|重試耗盡| dlq
     dlq -->|DLQ event source| dlqreconciler
@@ -81,6 +86,7 @@ flowchart TB
 - **語音對話迴圈**：裝置端辨識（zh-TW）→ `POST /chat` 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
 - realtime rail 使用既有 chat 模型的一次 structured output，再套用 deterministic safety rules 產生 `rt_labels`；不為每個 turn 另呼叫一次完整 extraction LLM。
+- batch extractor 的分類前先做候選概念檢索：以 Bedrock embedding 取查詢向量，向 S3 Vectors 的概念索引取 Top-K 候選後才呼叫分類模型；同一個 embedding 供應者也用於 turn 切分。索引維度在建立時固定，因此 index 名稱帶模型與維度，模型抽換以新索引並存、切換環境變數完成。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
 
 ## API 一覽
@@ -104,7 +110,7 @@ flowchart TB
 | 語音互動陪伴（Module A） | 免手持語音對話，回應具時間、節日、近期對話、既有事件與 AgentCore 長期記憶等情境；可查詢自身紀錄與行程 |
 | 生活記錄（Module B） | realtime 僅同步 routine 變更／完成與潛在高風險 wellbeing/safety signals；session 關閉後由 batch 萃取一般事件 |
 | AI 記憶（Module B） | 長期記憶由 AWS AgentCore 服務管理，不自建 DynamoDB memories 表 |
-| 每日摘要（Module B） | 固定六類結構，以 `complete`／`partial` 表示相關 session 的 batch 是否完成 |
+| 每日摘要（Module B） | 固定七類結構，以 `complete`／`partial` 表示相關 session 的 batch 是否完成 |
 | 例行公事與提醒（Module B） | 照護者或 realtime 對話建立／修改／停用；完成狀態由 events 衍生；兩端以本地通知提醒 |
 | 照護者介面（Module C） | 長者管理、每日摘要、統計圖表、事件時間軸 |
 | 衛教知識庫（進階） | 公開衛教內容供 RAG；僅供參考、不做醫療診斷 |
@@ -322,9 +328,11 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 | `canonical_event_key` | String | 是 | 跨 realtime/batch/manual 的 canonical 事件身分 |
 | `extraction_track` | String | 是 | 首次建立來源：`realtime` \| `batch` \| `manual` |
 | `ts` | String | 是 | 事件實際發生時間 |
-| `type` | String | 是 | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `other` |
+| `type` | String | 是 | 高階類別：`diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `safety` \| `other` |
+| `concept_id` | String | 自動萃取事件必填 | 分類體系的細分類節點，如 `UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication`；供後端摘要、統計與 alerts 篩選，API 不暴露 |
+| `taxonomy_version` | String | 自動萃取事件必填 | 寫入當時的分類體系版本，如 `uco-1.0.0`；抽換體系後舊事件保留原值 |
 | `detail` | String | 是 | canonical 事件的自然語言摘要描述 |
-| `structured_detail` | Map | 否 | JSON 格式的結構化細節屬性（如 `{"medication_name": "血壓藥", "dosage": "一顆", "timing": "早上飯後"}`）；欄位結構因 `type` 不同而異，API 不暴露 |
+| `structured_detail` | Map | 否 | JSON 格式的結構化細節屬性（如 `{"medication_name": "血壓藥", "dosage": "一顆", "timing": "早上飯後"}`）；欄位結構因 `concept_id` 不同而異，API 不暴露 |
 | `source` | String | 是 | `conversation` \| `manual` |
 | `conversation_id` | String | 否 | 對話事件主要來源 turn；維持 API 契約 |
 | `evidence_conversation_ids` | List[String] | 是 | 支持目前事件內容的來源 turn IDs |
@@ -337,6 +345,17 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 | `created_at`, `updated_at` | String | 是 | 首次建立與最近更新時間 |
 | `schema_version` | Number | 是 | 初始 `1` |
 
+#### 分類體系
+
+事件分兩層分類：對外的**高階類別** `type`（前端與摘要使用，七類），以及對內的**細分類節點** `concept_id`（後端篩選、統計與 RAG 使用）。兩層都必須是可配置、可擴充、可抽換的資產，後端程式不硬編碼任何類別字串：
+
+- 高階類別定義、細分類節點體系、以及「節點 → 高階類別」的映射各自是獨立的資產檔，隨部署包一起版控。
+- 每筆事件寫入 `taxonomy_version` 記錄當時採用的體系版本；抽換或擴充體系只影響新建事件，舊事件保留原 `concept_id` 與 `taxonomy_version`。
+- 未知或無法映射的節點退回 `type=other` 並告警，不得靜默丟棄。
+- 可配置的邊界到 `daily_summaries.sections` 為止：`sections` 與 `type` 固定一一對應，新增高階類別必須同步 `sections`、`docs/api.md` 與摘要生成器。
+
+`GET /events` 只用 `type` 過濾；`concept_id` 不對外暴露，MVP 也不為它另建索引，後端需要細分類篩選時在 Query 結果上以 `FilterExpression` 或程式端過濾。
+
 #### Canonical identity 與寫入規則
 
 - routine completion：canonical key 只由 logical occurrence 的 `elder_id + routine_id + routine_date` 決定；手動與對話完成、以及同日不同 routine version 都收斂到同一 event。`routine_version` 只記錄完成當下採用的有效版本，不參與 identity；存在該 canonical completion event 即判定 occurrence 為 `done`，否則依排程、目前時間與 grace period 動態衍生 `pending` 或 `missed`，routines 表不重複保存狀態。
@@ -347,11 +366,12 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
   - **Date**：`YYYY-MM-DD`，台灣日界（+08:00）。
   - **Slot**：固定邊界的時間桶，粒度由 `EVENT_SLOT_MINUTES` 設定（預設 30 分鐘）。例如 30 分鐘時：`SLOT_0900`（表示 09:00~09:29）、`SLOT_0930`（表示 09:30~09:59）；60 分鐘時：`SLOT_09`（表示 09:00~09:59）。計算公式：`slot_index = floor(minute_of_day / EVENT_SLOT_MINUTES)`，`slot_label` 依粒度決定格式。Slot 粒度一旦寫入 event 後不可變更；變更粒度只影響新建事件，舊事件保留原 Slot。
   - **Subject**：canonical 正規化主體，經 server-owned alias/normalization 收斂。
-  - **Predicate**：合併原先 Action + Object 的單一語意謂語（如 `服用血壓藥`、`公園散步`）。
+  - **Predicate**：合併原先 Action + Object 的單一語意謂語（如 `服用血壓藥`、`公園散步`），與 `concept_id` 是不同維度——`concept_id` 決定分類，Predicate 決定事件實例身分。它同樣經 server-owned lexicon／alias 收斂：萃取時只能從該分類的候選謂語中選取或回報「其他」，再由後端 alias map 與字形／語助詞正規化收斂，避免同一件事因表述不同（「吃血壓藥」與「服用降血壓藥」）產生兩筆事件。
   - 不使用 chunk、track、模型版本或描述文字決定 identity。
 - 所有 `event_id` 都由 `elder_id + canonical_event_key` 穩定產生，與 chunk 無關。`source_chunk_id` 可記初建來源，但 `evidence_conversation_ids` 可跨 chunk 擴充。
 - event identity 與既有事實欄位原則上不可覆寫；唯一可條件更新的例外是既有 realtime safety event 的合法 enrichment。batch 以相同 event ID 與目前 `revision` 為條件，遞增 `revision` 並 enrich `detail`、`structured_detail`、`evidence_conversation_ids`、`confidence`、`updated_at`；不得重建事件，也不得因已存在就跳過補充資訊。
 - batch 建立一般事件時使用 conditional Put。retry 命中完全相同 canonical event 視為冪等；若內容互斥則保留既有資料、記錄衝突並讓工作失敗／告警，不靜默覆寫。
+- batch 萃取到疑似 routine 完成時，仍只寫一般事件，並在 `structured_detail` 記 `suspected_routine_id` 供摘要層降噪；不得寫 canonical completion event，也不改 routine 狀態。completion event 只能由 realtime rail 或照護者手動完成端點建立。
 - `GET /events` 一律 Query `events-by-time`；日期邊界以台灣時間計算，`ScanIndexForward=false` 回最新事件優先，`type` 以 FilterExpression 過濾，分頁將 DynamoDB `LastEvaluatedKey` 編碼為不透明 `next_token`。
 - `detail` 保存足以供時間軸、摘要與語音查詢使用的完整事件描述，但不複製逐字稿；`structured_detail` 保存結構化細節供後端摘要生成、統計與 RAG 使用。需要追溯原文時，依主要 `conversation_id` 或 `evidence_conversation_ids` 回 conversations 讀取，以減少 PII 重複儲存。
 - `GET /events` 只公開既有 API 欄位，不暴露 canonical key、track、chunk、revision 或 `structured_detail`。canonical 規則降低重複機率，但不宣稱 zero duplicate 或 100% extraction accuracy。
@@ -373,7 +393,7 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 |---|---|---|---|
 | `elder_id`, `date` | String | 是 | 長者與日期 |
 | `overview` | String | 是 | 當日總覽 |
-| `sections` | Map | 是 | 固定 `diet/activity/sleep/medication/wellbeing/other`；值可為 Null |
+| `sections` | Map | 是 | 固定 `diet/activity/sleep/medication/wellbeing/safety/other`，與 events `type` 一一對應；值可為 Null |
 | `routines` | Map | 是 | `completed`, `missed`, `items[{routine_id,title,status}]` |
 | `alerts` | List[String] | 是 | 無警訊為 `[]` |
 | `interaction_count` | Number | 是 | 當日 `/chat` turn 數 |
@@ -391,7 +411,7 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 - 排程摘要會等待相關 closed sessions 的 batch 完成，直到設定的等待窗口。超過窗口仍未完成時寫 `partial`；後續 batch 全部完成後排程重算，覆寫為 `complete`。手動 `POST /summaries/generate` 不等待完整窗口，可合法產生 `partial`。
 - 摘要輸入區間固定為 `[date 00:00:00+08:00, input_through_at]`。同日重建以 `input_through_at` 為 cutoff；較舊 cutoff 不得覆寫較新 cutoff。同一 cutoff 先以完整度排序，`complete` 優先於 `partial`；完整度相同才以 `generated_at` 較新者勝出。
 - `GET /summaries` 以 `elder_id` Query Base table，`date` 依台灣日界形成 `from..to` sort-key 範圍並倒序分頁；只回已生成日期。
-- `sections` 六個 key 每次完整寫入，無資料為 Null；alerts 可參考近期事件標記跨日趨勢。摘要是衍生快照，不是 event 或 routine 狀態的真理來源。
+- `sections` 七個 key 每次完整寫入，無資料為 Null；alerts 可參考近期事件與 `type=safety` 事件標記跨日趨勢。摘要是衍生快照，不是 event 或 routine 狀態的真理來源。
 - daily_summaries 不設定 TTL，啟用靜態加密與 Point-in-Time Recovery。
 
 ### `routines` 表
@@ -410,7 +430,7 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 | `is_current`, `active`, `remind` | Boolean | 是 | current、啟用、提醒 |
 | `effective_from`, `effective_to` | String | 是/否 | 版本有效區間 |
 | `title` | String | 是 | 顯示名稱 |
-| `type` | String | 是 | 與 events 相同六類 |
+| `type` | String | 是 | 與 events 相同的高階類別 |
 | `schedule` | Map | 是 | discriminated union：`daily{freq,time}`、`weekly{freq,weekday,time}`、`once{freq,date,time}` |
 | `created_by`, `updated_by` | String | 是 | `caregiver` \| `conversation` |
 | `created_by_id`, `updated_by_id` | String | 否 | caregiver Cognito `sub` |
@@ -436,13 +456,34 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 
 - **Session** 是 immutable input snapshot 的邊界：active 接納 turns，closing freeze/verify，closed 固定輸入並啟動離線 materialization。closed 先於 batch。
 - **Realtime ownership**：chat 回覆、routine create/update/deactivate/complete，以及潛在高風險 wellbeing/safety signals。它使用既有 chat structured output 與 deterministic rules，不追求一般事件完整萃取。
-- **Batch ownership**：closed snapshot 的 normal events（含記憶體內去重）、既有 safety event enrichment、chunk manifest 與 batch 狀態。它不改 routine，也不改 frozen turn/session input。
+- **Batch ownership**：closed snapshot 的 normal events（含記憶體內去重）、既有 safety event enrichment、chunk manifest 與 batch 狀態。它不改 routine，也不改 frozen turn/session input；萃取到疑似 routine 完成時只以 `structured_detail.suspected_routine_id` 標記。
 - **Chunk** 只是同一 closed session 的 static processing range，不是公開 API 資源或資料身分。core ranges 完整且不重疊，context overlap 不 emit。
 - **Events** 是實際發生與 routine 完成的 canonical 紀錄；**routines** 是計畫；**daily_summaries** 是具 `data_status` 的衍生快照。長期記憶由 AWS AgentCore 管理。
 
 ## 成本與可觀測性
 
-移除每輪額外完整 extraction 模型呼叫，預期可降低模型呼叫與 realtime latency 成本，但實際效果必須以 telemetry 驗證。至少觀測 chat latency、structured output 失敗率、safety rule 命中、每 session turn/input bytes、chunk 數、batch attempts、SQS duplicate/DLQ、partial summary 比例與重算延遲；未量測前不承諾固定百分比節省。
+移除每輪額外完整 extraction 模型呼叫，預期可降低模型呼叫與 realtime latency 成本，但實際效果必須以 telemetry 驗證。至少觀測 chat latency、structured output 失敗率、safety rule 命中、每 session turn/input bytes、chunk 數、batch attempts、SQS duplicate/DLQ、partial summary 比例與重算延遲、去重合併率、`type`／`concept_id` 分佈、embedding 與檢索延遲；未量測前不承諾固定百分比節省。
+
+## 後端環境變數
+
+extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
+
+| 變數 | 用途 |
+|---|---|
+| `EVENT_SLOT_MINUTES` | canonical key 的 Slot 粒度，預設 30 |
+| `ROUTINE_GRACE_MINUTES` | occurrence 由 pending 轉 missed 的寬限，預設 120 |
+| `SESSION_MAX_TURNS`、`SESSION_MAX_INFLIGHT_TURNS`、`SESSION_MAX_INPUT_BYTES` | session 容量上限與自動 close 門檻 |
+| `TAXONOMY_VERSION` | 寫入 event 的分類體系版本 |
+| `CHUNKER_TYPE` | 分塊策略 |
+| `EXTRACTION_MODE`、`DISAGGREGATION_MODE` | 萃取的 schema 約束與分裂策略 |
+| `RAC_TOP_K` | 候選細分類節點數 |
+| `BEDROCK_MODEL_ID` | 對話模型（Converse modelId 或 inference profile）；預設為 Anthropic 在 Bedrock 的旗艦模型加 global cross-Region inference profile |
+| `BEDROCK_CLASSIFIER_MODEL_ID`、`BEDROCK_EXTRACTOR_MODEL_ID`、`BEDROCK_CHUNKER_MODEL_ID` | 分階段覆寫；留空沿用主模型。分類與分塊的 schema 固定、輸出短，可換較便宜的模型；萃取是品質瓶頸不建議降級 |
+| `EMBEDDING_MODEL_ID`、`EMBEDDING_DIM`、`CONCEPT_VECTOR_INDEX`、`CONCEPT_VECTOR_BUCKET` | embedding 供應者、維度與概念向量索引 |
+| `CHUNK_PLANNER_VERSION`、`BATCH_EXTRACTOR_VERSION` | 寫入 session／turn 的版本戳記 |
+| `METRICS_NAMESPACE`、`METRICS_ENABLED` | EMF 指標的 namespace 與開關；指標寫 stdout 由 CloudWatch Logs 解析，不需額外 IAM |
+| `BATCH_LEASE_SECONDS`、`SESSION_IDLE_MINUTES`、`SESSION_SWEEP_LIMIT` | batch lease 長度、idle close 門檻與單次 sweep 上限 |
+| `BATCH_ALERT_TOPIC_ARN` | batch 收斂為 `failed` 時的告警 topic |
 
 ## Repo 結構
 
@@ -450,17 +491,21 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 ai-elder-care/
 ├── .kiro/          # Kiro 設定與 specs
 ├── app/            # Flutter
-├── backend/        # Python Lambda handlers
+├── backend/        # Python Lambda handlers 與 extraction pipeline
 ├── terraform/      # AWS IaC
 ├── data/           # 模擬 persona、腳本、知識文件
 ├── docs/           # 架構、API、旅程、PII
 └── README.md
 ```
 
+`backend/src/` 下 `handlers/` 是 API 與事件入口、`shared/` 是跨 handler 共用層、`extraction/` 是生活記錄的萃取 pipeline（分類體系資產、剪枝、分塊、萃取、canonical identity、去重），只由 batch 相關 Lambda 使用。
+
 ## Verification
 
 - **Routine 秒級可見／occurrence 冪等**：驗證對話中的 routine 建立、修改、停用與完成在 `/chat` response 前原子提交，`routines_updated` 準確；照護者 POST/PATCH 並行同 scoped request 收斂；同 routine/date 改版仍只顯示一筆 occurrence，completion 不重複。
-- **一般事件 close 後產生**：一般 diet/activity/sleep/medication/wellbeing/other 事件不在 realtime 寫入，close 並完成 batch 後才 materialize。
+- **一般事件 close 後產生**：一般 diet/activity/sleep/medication/wellbeing/safety/other 事件不在 realtime 寫入，close 並完成 batch 後才 materialize；例外只有潛在高風險 safety event，由 realtime rail 先建立、batch 再 enrich。
+- **分類體系可配置**：抽換高階類別定義或節點映射資產後，新事件依新體系寫入且 `taxonomy_version` 隨之改變，舊事件不受影響；未知節點退回 `other` 並告警。
+- **batch 不寫 routine completion**：batch 萃取到疑似 routine 完成時只寫一般事件並標記 `suspected_routine_id`，occurrence 仍依 canonical completion event 判定。
 - **Batch 去重**：batch worker 先在記憶體內依 `EVENT_SLOT_MINUTES` 去重，再以 conditional Put 寫入；retry 冪等。
 - **Realtime safety**：chat structured output 加 deterministic rules 可在 response 前建立潛在高風險 safety event；batch 同 key 只做 revision enrichment。
 - **Close immutable／inflight recovery**：驗證 `/chat` reserve 與 close race、inflight 回 409、lease-expired turn 接管或安全失敗移除 reservation、`active→closing→closed`，以及 closed 後無法追加或修改 frozen turns、ordered IDs、counts 與 snapshot hash。

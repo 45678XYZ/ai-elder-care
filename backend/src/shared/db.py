@@ -9,8 +9,11 @@
 
 技術重點：
 - 全域連線重用 (Warm Start)
-- Decimal 自動遞迴轉碼 (轉換為原生 int/float)
+- Decimal 自動遞迴轉碼 (讀出轉原生 int/float、寫入轉 Decimal 並剔除 None)
 - Base64 分頁游標 (next_token)
+- events 一律條件式寫入：canonical key 決定身分，內容互斥不靜默覆寫，
+  safety enrichment 以 revision 為條件遞增（規則見 docs/framework.md）
+- 事件時間軸走 GSI events-by-time，日界以台灣時間計算
 - 條件式寫入與 transact_write_items（canonical event 冪等、routine 版本推進）
 - routine 的 occurrence 狀態不落地，推導邏輯見 src/shared/routines.py
 """
@@ -18,8 +21,8 @@
 import base64
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-import hashlib
 import json
+import logging
 import os
 from typing import Any
 import uuid
@@ -27,6 +30,12 @@ import uuid
 import boto3
 from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
+
+# canonical 事件身分與時間正規化只有一份實作，避免同一筆資料在兩處算出不同 ID／精度
+from src.extraction.canonical import event_id_for, event_time_key, routine_completion_key
+from src.extraction.temporal import day_end, day_start, format_ts, normalize_ts
+
+logger = logging.getLogger(__name__)
 
 # 台灣時區 (+08:00)
 TZ_TAIPEI = timezone(timedelta(hours=8))
@@ -37,6 +46,29 @@ TABLE_CONVERSATIONS = os.environ.get("TABLE_CONVERSATIONS", "conversations")
 TABLE_EVENTS = os.environ.get("TABLE_EVENTS", "events")
 TABLE_DAILY_SUMMARIES = os.environ.get("TABLE_DAILY_SUMMARIES", "daily_summaries")
 TABLE_ROUTINES = os.environ.get("TABLE_ROUTINES", "routines")
+
+# 事件時間軸索引；events 的 Base table SK 是 event_id，時間範圍查詢一律走此 GSI
+EVENTS_BY_TIME_INDEX = "events-by-time"
+
+# event_time_key 為 `<ts>#<event_id>`；查詢上界要蓋過同一毫秒的所有 event_id
+EVENT_TIME_KEY_UPPER_BOUND_SUFFIX = "#\uffff"
+
+# 判斷「既有事件與這次寫入是否互斥」時比對的事實欄位。
+# 刻意不含 `ts`：canonical key 已經固定了日期與 Slot，同一件事在 Slot 內被再次提到、
+# 或 routine 完成先後由兩個入口寫入時，時間本來就會不同，那不是矛盾而是「先寫者為準」。
+EVENT_MATERIAL_FIELDS: tuple[str, ...] = (
+    "canonical_event_key",
+    "type",
+    "detail",
+    "concept_id",
+    "routine_id",
+    "routine_date",
+)
+
+# 合法 enrichment 可更新的欄位；事件身分與既有事實欄位不得覆寫
+ENRICHABLE_EVENT_FIELDS: frozenset[str] = frozenset(
+    {"detail", "structured_detail", "evidence_conversation_ids", "confidence"}
+)
 
 # BatchGetItem 遇節流時重取未處理 key 的次數上限
 BATCH_GET_MAX_ATTEMPTS = 3
@@ -72,6 +104,25 @@ class ItemNotFoundError(DBError):
     pass
 
 
+class EventConflictError(DBError):
+    """同一 canonical event 已存在且內容互斥；既有資料保留不動，工作應失敗並告警。"""
+
+    def __init__(self, event_id: str, canonical_event_key: str, differences: dict[str, Any]):
+        super().__init__(f"事件內容互斥（{event_id}）：{sorted(differences)}")
+        self.event_id = event_id
+        self.canonical_event_key = canonical_event_key
+        self.differences = differences
+
+
+class EventRevisionConflictError(DBError):
+    """enrichment 的 revision 條件不成立；代表其他 worker 已先更新，應重讀後重試。"""
+
+    def __init__(self, event_id: str, expected_revision: int):
+        super().__init__(f"事件 revision 條件不成立（{event_id}，預期 {expected_revision}）")
+        self.event_id = event_id
+        self.expected_revision = expected_revision
+
+
 class ConditionFailedError(DBError):
     """條件式寫入未通過：項目已存在，或狀態已被其他請求推進。"""
     pass
@@ -100,6 +151,23 @@ def convert_decimals(obj: Any) -> Any:
             return int(obj)
         else:
             return float(obj)
+    return obj
+
+
+def prepare_item(obj: Any) -> Any:
+    """把 Python 物件轉成 DynamoDB 可寫入的形式。
+
+    兩件事都是必要的，不是潔癖：boto3 resource 不接受 `float`（萃取出的血壓、信心值都是
+    float），而動態 schema 會把所有祖先屬性攤平、未提及即為 `None`，不剔除的話 item 會
+    塞滿空欄位並逼近 400 KB 上限。
+    """
+    if isinstance(obj, float):
+        # 走字串轉換避免二進位浮點誤差被寫進資料
+        return Decimal(str(obj))
+    if isinstance(obj, list):
+        return [prepare_item(item) for item in obj if item is not None]
+    if isinstance(obj, dict):
+        return {key: prepare_item(value) for key, value in obj.items() if value is not None}
     return obj
 
 
@@ -280,58 +348,152 @@ def get_recent_conversations(
 # Events 表操作
 # -----------------------------------------------------------------------------
 
-def event_id_for(elder_id: str, canonical_event_key: str) -> str:
-    """由 elder_id + canonical key 穩定產生 event_id：同一 canonical 事件永遠同一個 ID。"""
-    stable_sig = f"{elder_id}:{canonical_event_key}".encode("utf-8")
-    return f"evt_{hashlib.sha256(stable_sig).hexdigest()[:12]}"
+def get_event(elder_id: str, event_id: str) -> dict[str, Any] | None:
+    """強一致讀取單一事件；不存在回 None。"""
+    table = get_dynamodb_resource().Table(TABLE_EVENTS)
+    try:
+        resp = table.get_item(Key={"elder_id": elder_id, "event_id": event_id}, ConsistentRead=True)
+    except ClientError as e:
+        raise DBError(f"讀取事件紀錄失敗: {e.response['Error']['Message']}")
+    item = resp.get("Item")
+    return convert_decimals(item) if item else None
 
 
 def _prepare_event(event_data: dict[str, Any]) -> dict[str, Any]:
-    """補齊 event_id、event_time_key 與預設欄位。"""
+    """補齊事件身分（`event_id`／`event_time_key`）與預設欄位。
+
+    `canonical_event_key` 與 `ts` 必填：沒有 canonical key 就沒有穩定事件身分，
+    退回隨機 ID 會讓 retry 與 duplicate delivery 各寫一筆；`ts` 也不能用當下時間補，
+    否則同一段對話重跑會落到不同 Slot。`event_id` 的推導只有一份實作，
+    見 src/extraction/canonical.py。
+    """
+    elder_id = event_data.get("elder_id")
+    canonical_key = event_data.get("canonical_event_key")
+    ts_raw = event_data.get("ts")
+    if not elder_id:
+        raise DBError("建立事件需要 elder_id")
+    if not canonical_key:
+        raise DBError("建立事件需要 canonical_event_key（不得以隨機 ID 代替）")
+    if not ts_raw:
+        raise DBError("建立事件需要 ts（不得以當下時間代替，否則 retry 不冪等）")
+
     data = dict(event_data)
-
-    if not data.get("event_id"):
-        canonical_key = data.get("canonical_event_key")
-        if canonical_key:
-            data["event_id"] = event_id_for(data.get("elder_id", ""), canonical_key)
-        else:
-            data["event_id"] = f"evt_{uuid.uuid4().hex[:12]}"
-
-    ts = data.get("ts") or datetime.now(TZ_TAIPEI).isoformat(timespec="milliseconds")
-    data["ts"] = ts
-    data["event_time_key"] = f"{ts}#{data['event_id']}"
+    data["ts"] = normalize_ts(ts_raw)
+    data["event_id"] = data.get("event_id") or event_id_for(elder_id, canonical_key)
+    data["event_time_key"] = event_time_key(data["ts"], data["event_id"])
     data.setdefault("revision", 1)
     data.setdefault("schema_version", 1)
     data.setdefault("evidence_conversation_ids", [])
     data.setdefault("source", "conversation")
     data.setdefault("extraction_track", "batch")
+    now = format_ts(datetime.now(TZ_TAIPEI))
+    data.setdefault("created_at", now)
+    data.setdefault("updated_at", data["created_at"])
     return data
 
 
 def create_event(event_data: dict[str, Any]) -> dict[str, Any]:
-    """新增生活事件。支援依據 canonical_event_key 自動計算穩定 event_id 與產生 event_time_key。"""
-    table = get_dynamodb_resource().Table(TABLE_EVENTS)
-    data = _prepare_event(event_data)
+    """以條件式寫入建立事件；命中相同內容視為冪等，內容互斥則拋出衝突。
 
+    寫入規則見 docs/framework.md 的「Canonical identity 與寫入規則」：
+    `attribute_not_exists(event_id)` 條件式 Put，已存在時比對事實欄位，
+    完全相同 → 冪等回傳既有資料；互斥 → 保留既有、拋 `EventConflictError` 讓工作失敗告警。
+
+    routine completion 這種「先寫者為準、後到者不算衝突」的情境走 `put_event_if_absent`。
+    """
+    data = _prepare_event(event_data)
+    elder_id = data["elder_id"]
+    canonical_key = data["canonical_event_key"]
+
+    item = prepare_item(data)
+    table = get_dynamodb_resource().Table(TABLE_EVENTS)
     try:
-        table.put_item(Item=data)
-        return convert_decimals(data)
+        table.put_item(Item=item, ConditionExpression="attribute_not_exists(event_id)")
+        return convert_decimals(item)
     except ClientError as e:
-        raise DBError(f"建立事件紀錄失敗: {e.response['Error']['Message']}")
+        if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise DBError(f"建立事件紀錄失敗: {e.response['Error']['Message']}")
+
+    existing = get_event(elder_id, data["event_id"]) or {}
+    differences = _material_differences(existing, convert_decimals(item))
+    if differences:
+        logger.error(
+            "事件內容互斥，保留既有資料：event_id=%s canonical_event_key=%s differences=%s",
+            data["event_id"],
+            canonical_key,
+            differences,
+        )
+        raise EventConflictError(
+            event_id=data["event_id"],
+            canonical_event_key=str(canonical_key),
+            differences=differences,
+        )
+    logger.info("事件已存在且內容相同，視為冪等：event_id=%s", data["event_id"])
+    return existing
+
+
+def enrich_event(
+    elder_id: str,
+    event_id: str,
+    expected_revision: int,
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    """以目前 `revision` 為條件遞增並補充事件內容。
+
+    唯一可條件更新的情境是既有 realtime safety event 的合法 enrichment；
+    事件身分與既有事實欄位不得覆寫，因此只允許 `ENRICHABLE_EVENT_FIELDS` 內的欄位。
+    """
+    illegal = sorted(set(updates) - ENRICHABLE_EVENT_FIELDS)
+    if illegal:
+        raise DBError(f"事件 enrichment 不得修改這些欄位：{', '.join(illegal)}")
+    if not updates:
+        raise DBError("事件 enrichment 需要至少一個欄位")
+
+    set_parts = ["#revision = :next_revision", "#updated_at = :updated_at"]
+    expr_names = {"#revision": "revision", "#updated_at": "updated_at"}
+    expr_values: dict[str, Any] = {
+        ":next_revision": expected_revision + 1,
+        ":expected_revision": expected_revision,
+        ":updated_at": format_ts(datetime.now(TZ_TAIPEI)),
+    }
+    for index, (field, value) in enumerate(sorted(updates.items())):
+        name_key = f"#f{index}"
+        value_key = f":v{index}"
+        set_parts.append(f"{name_key} = {value_key}")
+        expr_names[name_key] = field
+        expr_values[value_key] = prepare_item(value)
+
+    table = get_dynamodb_resource().Table(TABLE_EVENTS)
+    try:
+        resp = table.update_item(
+            Key={"elder_id": elder_id, "event_id": event_id},
+            UpdateExpression="SET " + ", ".join(set_parts),
+            ConditionExpression="attribute_exists(event_id) AND #revision = :expected_revision",
+            ExpressionAttributeNames=expr_names,
+            ExpressionAttributeValues=expr_values,
+            ReturnValues="ALL_NEW",
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            raise EventRevisionConflictError(event_id=event_id, expected_revision=expected_revision)
+        raise DBError(f"事件 enrichment 失敗: {e.response['Error']['Message']}")
+    return convert_decimals(resp.get("Attributes", {}))
 
 
 def put_event_if_absent(event_data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     """條件式寫入事件，回傳 (事件, 是否為本次建立)。
 
-    同一 canonical event 已存在時不覆寫既有事實（例如對話已完成的 routine 又被手動確認），
-    改回既有項目達成冪等。
+    與 `create_event` 的差別只在後到者的處置：這裡「先寫者為準」，同一 canonical event
+    已存在時不比對事實欄位、不視為衝突，直接回既有項目。用於同一件事本來就會由多個入口
+    寫入、描述必然不同的情境（例如對話已完成的 routine 又被照護者手動確認）。
     """
-    table = get_dynamodb_resource().Table(TABLE_EVENTS)
     data = _prepare_event(event_data)
+    item = prepare_item(data)
 
+    table = get_dynamodb_resource().Table(TABLE_EVENTS)
     try:
-        table.put_item(Item=data, ConditionExpression="attribute_not_exists(event_id)")
-        return convert_decimals(data), True
+        table.put_item(Item=item, ConditionExpression="attribute_not_exists(event_id)")
+        return convert_decimals(item), True
     except ClientError as e:
         if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
             raise DBError(f"建立事件紀錄失敗: {e.response['Error']['Message']}")
@@ -340,17 +502,6 @@ def put_event_if_absent(event_data: dict[str, Any]) -> tuple[dict[str, Any], boo
     if existing is None:
         raise DBError("事件已存在但讀取失敗")
     return existing, False
-
-
-def get_event(elder_id: str, event_id: str) -> dict[str, Any] | None:
-    """強一致取得單一事件。"""
-    table = get_dynamodb_resource().Table(TABLE_EVENTS)
-    try:
-        resp = table.get_item(Key={"elder_id": elder_id, "event_id": event_id}, ConsistentRead=True)
-        item = resp.get("Item")
-        return convert_decimals(item) if item else None
-    except ClientError as e:
-        raise DBError(f"讀取事件紀錄失敗: {e.response['Error']['Message']}")
 
 
 def get_events(elder_id: str, event_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -382,54 +533,70 @@ def get_events(elder_id: str, event_ids: list[str]) -> dict[str, dict[str, Any]]
 
 def list_events(
     elder_id: str,
-    from_date: str = None,
-    to_date: str = None,
-    event_type: str = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    event_type: str | None = None,
     limit: int = 50,
-    next_token: str = None,
+    next_token: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """分頁查詢生活事件。"""
-    table = get_dynamodb_resource().Table(TABLE_EVENTS)
+    """查詢事件時間軸。
 
-    key_cond = "elder_id = :eid"
-    expr_values: dict[str, Any] = {":eid": elder_id}
-    expr_names: dict[str, str] = {}
-
-    if from_date and to_date:
-        start_ts = f"{from_date}T00:00:00+08:00"
-        end_ts = f"{to_date}T23:59:59+08:00"
-        key_cond += " AND ts BETWEEN :start_ts AND :end_ts"
-        expr_values[":start_ts"] = start_ts
-        expr_values[":end_ts"] = end_ts
-
-    filter_exprs = []
-    if event_type:
-        filter_exprs.append("#t = :etype")
-        expr_names["#t"] = "type"
-        expr_values[":etype"] = event_type
-
+    一律走 GSI `events-by-time`：Base table 的 SK 是 `event_id`，用 `ts` 當範圍條件
+    在 Base table 上根本無法成立。日期邊界以台灣時間計算，上界補上 `event_time_key`
+    的分隔符與最大字元，避免落在 `23:59:59.999` 那一毫秒的事件被排除在外。
+    """
     query_kwargs: dict[str, Any] = {
-        "KeyConditionExpression": key_cond,
-        "ExpressionAttributeValues": expr_values,
+        "IndexName": EVENTS_BY_TIME_INDEX,
+        "KeyConditionExpression": "elder_id = :eid",
+        "ExpressionAttributeValues": {":eid": elder_id},
         "ScanIndexForward": False,
         "Limit": limit,
     }
+    expr_names: dict[str, str] = {}
 
-    if filter_exprs:
-        query_kwargs["FilterExpression"] = " AND ".join(filter_exprs)
+    if from_date and to_date:
+        query_kwargs["KeyConditionExpression"] += (
+            " AND event_time_key BETWEEN :start_key AND :end_key"
+        )
+        query_kwargs["ExpressionAttributeValues"][":start_key"] = day_start(from_date)
+        query_kwargs["ExpressionAttributeValues"][":end_key"] = (
+            day_end(to_date) + EVENT_TIME_KEY_UPPER_BOUND_SUFFIX
+        )
+
+    if event_type:
+        query_kwargs["FilterExpression"] = "#t = :etype"
+        expr_names["#t"] = "type"
+        query_kwargs["ExpressionAttributeValues"][":etype"] = event_type
+
     if expr_names:
         query_kwargs["ExpressionAttributeNames"] = expr_names
     if next_token:
         query_kwargs["ExclusiveStartKey"] = decode_next_token(next_token)
 
     try:
-        resp = table.query(**query_kwargs)
-        items = convert_decimals(resp.get("Items", []))
-        last_key = resp.get("LastEvaluatedKey")
-        new_next_token = encode_next_token(last_key) if last_key else None
-        return items, new_next_token
+        resp = get_dynamodb_resource().Table(TABLE_EVENTS).query(**query_kwargs)
     except ClientError as e:
         raise DBError(f"查詢生活事件失敗: {e.response['Error']['Message']}")
+
+    items = convert_decimals(resp.get("Items", []))
+    last_key = resp.get("LastEvaluatedKey")
+    return items, encode_next_token(last_key) if last_key else None
+
+
+def _material_differences(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """比對事實欄位差異，判斷既有事件與這次寫入是否互斥。
+
+    刻意不比 `structured_detail`、`confidence`、`evidence_conversation_ids`：
+    這些屬於可 enrich 的補充資訊，模型輸出的細微差異不該讓整個 batch 失敗；
+    真正互斥的是分類、描述、時間與 routine 對應這些事實。
+    """
+    differences: dict[str, Any] = {}
+    for field in EVENT_MATERIAL_FIELDS:
+        before = existing.get(field)
+        after = incoming.get(field)
+        if after is not None and before != after:
+            differences[field] = {"existing": before, "incoming": after}
+    return differences
 
 
 # -----------------------------------------------------------------------------
@@ -597,6 +764,58 @@ def list_routine_versions_by_elder(elder_id: str, upper_bound: str) -> list[dict
         raise DBError(f"查詢例行公事版本失敗: {e.response['Error']['Message']}")
 
     return convert_decimals(items)
+
+
+def complete_routine_with_event(
+    elder_id: str,
+    routine_id: str,
+    routine_date: str,
+    ts: str,
+    completed_by: str,
+    detail: str = "已確認完成例行公事",
+    event_type: str = "other",
+    routine_version: int | None = None,
+    conversation_id: str | None = None,
+    session_id: str | None = None,
+    extraction_track: str = "manual",
+) -> dict[str, Any]:
+    """寫入 canonical routine completion event。
+
+    canonical key 只由 `routine_id + routine_date` 決定，因此同日改版、手動與對話完成都
+    收斂到同一筆 event，occurrence 是否 `done` 完全由此 event 是否存在判定，`routines` 表
+    不重複保存狀態。`routine_version` 只記錄完成當下採用的有效版本，不參與 identity。
+
+    batch 一律不得呼叫（規範：batch 不得建立、修改、停用或完成 routine）。
+    """
+    if extraction_track == "batch":
+        raise DBError("batch 不得寫入 routine completion event")
+
+    event, _ = put_event_if_absent(
+        {
+            "elder_id": elder_id,
+            "canonical_event_key": routine_completion_key(routine_id, routine_date),
+            "ts": ts,
+            "type": event_type,
+            "detail": detail,
+            "source": "conversation" if completed_by == "conversation" else "manual",
+            "extraction_track": extraction_track,
+            "routine_id": routine_id,
+            "routine_date": routine_date,
+            "routine_version": routine_version,
+            "completed_by": completed_by,
+            "conversation_id": conversation_id,
+            "session_id": session_id,
+            "evidence_conversation_ids": [conversation_id] if conversation_id else [],
+        }
+    )
+    return {
+        "routine_id": routine_id,
+        "routine_date": routine_date,
+        "status": "done",
+        "completed_at": event["ts"],
+        "completed_by": completed_by,
+        "event_id": event["event_id"],
+    }
 
 
 # -----------------------------------------------------------------------------

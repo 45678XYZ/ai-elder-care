@@ -21,7 +21,7 @@
 | `SummaryDataStatus` | `complete` \| `partial` |
 | `Gender` | `male` \| `female` \| `other` |
 | `Language` | `zh-TW` \| `hak` |
-| `EventType` | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `other` |
+| `EventType` | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `safety` \| `other` |
 | `RoutineStatus` | `pending` \| `done` \| `missed` |
 | `CompletedBy` | `conversation` \| `elder` \| `caregiver` |
 
@@ -29,7 +29,7 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 
 ### 錯誤格式
 
-非 2xx 一律為下列結構；401 例外，由 API Gateway 回固定格式。
+非 2xx 一律為下列結構。
 
 ```json
 { "error": { "code": "ELDER_NOT_FOUND", "message": "找不到指定的長者" } }
@@ -38,13 +38,16 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 | HTTP | 使用時機與 `code` |
 |---|---|
 | 400 | 缺漏／格式錯誤（`INVALID_PARAMETER`）；音訊超長（`AUDIO_TOO_LONG`）；指定日期無該 routine（`ROUTINE_NOT_SCHEDULED`） |
-| 401 | token 缺漏或無效（API Gateway） |
+| 401 | token 缺漏或無效（`UNAUTHORIZED`） |
 | 403 | 越權（`FORBIDDEN`）；不適用於 close endpoint 的 session 存在性／ownership 判斷 |
 | 404 | `ELDER_NOT_FOUND`、`ROUTINE_NOT_FOUND`、`SESSION_NOT_FOUND`；close endpoint 對不存在或不屬該長者的 session 都使用 `SESSION_NOT_FOUND` |
 | 409 | `REQUEST_IN_PROGRESS`、`IDEMPOTENCY_CONFLICT` |
+| 429 | 超過 stage 節流上限（`THROTTLED`）；前端退避重試 |
 | 500 | `INTERNAL_ERROR` |
 
 `code` 是前端 UX 分支的穩定識別碼；程式不得依賴可能調整的 `message`。任一端點可能回通用錯誤；端點特例另行註明。
+
+請求在抵達 handler 前被 API Gateway 擋下時（token 無效、路由不存在、payload 過大、節流、integration 逾時），`code` 為該 gateway 錯誤類型，如 `UNAUTHORIZED`、`MISSING_AUTHENTICATION_TOKEN`、`REQUEST_TOO_LARGE`、`THROTTLED`、`INTEGRATION_TIMEOUT`，`message` 為英文原文。
 
 ---
 
@@ -250,6 +253,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
         "sleep": "昨晚睡約七小時",
         "medication": "血壓藥已按時服用",
         "wellbeing": "提到膝蓋疼痛，心情平穩",
+        "safety": null,
         "other": null
       },
       "routines": {
@@ -272,7 +276,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 | 欄位 | 說明 |
 |---|---|
-| `sections` | 固定六類 `diet/activity/sleep/medication/wellbeing/other`；六個 key 每次完整回傳，無資料為 null |
+| `sections` | 固定七類 `diet/activity/sleep/medication/wellbeing/safety/other`，與 `EventType` 一一對應；七個 key 每次完整回傳，無資料為 null |
 | `routines.completed` | `routines.items` 中 `status=done` 的 occurrence 數；pending 不計入 |
 | `routines.missed` | `routines.items` 中 `status=missed` 的 occurrence 數；pending 不計入 |
 | `routines.items[]` | 固定 `{routine_id,title,status}`；每個 `routine_id + date` 最多一項。`occurrence_cutoff=min(input_through_at, routine_date 的台灣日界結束 23:59:59.999+08:00)`；已有 canonical completion event 時，title 優先取 event 所記 `routine_version` 的不可變定義且 status 為 done，未完成時才取 `occurrence_cutoff` 前最新有效版本 |
@@ -289,7 +293,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 { "elder_id": "eld_a1b2c3d4e5f6", "date": "2026-07-14" }
 ```
 
-`date` 預設今天。同步生成，Response 200 回單一摘要物件（結構同列表 item）。手動生成不等待排程窗口，因此可回 `data_status=partial`。只有 `pending_session_count=0` 且所有相關 closed session batch 都 completed 才可回 complete。無對話且確認沒有相關待處理 session 時，六類為 null、alerts 為 `[]`、interaction_count 為 0、pending_session_count 為 0，並可回 complete。
+`date` 預設今天。同步生成，Response 200 回單一摘要物件（結構同列表 item）。手動生成不等待排程窗口，因此可回 `data_status=partial`。只有 `pending_session_count=0` 且所有相關 closed session batch 都 completed 才可回 complete。無對話且確認沒有相關待處理 session 時，七類為 null、alerts 為 `[]`、interaction_count 為 0、pending_session_count 為 0，並可回 complete。
 
 ---
 
@@ -328,7 +332,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 | 欄位 | 說明 |
 |---|---|
-| `type` | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `other` |
+| `type` | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `safety` \| `other` |
 | `detail` | canonical event 的目前顯示描述；batch 可 enrich 同一 safety event |
 | `source` | `conversation` \| `manual` |
 | `conversation_id` | 對話事件的主要來源 turn；manual 事件省略 |
@@ -336,7 +340,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 資料可見時間：routine completion 與潛在高風險 safety event 可在 `/chat` response 前寫入並立即查得；一般生活事件只在 session close 且 batch materialization 後出現。active 或 batch pending 的缺口不另以公開欄位列出。API 不暴露 extraction track、canonical key、revision、chunk、evidence 列表或其他 extraction internals。
 
-分類與摘要 `sections` 固定六類一一對應；`wellbeing` 涵蓋身體症狀與情緒，無法歸入前五類的一律為 `other`，回診、約會等行程類事件也歸 `other`，與 routine occurrence 以 `routine_id` 連結。分類不會截斷內容：`detail` 保留事件完整描述，摘要生成讀取 `detail` 全文而不是只看 `type`。同一 safety episode 若先 realtime、後 batch enrich，仍使用同一 `event_id`，`detail` 可以更新得更完整；需要逐字追溯時由後端依 `conversation_id` 讀 conversations，events response 不複製逐字稿。
+分類與摘要 `sections` 固定七類一一對應：`activity` 指涉及身體動作的日常活動；`wellbeing` 涵蓋身體症狀、生理量測與情緒；`safety` 涵蓋跌倒、走失、詐騙、居家危害等安全事件，與 `alerts` 語意一致；無法歸入前六類的一律為 `other`，回診、約會等行程類事件與家屬互動、看電視等非身體活動也歸 `other`，與 routine occurrence 以 `routine_id` 連結。後端另有更細的分類節點供摘要、統計與 alerts 使用，但不在此 API 暴露。分類不會截斷內容：`detail` 保留事件完整描述，摘要生成讀取 `detail` 全文而不是只看 `type`。同一 safety episode 若先 realtime、後 batch enrich，仍使用同一 `event_id`，`detail` 可以更新得更完整；需要逐字追溯時由後端依 `conversation_id` 讀 conversations，events response 不複製逐字稿。
 
 ---
 
@@ -385,7 +389,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 `time` 為 24 小時制 `HH:MM`；`schedule` 只接受該 `freq` 對應的欄位，缺少必要欄位或帶入不適用欄位一律回 400 `INVALID_PARAMETER`。
 
-每週多天建立多筆 weekly routine。routine `type` 與 events 共用六類；口語或手動完成時，completion event 必須沿用該 routine 的 `type`。current GSI 最終一致；`POST/PATCH` response 是強一致最新結果。`/chat` 回 `routines_updated=true` 時，App 應背景呼叫本 endpoint 取得最新定義／狀態。
+每週多天建立多筆 weekly routine。routine `type` 與 events 共用七類；口語或手動完成時，completion event 必須沿用該 routine 的 `type`。current GSI 最終一致；`POST/PATCH` response 是強一致最新結果。`/chat` 回 `routines_updated=true` 時，App 應背景呼叫本 endpoint 取得最新定義／狀態。
 
 ### GET /routines?elder_id=&date=YYYY-MM-DD — 當日行程
 

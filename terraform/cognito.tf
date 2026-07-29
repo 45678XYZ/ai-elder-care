@@ -22,7 +22,7 @@ resource "aws_cognito_user_pool" "accounts" {
 
   # 發 ID token 前呼叫 trigger 注入 elder_id claim
   lambda_config {
-    pre_token_generation = aws_lambda_function.pre_token.arn
+    pre_token_generation = module.pre_token.lambda_function_arn
   }
 }
 
