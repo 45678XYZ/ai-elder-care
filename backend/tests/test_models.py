@@ -13,8 +13,10 @@ from src.shared.models import (
     EventCreate,
     EventResponse,
     FamilyMember,
+    RoutineComplete,
     RoutineCreate,
-    RoutineResponse,
+    RoutineDefinition,
+    RoutineOccurrence,
     RoutineSchedule,
     RoutineUpdate,
 )
@@ -199,7 +201,7 @@ def test_daily_summary_model():
 
 
 def test_routine_models():
-    """測試 RoutineSchedule, RoutineCreate, RoutineUpdate, RoutineResponse 模型。"""
+    """測試 RoutineSchedule, RoutineCreate, RoutineUpdate 與兩種 Response 模型。"""
     sched = RoutineSchedule(freq="daily", time="09:00")
     rc = RoutineCreate(
         client_request_id="uuid_123",
@@ -215,15 +217,59 @@ def test_routine_models():
     assert ru.active is False
     assert ru.title is None
 
-    rr = RoutineResponse(
+    rd = RoutineDefinition(
         routine_id="rtn_001",
         elder_id="eld_001",
         title="吃血壓藥",
         type="medication",
         schedule={"freq": "daily", "time": "09:00"},
+        created_at="2026-07-25T10:00:00+08:00",
+    )
+    assert rd.routine_id == "rtn_001"
+    assert rd.active is True
+
+    ro = RoutineOccurrence(
+        routine_id="rtn_001",
+        title="吃血壓藥",
+        type="medication",
+        scheduled_at="2026-07-25T09:00:00+08:00",
         status="done",
         completed_at="2026-07-25T09:05:00+08:00",
     )
-    assert rr.routine_id == "rtn_001"
-    assert rr.status == "done"
+    assert ro.status == "done"
+    # 未完成的 occurrence 不帶完成欄位
+    assert "completed_by" not in ro.model_dump(exclude_none=True)
+
+
+def test_routine_schedule_validation():
+    """測試 schedule 依 freq 的欄位規則與時間格式。"""
+    weekly = RoutineSchedule(freq="weekly", weekday=3, time="19:00")
+    assert weekly.weekday == 3
+
+    with pytest.raises(ValidationError):
+        RoutineSchedule(freq="weekly", time="19:00")  # 缺 weekday
+    with pytest.raises(ValidationError):
+        RoutineSchedule(freq="daily", weekday=3, time="19:00")  # daily 不該帶 weekday
+    with pytest.raises(ValidationError):
+        RoutineSchedule(freq="once", time="19:00")  # 缺 date
+    with pytest.raises(ValidationError):
+        RoutineSchedule(freq="daily", time="9:00")  # 時間格式錯
+
+
+def test_routine_request_models_reject_unknown_fields():
+    """server-owned 或未知欄位一律拒絕（docs/api.md）。"""
+    with pytest.raises(ValidationError):
+        RoutineCreate(
+            client_request_id="uuid_123",
+            elder_id="eld_001",
+            title="吃血壓藥",
+            schedule=RoutineSchedule(freq="daily", time="09:00"),
+            routine_id="rtn_偽造",
+        )
+    with pytest.raises(ValidationError):
+        RoutineUpdate(client_request_id="uuid_124", created_at="2026-07-25T10:00:00+08:00")
+    with pytest.raises(ValidationError):
+        RoutineComplete(date="2026/07/25")
+
+    assert RoutineComplete().date is None
 
