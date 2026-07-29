@@ -90,6 +90,7 @@ flowchart TB
 | `POST /chat` | realtime 對話快路徑（中文/客語 × text/audio） | 長者模式 |
 | `POST /chat/sessions/{session_id}/close` | 冪等關閉 session 並觸發離線 materialization | 長者模式 |
 | `GET /elders`、`POST /elders`、`PATCH /elders/{id}` | 長者資料 | 兩端／照護者 |
+| `GET /me`、`POST /elders/{id}/caregivers`、`GET /elders/{id}/caregivers` | 輸入照護者 ID 綁定家人 | 照護者／長者本人 |
 | `GET /summaries`、`POST /summaries/generate` | 含 `data_status` 的每日摘要 | 照護者模式 |
 | `GET /events` | 生活事件時間軸 | 照護者模式 |
 | `GET /routines`、`POST/PATCH /routines`、`POST /routines/{id}/complete` | 行程與完成確認 | 兩端 |
@@ -165,6 +166,7 @@ Base table：PK `elder_id` (String)。
 ```
 
 - `elder_id`、`caregiver_ids`、`created_at`、`updated_at` 為 server-owned；`elder_id = "eld_" + uuid4().hex[:12]`，App 或模型不得指定。
+- `caregiver_ids` 只有兩條寫入路徑：`POST /elders` 加入建立者的 Cognito `sub`，以及長者在 `POST /elders/{id}/caregivers` 輸入照護者 ID 後以條件式寫入加入該照護者（見 `docs/api.md`「綁定照護者」）。`PATCH /elders` 一律不接受這個欄位。對外只回 `cg_` 開頭、由 `sub` 穩定衍生的識別，不暴露 `sub`；後端需要能由 `cg_` 反查帳號，反查方式由後端決定。
 - `POST /elders` 未提供 `health_notes` 或 `family`，或其值為空時，後端補為 `[]`；`caregiver_ids` 至少加入建立者 Cognito token 的 `sub`，不得由 request 指定。
 - 建立時 `created_at=updated_at`；`PATCH /elders/{elder_id}` 成功變更公開欄位時由後端刷新 `updated_at`，不得改寫 `created_at`。
 - `GET /elders`：照護者只回 `caregiver_ids` 包含其 token `sub` 的長者；長者只回 `elder_id == token.elder_id` 的自己一筆。`GET /elders/{elder_id}` 以 Base table `GetItem` 查單筆，長者只能查自己，照護者只能查已綁定長者。

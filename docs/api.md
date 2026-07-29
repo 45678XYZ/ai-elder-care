@@ -5,10 +5,10 @@
 ## 共通慣例
 
 - **認證**：所有請求帶 `Authorization: Bearer <Cognito ID Token>`。長者 token 帶 `elder_id`，只能存取自己；照護者只能存取已綁定長者。
-- **呼叫者身分取自 token**，不存在 `caregiver_id` 參數。綁定關係存於 `elders.caregiver_ids`；一般越權回 403，close endpoint 依其防洩漏規則回 404。
+- **呼叫者身分取自 token**，不以 `caregiver_id` 參數指定呼叫者。綁定關係存於 `elders.caregiver_ids`，只能由 `POST /elders`（建立者自動綁定）與 `POST /elders/{id}/caregivers`（見「綁定照護者」）寫入；一般越權回 403，close 與綁定 endpoint 依其防洩漏規則回 404。
 - **格式**：request/response 為 `application/json; charset=utf-8`。
 - **時間**：ISO 8601 含時區，如 `2026-07-14T09:05:00+08:00`；日期為 `YYYY-MM-DD`；日界以台灣時間（+08:00）為準。
-- **ID 格式／前綴**：長者 ID 為 `eld_` 後接 12 個小寫十六進位字元；其餘前綴為 `rtn_`（例行公事）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）。batch chunk ID 僅供後端追蹤，不由 API 回傳。
+- **ID 格式／前綴**：長者 ID 為 `eld_` 後接 12 個小寫十六進位字元；其餘前綴為 `rtn_`（例行公事）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）、`cg_`（照護者對外識別，見「綁定照護者」）。batch chunk ID 僅供後端追蹤，不由 API 回傳。
 - **分頁**：列表支援 `?limit=`（預設 50）與 `?next_token=`。資料超過一頁時 response 最外層帶 `next_token`；下一次請求必須原樣帶回。它是後端由資料庫游標編碼的不透明字串，前端不得解析；沒有此欄位表示已無下一頁。
 - **Hybrid 處理**：`POST /chat` 僅等待 realtime routine/safety rail，不等待 session batch。App 應在互動結束時呼叫 close；未呼叫者由 periodic idle closer 收斂。
 
@@ -40,7 +40,7 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 | 400 | 缺漏／格式錯誤（`INVALID_PARAMETER`）；音訊超長（`AUDIO_TOO_LONG`）；指定日期無該 routine（`ROUTINE_NOT_SCHEDULED`） |
 | 401 | token 缺漏或無效（API Gateway） |
 | 403 | 越權（`FORBIDDEN`）；不適用於 close endpoint 的 session 存在性／ownership 判斷 |
-| 404 | `ELDER_NOT_FOUND`、`ROUTINE_NOT_FOUND`、`SESSION_NOT_FOUND`；close endpoint 對不存在或不屬該長者的 session 都使用 `SESSION_NOT_FOUND` |
+| 404 | `ELDER_NOT_FOUND`、`ROUTINE_NOT_FOUND`、`SESSION_NOT_FOUND`、`CAREGIVER_NOT_FOUND`；close endpoint 對不存在或不屬該長者的 session 都使用 `SESSION_NOT_FOUND` |
 | 409 | `REQUEST_IN_PROGRESS`、`IDEMPOTENCY_CONFLICT` |
 | 500 | `INTERNAL_ERROR` |
 
@@ -226,6 +226,84 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 ### PATCH /elders/{elder_id} — 更新（照護者）
 
 部分更新公開欄位；不得傳 `elder_id`、`caregiver_ids`、`created_at`、`updated_at`。後端只在成功變更時刷新 `updated_at`，`created_at` 保持不變。Response 200 回更新後物件。
+
+---
+
+## 綁定照護者
+
+`POST /elders` 只綁定建立者自己。第二位家人、以及長者自己開帳號的情況，都需要另一條綁定路徑：家人在長輩手機上輸入自己的照護者 ID，後端比對後綁定。
+
+1. 照護者在自己的 App 看到自己的 ID（`GET /me`）。
+2. 家人在長輩手機上輸入該 ID（`POST /elders/{elder_id}/caregivers`）。
+3. 長者端列出已綁定的家人（`GET /elders/{elder_id}/caregivers`）。
+
+對外的照護者 ID 不是 Cognito `sub`：`sub` 是 36 字 UUID，抄不動也念不清。後端以 `sub` 穩定衍生一組短 ID 對外，`sub` 本身不出現在任何 response。
+
+### GET /me — 呼叫者自己的身分
+
+照護者要報 ID 給家人，得先看得到自己的 ID。長者帳號呼叫回 403 `FORBIDDEN`。
+
+```json
+{ "caregiver_id": "cg_7f3a91c2", "name": "陳志明" }
+```
+
+| 欄位 | 說明 |
+|---|---|
+| `caregiver_id` | `cg_` 後接 8 個小寫十六進位字元，由 Cognito `sub` 穩定衍生。同一個帳號永遠是同一組，不會換 |
+| `name` | 顯示名稱，後端保證有值：取 Cognito `name` 屬性，未設定時取信箱 `@` 之前的部分 |
+
+### POST /elders/{elder_id}/caregivers — 綁定照護者（長者本人）
+
+```json
+{ "caregiver_id": "cg_7f3a91c2" }
+```
+
+只有 token 對應的長者本人可呼叫。`elder_id` 不存在或不屬於 token 中的長者，一律回 404 `ELDER_NOT_FOUND`，不以 403 區分，避免洩漏某個長者是否存在。
+
+`caregiver_id` 比對時大小寫不敏感，前後空白忽略；`cg_` 前綴必填。
+
+#### Response 201（新綁定）／200（早就綁過了）
+
+```json
+{
+  "caregiver_id": "cg_7f3a91c2",
+  "name": "陳志明",
+  "linked_at": "2026-07-14T09:06:00+08:00"
+}
+```
+
+| 欄位 | 說明 |
+|---|---|
+| `caregiver_id` | 同 `GET /me` |
+| `name` | 顯示名稱，規則同 `GET /me`。長輩畫面上要看得出這是誰，但不放完整信箱（PII 最小化，見 `docs/pii.md`） |
+| `linked_at` | 首次綁定時間。已綁定的情況回原本的時間，不刷新 |
+
+狀態碼區分結果，App 依此決定要說「連結成功」還是「這位家人已經連結過了」：
+
+- **201**：ID 存在且該照護者尚未綁定這位長者。後端以條件式寫入把 `caregiver_id` 加入 `elders.caregiver_ids`。
+- **200**：ID 存在，且該照護者已經綁在這位長者身上。不重複加入、不刷新 `linked_at`。網路重送走同一條，所以綁定是冪等的，不需要 `client_request_id`。
+- **404 `CAREGIVER_NOT_FOUND`**：查不到這個 ID（不存在，或不是照護者帳號）。
+
+一位長者可綁定多位照護者，一位照護者也可綁定多位長者，都不設上限以外的限制。
+
+已知限制：ID 可長期使用且沒有對方確認的步驟，所以拿到長輩手機的人可以把任何知道 ID 的照護者綁上去，那位照護者從此看得到這位長輩的資料。綁定必須實際持有長輩手機，是目前唯一的門檻。要收緊的話得加一道照護者側的確認（例如改成由照護者的 App 產生短期一次性碼），屆時 `POST /elders/{id}/caregivers` 的 body 換成該碼，其餘不變。
+
+### GET /elders/{elder_id}/caregivers — 已綁定的家人
+
+長者本人與已綁定的照護者都可讀，其他情況回 404 `ELDER_NOT_FOUND`（同上，不以 403 區分）。結果套用共通分頁規則，按 `linked_at` 由舊到新。
+
+```json
+{
+  "items": [
+    { "caregiver_id": "cg_7f3a91c2", "name": "陳志明", "linked_at": "2026-07-14T09:06:00+08:00" },
+    { "caregiver_id": "cg_2b8e04d5", "name": "陳淑芬", "linked_at": "2026-07-20T18:30:00+08:00" }
+  ]
+}
+```
+
+欄位同兌換的 response。沒有綁定時回 `{ "items": [] }`。
+
+目前不提供解除綁定：後果嚴重（照護者從此看不到長輩狀況），不該由長輩在自己手機上單獨完成，也不該由任一照護者單方面移除另一位。要做的話需要另外定義誰有權限、以及要不要雙方確認。
 
 ---
 
@@ -495,6 +573,9 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 | `GET /elders/{id}` | 長者單筆 | 兩端 |
 | `POST /elders` | 建立長者 | 照護者 |
 | `PATCH /elders/{id}` | 更新長者 | 照護者 |
+| `GET /me` | 呼叫者自己的照護者 ID 與名稱 | 照護者 |
+| `POST /elders/{id}/caregivers` | 輸入照護者 ID 綁定 | 長者本人 |
+| `GET /elders/{id}/caregivers` | 已綁定的家人 | 兩端 |
 | `GET /summaries` | 含 `data_status` 的摘要 | 照護者 |
 | `POST /summaries/generate` | 手動生成摘要，可回 partial | 照護者 |
 | `GET /events` | 事件時間軸 | 照護者 |
