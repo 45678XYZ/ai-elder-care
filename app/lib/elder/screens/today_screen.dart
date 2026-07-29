@@ -287,8 +287,10 @@ String elderDateSpokenLabel(DateTime now, LunarDate lunar) {
 
 /// 早安圖——依時段換一張。
 ///
-/// 圖檔放 `assets/images/greeting_{morning,afternoon,evening}.jpg`，**沒放也不會壞**：
+/// 圖檔放 `assets/images/greeting_{morning,afternoon,evening}.*`，**沒放也不會壞**：
 /// 找不到檔案就退回色塊加大字（見 [_GreetingFallback]），所以圖可以晚點才補。
+/// 副檔名依素材而定（目前 morning 是 .jpg、其餘 .png）——換素材若連格式一起換，
+/// 這裡與 [showEnlargedGreeting] 兩處路徑都要跟著改，否則會靜默退回色塊。
 ///
 /// 裁切用 `BoxFit.cover` 配 `Alignment.topCenter`：素材多半是正方形、祝福語印在
 /// 下緣，而這一面是 3:2 橫式。對齊上緣剛好保住主體與「早安」大字，順便把下緣那行
@@ -304,20 +306,20 @@ class _GreetingPane extends StatelessWidget {
       return (
         label: '早安',
         icon: Icons.wb_twilight,
-        asset: 'assets/images/greeting_morning.png',
+        asset: 'assets/images/greeting_morning.jpg',
       );
     }
     if (h < 18) {
       return (
         label: '午安',
         icon: Icons.wb_sunny_outlined,
-        asset: 'assets/images/greeting_afternoon.jpg',
+        asset: 'assets/images/greeting_afternoon.png',
       );
     }
     return (
       label: '晚安',
       icon: Icons.nightlight_outlined,
-      asset: 'assets/images/greeting_evening.jpg',
+      asset: 'assets/images/greeting_evening.png',
     );
   }
 

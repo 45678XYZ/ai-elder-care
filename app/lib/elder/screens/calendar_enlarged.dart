@@ -183,20 +183,20 @@ class _EnlargedGreetingBody extends StatelessWidget {
       return (
         label: '早安',
         icon: Icons.wb_twilight,
-        asset: 'assets/images/greeting_morning.png',
+        asset: 'assets/images/greeting_morning.jpg',
       );
     }
     if (h < 18) {
       return (
         label: '午安',
         icon: Icons.wb_sunny_outlined,
-        asset: 'assets/images/greeting_afternoon.jpg',
+        asset: 'assets/images/greeting_afternoon.png',
       );
     }
     return (
       label: '晚安',
       icon: Icons.nightlight_outlined,
-      asset: 'assets/images/greeting_evening.jpg',
+      asset: 'assets/images/greeting_evening.png',
     );
   }
 
