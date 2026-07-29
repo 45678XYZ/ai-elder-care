@@ -4,6 +4,11 @@
 
   目標裝置是 Android 手機，桌機瀏覽器整頁開會被拉成寬版面，看起來跟實機差很多。
   這一頁只服務預覽，不是出貨內容——正式入口仍是 index.html。
+
+  這裡還多做一件事：**預覽專用的身分切換**。app_router 的 _redirect 會把未登入者從
+  /elder/*、/care/*、/ 一律導回 /auth/sign-in，所以只換網址是進不去深層畫面的
+  （使用者看起來就是「選單沒反應」）。切換身分時，這一頁會直接在 localStorage 裡種好
+  對應的登入狀態再載入畫面——lib/ 下的守衛邏輯一行都不動。
 -->
 <html lang="zh-Hant">
 <head>
@@ -15,6 +20,7 @@
       --page: #14141a;
       --text: #e9e4da;
       --muted: #9a948a;
+      --warn: #e0b872;
     }
     * { box-sizing: border-box; }
     body {
@@ -26,7 +32,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 20px;
+      gap: 16px;
       padding: 24px 16px 40px;
     }
     .bar {
@@ -46,6 +52,28 @@
       font-size: 14px;
       font-family: inherit;
     }
+    optgroup { color: var(--muted); font-style: normal; }
+    optgroup option { color: var(--text); }
+    button {
+      background: #23232a;
+      color: var(--text);
+      border: 1px solid #3a3a42;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    button:hover { border-color: #55555f; }
+    /* 選到的畫面與目前身分不相容時的提示（守衛會把人導走，不是壞掉） */
+    .note {
+      font-size: 12px;
+      color: var(--warn);
+      text-align: center;
+      max-width: 520px;
+      line-height: 1.6;
+      min-height: 1.2em;
+    }
     /* 手機外框：黑邊 + 圓角，讓比例一眼看得出來是手機 */
     .phone {
       background: var(--frame);
@@ -62,25 +90,44 @@
       width: 100%;
       height: 100%;
     }
-    .hint { font-size: 12px; color: var(--muted); text-align: center; max-width: 460px; line-height: 1.7; }
+    .hint { font-size: 12px; color: var(--muted); text-align: center; max-width: 520px; line-height: 1.7; }
     code { background: #23232a; padding: 1px 5px; border-radius: 4px; }
   </style>
 </head>
 <body>
   <div class="bar">
     <label for="screen">畫面</label>
+    <!--
+      每個 option 帶 data-need：這個位置要用哪種身分才停得住（見 lib/app_router.dart
+      的 _redirect）。純粹給這一頁的提示用，App 不讀。
+    -->
     <select id="screen">
-      <option value="#/auth/sign-in">登入</option>
-      <option value="#/auth/sign-up">註冊</option>
-      <option value="#/elder/link">連結家人</option>
-      <option value="#/elder/today">長者 · 今日</option>
-      <option value="#/elder/chat">長者 · 聊天</option>
-      <option value="#/">角色選擇</option>
-      <option value="#/setup">初次設定</option>
-      <option value="#/care/summary">照護者 · 摘要</option>
-      <option value="#/care/timeline">照護者 · 時間軸</option>
-      <option value="#/care/stats">照護者 · 統計</option>
-      <option value="#/care/manage">照護者 · 管理</option>
+      <optgroup label="未登入（認證流程）">
+        <option value="#/auth/sign-in" data-need="guest">登入</option>
+        <option value="#/auth/sign-up" data-need="guest">註冊</option>
+      </optgroup>
+      <optgroup label="長者模式（需身分：長者）">
+        <option value="#/elder/today" data-need="elder">長者 · 今日</option>
+        <option value="#/elder/chat" data-need="elder">長者 · 聊天</option>
+        <option value="#/elder/link" data-need="elder">長者 · 連結家人</option>
+      </optgroup>
+      <optgroup label="照護者模式（需身分：照護者）">
+        <option value="#/care/summary" data-need="caregiver">照護者 · 摘要</option>
+        <option value="#/care/timeline" data-need="caregiver">照護者 · 時間軸</option>
+        <option value="#/care/stats" data-need="caregiver">照護者 · 統計</option>
+        <option value="#/care/manage" data-need="caregiver">照護者 · 管理</option>
+      </optgroup>
+      <optgroup label="走不到的位置（需前一頁帶狀態／退路）">
+        <option value="#/setup" data-need="signup">初次設定（註冊流程內）</option>
+        <option value="#/" data-need="fallback">角色選擇（退路）</option>
+      </optgroup>
+    </select>
+
+    <label for="identity">身分</label>
+    <select id="identity">
+      <option value="guest">未登入</option>
+      <option value="elder">長者</option>
+      <option value="caregiver">照護者</option>
     </select>
 
     <label for="size">尺寸</label>
@@ -91,23 +138,109 @@
       <option value="320x700">320 × 700（小螢幕）</option>
     </select>
 
+    <button id="reload" type="button">重新載入</button>
   </div>
+
+  <p class="note" id="note"></p>
 
   <div class="phone" id="phone">
     <iframe id="app" title="App 預覽"></iframe>
   </div>
 
   <p class="hint">
-    重新載入畫面請用上面的下拉選單。連結狀態與初次設定存在瀏覽器，
-    要從頭走一次流程請開無痕視窗，或在 DevTools 清掉 Local Storage。
-    <br>demo 驗證碼固定 <code>123456</code>。
+    切「身分」會先清掉本機狀態再種一份對應的登入狀態，所以每次切身分等於從乾淨狀態開始，
+    連結家人與初次設定填過的東西都會歸零。要用真正的流程（註冊 → 初次設定 → 驗證碼 → 登入）
+    就切到「未登入」從登入／註冊頁走；demo 驗證碼固定 <code>123456</code>。
+    <br>
+    這些狀態存在瀏覽器的 Local Storage（key 前綴 <code>flutter.</code>），
+    要完全從頭來過也可以開無痕視窗，或在 DevTools 清掉 Local Storage。
+    <br>
+    需要用 <code>file://</code> 直接開這一頁時身分切換會失效（iframe 與本頁不同源，
+    localStorage 不共用）——請用靜態 server 提供 <code>build/web</code>。
   </p>
 
   <script>
     const phone = document.getElementById('phone');
     const app = document.getElementById('app');
     const screenSel = document.getElementById('screen');
+    const identitySel = document.getElementById('identity');
     const sizeSel = document.getElementById('size');
+    const reloadBtn = document.getElementById('reload');
+    const note = document.getElementById('note');
+
+    // ---- localStorage 的值格式 ----
+    //
+    // shared_preferences 在 web 上就是 localStorage：key 加 'flutter.' 前綴、
+    // 值一律 `json.encode(value)`。以下是照 pub cache 裡的實作原始碼確認的
+    // （shared_preferences 2.5.5 + shared_preferences_web 2.4.3，見 pubspec.lock）：
+    //
+    //   shared_preferences_web-2.4.3/lib/shared_preferences_web.dart
+    //     static const String _defaultPrefix = 'flutter.';
+    //     setValue(...) => localStorage.setItem(key, _encodeValue(value));
+    //     String _encodeValue(Object? value) => json.encode(value);
+    //   shared_preferences-2.5.5/lib/src/shared_preferences_legacy.dart
+    //     static String _prefix = 'flutter.';            // 每個 key 都加
+    //
+    // 所以：String 'abc' → `"abc"`（含引號）、bool true → `true`、
+    //       List<String> → `["a","b"]`。**沒有**「bool 存成 0/1」或「String 不編碼」
+    //       這種寫法，但這是套件實作細節、依版本而異：升級 shared_preferences_web
+    //       之後請回來重新確認 _encodeValue 與 _defaultPrefix。
+    const PREF_PREFIX = 'flutter.';
+
+    function setPref(key, value) {
+      localStorage.setItem(PREF_PREFIX + key, JSON.stringify(value));
+    }
+
+    /// 只清 App 自己的 key，不動這一頁或其他工具留下的東西
+    /// （與 SharedPreferencesPlugin.clear 的行為一致：按前綴清，不是 localStorage.clear）。
+    function clearPrefs() {
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith(PREF_PREFIX)) localStorage.removeItem(key);
+      }
+    }
+
+    // ---- 假的 Cognito ID token ----
+    //
+    // AuthService.parseIdentity 只把中段 base64url 解碼成 claims、不驗簽章
+    // （簽章由 API Gateway 的 authorizer 負責），所以預覽用的 token 只要三段、
+    // 中段是合法的 JSON 就會被接受。判定角色只看 `elder_id` claim（與後端
+    // backend/src/shared/auth.py 一致）：有 → 長者，沒有 → 照護者。
+    function b64url(text) {
+      return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function fakeIdToken(claims) {
+      const header = b64url(JSON.stringify({ alg: 'none', typ: 'JWT' }));
+      const payload = b64url(JSON.stringify(claims));
+      return header + '.' + payload + '.preview'; // 簽章位置放什麼都不影響解析
+    }
+
+    // 固定值而不是每次隨機：sub 會出現在 setup_done_<sub> 這個 key 裡，
+    // 每次換 sub 等於換帳號，狀態就接不回去了。
+    const ELDER_SUB = 'preview-elder-0001';
+    const ELDER_ID = 'eld_a1b2c3d4e5f6';   // 格式對齊 docs/framework.md：eld_ + 12 位小寫 hex
+    const CAREGIVER_SUB = 'preview-caregiver-0001';
+
+    /// 在 iframe 載入前把身分種好。
+    ///
+    /// 每次都先清空再種：兩個身分留下的 key 不完全重疊（照護者有 auth_chosen_role*、
+    /// 長者有 setup_done_<sub>），殘留的組合會導出很難解釋的落點。
+    function seedIdentity(kind) {
+      clearPrefs();
+      if (kind === 'elder') {
+        // 長者身分來自 token 的 elder_id claim，不需要本機宣告（effectiveRole 先看 claim）。
+        setPref('auth_id_token', fakeIdToken({ sub: ELDER_SUB, elder_id: ELDER_ID }));
+        // 沒有這個旗標會被守衛導去 /setup。key 綁 Cognito sub，見 AppSession._setupDoneKey。
+        setPref('setup_done_' + ELDER_SUB, true);
+      } else if (kind === 'caregiver') {
+        // 照護者的 token 沒有 elder_id，身分只存在本機；少了這兩個 key，
+        // effectiveRole 會是 null，守衛就把人送去角色選擇頁 '/'。
+        setPref('auth_id_token', fakeIdToken({ sub: CAREGIVER_SUB }));
+        setPref('auth_chosen_role', 'caregiver');
+        setPref('auth_chosen_role_sub', CAREGIVER_SUB);
+      }
+      // guest：清掉就是未登入
+    }
 
     function applySize() {
       const [w, h] = sizeSel.value.split('x').map(Number);
@@ -115,14 +248,73 @@
       phone.style.height = (h + 24) + 'px';
     }
 
+    /// 選到的畫面在目前身分下停不住時，先講清楚會被導去哪，免得被當成壞掉。
+    function updateNote() {
+      const need = screenSel.selectedOptions[0].dataset.need;
+      const id = identitySel.value;
+      const label = { guest: '未登入', elder: '長者', caregiver: '照護者' }[id];
+      let msg = '';
+      if (need === 'signup') {
+        msg = '這一頁屬於註冊流程（註冊頁 push 進來時帶著 email）。直接開網址沒有 extra，'
+            + '守衛會導回登入頁——要看它請切到「未登入」，從註冊頁一路走進來。';
+      } else if (need === 'fallback') {
+        msg = '角色選擇只是退路（本機沒有身分記錄時才會停在這裡）。已宣告身分會被導去主畫面，'
+            + '未登入會被導回登入頁，正常流程看不到這一頁。';
+      } else if (need === 'guest' && id !== 'guest') {
+        msg = '已登入（' + label + '）看不到認證頁，會被導去主畫面。要看請把身分切到「未登入」。';
+      } else if ((need === 'elder' || need === 'caregiver') && id === 'guest') {
+        msg = '未登入會被導回登入頁。把身分切到「' + (need === 'elder' ? '長者' : '照護者') + '」再看。';
+      } else if (need === 'elder' && id === 'caregiver') {
+        msg = '照護者身分進不了長者畫面，會被導去照護者摘要。請切到「長者」。';
+      } else if (need === 'caregiver' && id === 'elder') {
+        msg = '長者身分進不了照護者畫面，會被導去長者今日。請切到「照護者」。';
+      }
+      note.textContent = msg;
+    }
+
+    // ---- iframe 重新載入 ----
+    //
+    // 為什麼不能只改 hash：`index.html#/a` → `index.html#/b` 對瀏覽器來說是**同一份文件
+    // 的錨點跳轉**，iframe 不會重新載入；而 Flutter 的 hash 路由聽的是 popstate，
+    // 收不到 hashchange，所以路由也不動——結果就是「切了選單畫面完全不變」。
+    // 先導到 about:blank 卸掉整個文件，再導回目標網址，才會是一次真正的載入
+    // （design-system/screenshots/README.md 記的同一個雷）。
+    //
+    // 另外每次都換 `?t=<timestamp>`：query 不同才算不同的網址，瀏覽器不會拿快取住的
+    // main.dart.js 給你（改完 code 重 build 之後尤其明顯）。query 必須放在 hash 之前，
+    // 否則整段會被當成 hash 的一部分。
+    let navSeq = 0;
+
     function load() {
-      app.src = 'index.html' + screenSel.value;
+      const seq = ++navSeq;
+      seedIdentity(identitySel.value);
+      const url = 'index.html?t=' + Date.now() + screenSel.value;
+
+      let done = false;
+      const go = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        app.removeEventListener('load', go);
+        // 這一輪已經被更新的切換取代（連點下拉選單），就讓最後那一次去導。
+        if (seq !== navSeq) return;
+        app.src = url;
+      };
+
+      // 正路是等 about:blank 的 load；timeout 是保險——iframe 本來就停在
+      // about:blank（初始狀態）時，某些瀏覽器不一定會再給一次 load 事件。
+      app.addEventListener('load', go, { once: true });
+      const timer = setTimeout(go, 200);
+      app.src = 'about:blank';
     }
 
     sizeSel.addEventListener('change', applySize);
-    screenSel.addEventListener('change', load);
+    screenSel.addEventListener('change', () => { updateNote(); load(); });
+    identitySel.addEventListener('change', () => { updateNote(); load(); });
+    reloadBtn.addEventListener('click', load);
 
     applySize();
+    updateNote();
     load();
   </script>
 </body>
