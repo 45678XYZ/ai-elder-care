@@ -174,6 +174,8 @@ def test_put_event_if_absent_returns_existing(mock_get_resource):
     data = {
         "elder_id": "eld_001",
         "canonical_event_key": "routine_completion#rtn_001#2026-07-14",
+        # ts 必填：以當下時間補會讓 retry 落到不同 Slot，事件寫入就不再冪等
+        "ts": "2026-07-14T10:00:00+08:00",
         "type": "medication",
         "detail": "完成例行公事：吃血壓藥",
     }
@@ -232,3 +234,37 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     assert items[0]["conversation_id"] == "cnv_001"
     assert next_token is not None
     mock_table.query.assert_called_once()
+
+
+@patch("src.shared.db.put_event_if_absent")
+def test_complete_routine_with_event_writes_canonical_completion(mock_put_event):
+    """completion 只有一個寫入點，canonical key 由 routine_id + routine_date 決定。
+
+    條件式寫入、跨入口收斂與 batch 禁令的完整驗證見 tests/test_events_data_layer.py。
+    """
+    mock_put_event.return_value = (
+        {"event_id": "evt_100", "ts": "2026-07-14T10:00:00.000+08:00"},
+        True,
+    )
+
+    res = db.complete_routine_with_event(
+        elder_id="eld_001",
+        routine_id="rtn_001",
+        routine_date="2026-07-14",
+        ts="2026-07-14T10:00:00+08:00",
+        completed_by="caregiver",
+        detail="手動確認完成服藥",
+        event_type="medication",
+        routine_version=2,
+    )
+
+    assert res["routine_id"] == "rtn_001"
+    assert res["status"] == "done"
+    assert res["completed_by"] == "caregiver"
+    assert res["event_id"] == "evt_100"
+
+    payload = mock_put_event.call_args.args[0]
+    assert payload["canonical_event_key"] == "routine_completion#rtn_001#2026-07-14"
+    # version 只記錄採用的版本，不參與 identity
+    assert payload["routine_version"] == 2
+    assert "routine_version" not in payload["canonical_event_key"]
