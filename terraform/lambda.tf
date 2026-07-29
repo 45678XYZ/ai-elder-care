@@ -97,7 +97,7 @@ resource "aws_iam_role_policy_attachment" "lambda_backend_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# 3. 模組 A 專屬權限政策 (Polly, S3, Bedrock, SageMaker, DynamoDB 5 表)
+# 3. 模組 A 專屬權限政策 (Polly, S3, Bedrock, SageMaker, SNS, DynamoDB 5 表)
 resource "aws_iam_role_policy" "lambda_backend_policy" {
   name = "${var.project_name}-lambda-backend-policy"
   role = aws_iam_role.lambda_backend_role.id
@@ -127,6 +127,11 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       },
       {
         Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
         Action   = [
           "dynamodb:GetItem",
           "dynamodb:PutItem",
@@ -147,6 +152,11 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       }
     ]
   })
+}
+
+# 照護者即時緊急警報與摘要通知 SNS Topic
+resource "aws_sns_topic" "caregiver_notifications" {
+  name = "${var.project_name}-caregiver-notifications"
 }
 
 # 4. chat Lambda 函數 (POST /chat 對話進入點)
@@ -171,11 +181,12 @@ resource "aws_lambda_function" "chat" {
       TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
       TABLE_EVENTS               = aws_dynamodb_table.events.name
       TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
     }
   }
 }
 
-# 5. tools Lambda 函數 (Bedrock Action Group 6 大工具箱)
+# 5. tools Lambda 函數 (Bedrock Action Group 7 大工具箱)
 resource "aws_lambda_function" "tools" {
   function_name = "${var.project_name}-tools"
   role          = aws_iam_role.lambda_backend_role.arn
@@ -188,11 +199,12 @@ resource "aws_lambda_function" "tools" {
 
   environment {
     variables = {
-      TABLE_ELDERS          = aws_dynamodb_table.elders.name
-      TABLE_CONVERSATIONS   = aws_dynamodb_table.conversations.name
-      TABLE_EVENTS          = aws_dynamodb_table.events.name
-      TABLE_DAILY_SUMMARIES = aws_dynamodb_table.daily_summaries.name
-      TABLE_ROUTINES        = aws_dynamodb_table.routines.name
+      TABLE_ELDERS               = aws_dynamodb_table.elders.name
+      TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
+      TABLE_EVENTS               = aws_dynamodb_table.events.name
+      TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
+      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
     }
   }
 }

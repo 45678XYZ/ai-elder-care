@@ -153,10 +153,10 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
                 chunk_bytes = event["chunk"]["bytes"]
                 reply_text += chunk_bytes.decode("utf-8")
             
-            # 檢查 Response Trace 是否觸發了 routines 相關工具
+            # 檢查 Response Trace 是否觸發了 routines 相關工具或通知工具
             if "trace" in event:
                 trace_str = str(event["trace"])
-                if "complete_routine" in trace_str or "create_routine" in trace_str:
+                if "complete_routine" in trace_str or "create_routine" in trace_str or "notify_caregiver" in trace_str:
                     routines_updated = True
 
         if not reply_text:

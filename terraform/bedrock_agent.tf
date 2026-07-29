@@ -241,6 +241,32 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
           }
         }
       }
+
+      # 工具七：發送照護者即時緊急警報與摘要通知
+      functions {
+        name        = "notify_caregiver"
+        description = "Send immediate SNS alert to the caregiver when the elder experiences emergencies (falls, chest pain, dizziness) or needs routine/summary reports."
+        parameters {
+          parameter_detail {
+            name        = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameter_detail {
+            name        = "category"
+            type        = "string"
+            description = "通知類別：emergency (跌倒不適極度緊急), routine (行程狀態), summary (健康摘要)"
+            required    = true
+          }
+          parameter_detail {
+            name        = "message"
+            type        = "string"
+            description = "要推播給照護者的詳細訊息內容內容"
+            required    = true
+          }
+        }
+      }
     }
   }
 }

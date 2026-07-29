@@ -16,6 +16,80 @@
 | `get_recent_events` | 查詢長者近期的生活事件與健康記錄歷史。 | 長者問：「我這週有滑倒過嗎？」或「我昨天晚餐吃了什麼？」。 |
 | `get_elder_profile` | 查詢長者的個人暱稱、喜好偏好、健康注意事項與家屬成員。 | 長者問：「你知道我女兒叫什麼名字嗎？」或 AI 主動進行親切對話時。 |
 | `remind_pending_routines` | 查詢長者今日尚未完成的待辦行程並回傳提醒事項。 | 長者問：「我還有什麼事情沒做嗎？」或 AI 需要主動進行行程提醒時。 |
+| `notify_caregiver` | 發送 AWS SNS 即時緊急警報、例行行程報告或健康摘要至照護者。 | 長者反映跌倒、胸痛、頭暈等緊急狀況，或需推播日報時。 |
+
+---
+
+## 2. 各工具規格與參數架構 (JSON Schema)
+
+### 2.7 `notify_caregiver` (發送照護者通知)
+*   **LLM 描述**：`Send immediate SNS alert to the caregiver when the elder experiences emergencies (falls, chest pain, dizziness) or needs routine/summary reports.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": {
+          "type": "string",
+          "description": "長者的唯一識別 ID，例如 eld_001"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["emergency", "routine", "summary"],
+          "description": "通知類別：emergency (跌倒不適緊急警報), routine (行程完成狀態), summary (每日健康摘要)"
+        },
+        "message": {
+          "type": "string",
+          "description": "要推播給照護者的詳細訊息內容"
+        }
+      },
+      "required": ["elder_id", "category", "message"]
+    }
+    ```
+*   **回傳資料 (Output JSON)**：
+    ```json
+    {
+      "status": "success",
+      "elder_id": "eld_001",
+      "category": "emergency",
+      "message_id": "95a12345-6789-0123-4567-890123456789",
+      "detail": "已成功發送 emergency 通知給照護者"
+    }
+    ```
+
+---
+
+## 3. 對話引導與工具調用實例
+
+以下展示 Bedrock Agent 如何在與長者的對話中流暢調用上述工具：
+
+### 實例 A：長者詢問行程 ➔ 調用 `get_today_routines`
+*   **長者**：「我今天吃過血壓藥了嗎？」
+*   **Agent (Claude)**：*(判定意圖為查詢今日用藥狀態)*
+    *   **呼叫工具**：`get_today_routines(elder_id="eld_001", date="2026-07-20")`
+    *   **工具回傳**：回傳吃血壓藥 `rtn_001` 的 `status: pending`。
+*   **Agent 回覆**：「阿蘭嬤，我看你今天的血壓藥還沒有吃喔！現在已經十點了，要記得趕快吃藥喔。」
+
+### 實例 B：長者口頭完成行程 ➔ 調用 `complete_routine`
+*   **長者**：「好啦，我現在把血壓藥吞下去了。」
+*   **Agent (Claude)**：*(判定意圖為完成今日用藥)*
+    *   **呼叫工具**：`complete_routine(elder_id="eld_001", routine_id="rtn_001", date="2026-07-20", completed_by="conversation")`
+    *   **工具回傳**：`{ "status": "success", "routine_id": "rtn_001" }`
+*   **Agent 回覆**：「太棒了！有按時吃藥身體才會健健康康。我已經幫你把這個行程記下來了喔。」
+
+### 實例 C：長者新增未來行程 ➔ 調用 `create_routine`
+*   **長者**：「明天下午三點，阿明要帶我去看心臟科醫生。」
+*   **Agent (Claude)**：*(判定意圖為建立新的單次行程)*
+    *   **呼叫工具**：`create_routine(elder_id="eld_001", title="看心臟科", type="other", schedule={"freq": "once", "date": "2026-07-21", "time": "15:00"})`
+    *   **工具回傳**：`{ "status": "success", "routine_id": "rtn_003" }`
+*   **Agent 回覆**：「阿蘭嬤，我已經幫你記下來了！明天下午三點去看心臟科醫生，到時候我會再提醒你。」
+
+### 實例 D：長者反映跌倒緊急狀況 ➔ 調用 `notify_caregiver`
+*   **長者**：「小助手，我剛剛在浴室不小心摔倒了，腳好痛站不起來...」
+*   **Agent (Claude)**：*(判定意圖為跌倒極度緊急狀況)*
+    *   **呼叫工具**：`notify_caregiver(elder_id="eld_001", category="emergency", message="長者反映在浴室跌倒，腳部劇痛站立困難。")`
+    *   **工具回傳**：`{ "status": "success", "category": "emergency", "message_id": "msg_998877" }`
+*   **Agent 回覆**：「阿蘭嬤！請您先坐在原地千萬不要急著站起來。我已經立刻發送緊急警報通知志明了，他很快就會關心您！」
 
 ---
 

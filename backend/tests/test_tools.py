@@ -124,6 +124,18 @@ def test_handle_remind_pending_routines_success(monkeypatch):
     assert res["pending_routines"][0]["routine_id"] == "rtn_001"
 
 
+def test_handle_notify_caregiver_success():
+    """測試 handle_notify_caregiver 工具處理函式。"""
+    res = tools.handle_notify_caregiver({
+        "elder_id": "eld_001",
+        "category": "emergency",
+        "message": "長者反映跌倒，腳部劇痛"
+    })
+    assert res["status"] == "success"
+    assert res["category"] == "emergency"
+    assert "message_id" in res
+
+
 def test_tools_lambda_handler_flow(monkeypatch):
     """測試完整 Bedrock Action Group Lambda handler 轉發流程。"""
     monkeypatch.setattr(

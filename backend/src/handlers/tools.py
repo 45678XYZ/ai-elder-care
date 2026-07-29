@@ -12,6 +12,7 @@ AWS 會包裝一個 JSON payload 傳給本 Lambda。
 """
 
 import json
+import os
 import time
 import uuid
 from typing import Any, Dict
@@ -178,6 +179,49 @@ def handle_remind_pending_routines(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"查詢待提醒行程失敗: {str(e)}"}
 
 
+def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具七：發送 AWS SNS 即時緊急警報/日常摘要/行程完成通知至照護者。"""
+    elder_id = params.get("elder_id")
+    category = params.get("category", "emergency")  # emergency | routine | summary
+    message_content = params.get("message", "")
+
+    if not elder_id or not message_content:
+        return {"status": "error", "message": "缺少必要參數 elder_id 或 message"}
+
+    try:
+        topic_arn = os.environ.get("CAREGIVER_NOTIFY_TOPIC_ARN")
+        subject_map = {
+            "emergency": "🚨【智慧長照緊急警報】長者可能需要即時關懷與協助",
+            "routine": "📋【智慧長照行程通知】長者今日行程完成狀態",
+            "summary": "📖【智慧長照每日摘要】長者今日健康與生活紀錄"
+        }
+        subject = subject_map.get(category, "【智慧長照關懷通知】")
+
+        if topic_arn:
+            import boto3
+            sns_client = boto3.client('sns')
+            resp = sns_client.publish(
+                TopicArn=topic_arn,
+                Subject=subject,
+                Message=f"長者編號: {elder_id}\n通知類別: {category}\n時間: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n詳細訊息:\n{message_content}"
+            )
+            message_id = resp.get("MessageId")
+        else:
+            print(f"[Warning] CAREGIVER_NOTIFY_TOPIC_ARN 未設定，使用 Mock SNS 發送: {subject}")
+            message_id = f"mock-msg-{int(time.time())}"
+
+        return {
+            "status": "success",
+            "elder_id": elder_id,
+            "category": category,
+            "message_id": message_id,
+            "detail": f"已成功發送 {category} 通知給照護者"
+        }
+    except Exception as e:
+        print(f"[Error] handle_notify_caregiver 失敗: {e}")
+        return {"status": "error", "message": f"發送照護者通知失敗: {str(e)}"}
+
+
 # 工具分流映射字典 (Function Name -> Handler Function)
 TOOL_HANDLERS = {
     "get_today_routines": handle_get_today_routines,
@@ -186,6 +230,7 @@ TOOL_HANDLERS = {
     "get_recent_events": handle_get_recent_events,
     "get_elder_profile": handle_get_elder_profile,
     "remind_pending_routines": handle_remind_pending_routines,
+    "notify_caregiver": handle_notify_caregiver,
 }
 
 
