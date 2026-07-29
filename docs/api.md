@@ -29,7 +29,7 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 
 ### 錯誤格式
 
-非 2xx 一律為下列結構；401 例外，由 API Gateway 回固定格式。
+非 2xx 一律為下列結構。
 
 ```json
 { "error": { "code": "ELDER_NOT_FOUND", "message": "找不到指定的長者" } }
@@ -38,13 +38,16 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 | HTTP | 使用時機與 `code` |
 |---|---|
 | 400 | 缺漏／格式錯誤（`INVALID_PARAMETER`）；音訊超長（`AUDIO_TOO_LONG`）；指定日期無該 routine（`ROUTINE_NOT_SCHEDULED`） |
-| 401 | token 缺漏或無效（API Gateway） |
+| 401 | token 缺漏或無效（`UNAUTHORIZED`） |
 | 403 | 越權（`FORBIDDEN`）；不適用於 close endpoint 的 session 存在性／ownership 判斷 |
 | 404 | `ELDER_NOT_FOUND`、`ROUTINE_NOT_FOUND`、`SESSION_NOT_FOUND`；close endpoint 對不存在或不屬該長者的 session 都使用 `SESSION_NOT_FOUND` |
 | 409 | `REQUEST_IN_PROGRESS`、`IDEMPOTENCY_CONFLICT` |
+| 429 | 超過 stage 節流上限（`THROTTLED`）；前端退避重試 |
 | 500 | `INTERNAL_ERROR` |
 
 `code` 是前端 UX 分支的穩定識別碼；程式不得依賴可能調整的 `message`。任一端點可能回通用錯誤；端點特例另行註明。
+
+請求在抵達 handler 前被 API Gateway 擋下時（token 無效、路由不存在、payload 過大、節流、integration 逾時），`code` 為該 gateway 錯誤類型，如 `UNAUTHORIZED`、`MISSING_AUTHENTICATION_TOKEN`、`REQUEST_TOO_LARGE`、`THROTTLED`、`INTEGRATION_TIMEOUT`，`message` 為英文原文。
 
 ---
 
