@@ -70,7 +70,7 @@ resource "aws_iam_role_policy" "daily_digest_policy" {
 resource "aws_lambda_function" "daily_digest" {
   function_name = "${var.project_name}-daily-digest"
   role          = aws_iam_role.daily_digest_role.arn
-  handler       = "src.handlers.daily_digest.handler"
+  handler       = "handlers.daily_digest.handler"
   runtime       = "python3.11"
   timeout       = 120  # 晚報需掃描所有長者，給足夠時間
   memory_size   = 256
