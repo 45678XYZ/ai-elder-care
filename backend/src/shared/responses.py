@@ -5,11 +5,7 @@ import json
 def json_response(status_code: int, body: dict) -> dict:
     return {
         "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json; charset=utf-8",
-            "Cache-Control": "no-store, no-cache, must-revalidate",
-            "X-Content-Type-Options": "nosniff",
-        },
+        "headers": {"Content-Type": "application/json; charset=utf-8"},
         "body": json.dumps(body, ensure_ascii=False),
     }
 
