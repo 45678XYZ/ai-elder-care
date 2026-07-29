@@ -7,7 +7,10 @@ import '../../theme/app_theme.dart';
 ///
 /// 登入／註冊／驗證碼／連結家人共用一份——這幾頁的輸入框只差在鍵盤型別與
 /// 過濾規則，樣式各寫一次遲早會走鐘。
-class BigTextField extends StatelessWidget {
+///
+/// 遮蔽狀態由欄位自己管（見 [showObscureToggle]），呼叫端不必為了一顆眼睛按鈕
+/// 各自開一份 state。
+class BigTextField extends StatefulWidget {
   const BigTextField({
     super.key,
     required this.controller,
@@ -15,11 +18,13 @@ class BigTextField extends StatelessWidget {
     this.focusNode,
     this.enabled = true,
     this.obscureText = false,
+    this.showObscureToggle = false,
     this.keyboardType,
     this.textInputAction,
     this.inputFormatters,
     this.textAlign = TextAlign.start,
     this.letterSpacing,
+    this.onChanged,
     this.onSubmitted,
   });
 
@@ -30,7 +35,15 @@ class BigTextField extends StatelessWidget {
   final String? hint;
   final FocusNode? focusNode;
   final bool enabled;
+
+  /// 初始是否遮蔽。開了 [showObscureToggle] 之後這只是預設值。
   final bool obscureText;
+
+  /// 在欄位右側給一顆看得見／看不見的切換鈕。
+  ///
+  /// 密碼打錯重打對長輩是實質負擔，看得到自己打了什麼比藏起來重要；
+  /// 觸控區給 60dp（長者規格），不是一般的 48dp。
+  final bool showObscureToggle;
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
   final List<TextInputFormatter>? inputFormatters;
@@ -38,35 +51,46 @@ class BigTextField extends StatelessWidget {
 
   /// 號碼類輸入拉開字距比較不會看錯；一般文字不需要。
   final double? letterSpacing;
+  final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+
+  @override
+  State<BigTextField> createState() => _BigTextFieldState();
+}
+
+class _BigTextFieldState extends State<BigTextField> {
+  late bool _obscured = widget.obscureText;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final style = text.headlineSmall?.copyWith(letterSpacing: letterSpacing);
+    final style =
+        text.headlineSmall?.copyWith(letterSpacing: widget.letterSpacing);
+    final showToggle = widget.showObscureToggle && widget.obscureText;
     // 欄位不畫框：靠近白的底色加一層陰影從紙底浮起來，比框線乾淨。
     // 框只在聚焦時出現，聚焦指示不能省——它是鍵盤操作唯一的位置線索。
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: enabled ? AppColors.cardAlt : AppColors.track,
+        color: widget.enabled ? AppColors.cardAlt : AppColors.track,
         borderRadius: const BorderRadius.all(AppRadius.field),
-        boxShadow: enabled ? AppShadows.card : null,
+        boxShadow: widget.enabled ? AppShadows.card : null,
       ),
       child: TextField(
-        controller: controller,
-        focusNode: focusNode,
-        enabled: enabled,
-        obscureText: obscureText,
+        controller: widget.controller,
+        focusNode: widget.focusNode,
+        enabled: widget.enabled,
+        obscureText: _obscured,
         autocorrect: false,
         enableSuggestions: false,
-        keyboardType: keyboardType,
-        textInputAction: textInputAction,
-        inputFormatters: inputFormatters,
-        textAlign: textAlign,
+        keyboardType: widget.keyboardType,
+        textInputAction: widget.textInputAction,
+        inputFormatters: widget.inputFormatters,
+        textAlign: widget.textAlign,
         style: style,
-        onSubmitted: onSubmitted,
+        onChanged: widget.onChanged,
+        onSubmitted: widget.onSubmitted,
         decoration: InputDecoration(
-          hintText: hint,
+          hintText: widget.hint,
           hintStyle: style?.copyWith(color: AppColors.hint),
           filled: false,
           contentPadding: const EdgeInsets.symmetric(
@@ -78,8 +102,58 @@ class BigTextField extends StatelessWidget {
             borderRadius: BorderRadius.all(AppRadius.field),
             borderSide: BorderSide(color: AppColors.accent, width: 3),
           ),
+          suffixIcon: showToggle
+              ? IconButton(
+                  onPressed: widget.enabled
+                      ? () => setState(() => _obscured = !_obscured)
+                      : null,
+                  // 眼睛圖示單看不一定讀得懂，語意標籤與長按提示都寫成完整句子
+                  tooltip: _obscured ? '顯示密碼' : '隱藏密碼',
+                  icon: Icon(
+                    _obscured
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    size: 28,
+                    color: AppColors.inkSecondary,
+                  ),
+                )
+              : null,
+          suffixIconConstraints:
+              const BoxConstraints(minWidth: 60, minHeight: 60),
         ),
       ),
+    );
+  }
+}
+
+/// 欄位下方的說明或錯誤。
+///
+/// 錯誤就長在出問題的欄位下面，不丟到頁尾的 [FeedbackBanner]——長輩要在錯誤訊息與
+/// 欄位之間自己連線很吃力。錯誤除了顏色另加 icon 並跳到 24sp（§9 狀態不只靠顏色，
+/// 而且要看得到）；一般說明維持較小的次要字級。
+class FieldNote extends StatelessWidget {
+  const FieldNote(this.message, {super.key, this.isError = false});
+
+  final String message;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    if (!isError) {
+      return Text(message,
+          style: text.bodyLarge?.copyWith(color: AppColors.inkSecondary));
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.error_outline, size: 28, color: AppColors.warnFg),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Text(message,
+              style: text.headlineSmall?.copyWith(color: AppColors.warnFg)),
+        ),
+      ],
     );
   }
 }
@@ -156,7 +230,8 @@ class FeedbackBanner extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(isError ? Icons.error_outline : Icons.check_circle_outline,
-              size: 32, color: isError ? AppColors.warnFg : AppColors.successFg),
+              size: 32,
+              color: isError ? AppColors.warnFg : AppColors.successFg),
           const SizedBox(width: AppSpacing.md),
           Expanded(
             child: Text(
@@ -185,8 +260,8 @@ class AppLogoPill extends StatelessWidget {
         color: AppColors.accentText,
         borderRadius: BorderRadius.all(AppRadius.pill),
       ),
-      child: Text('智慧長照陪伴',
-          style: text.labelLarge?.copyWith(color: Colors.white)),
+      child:
+          Text('智慧長照陪伴', style: text.labelLarge?.copyWith(color: Colors.white)),
     );
   }
 }

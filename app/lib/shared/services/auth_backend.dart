@@ -83,10 +83,10 @@ class AuthException implements Exception {
   static const _messages = {
     AuthErrorCode.usernameExists: '這個信箱已經註冊過了，直接登入就好',
     AuthErrorCode.invalidPassword: '密碼至少 8 個字，要有英文字母和數字',
-    AuthErrorCode.codeMismatch: '驗證碼不對，請再確認一次',
+    AuthErrorCode.codeMismatch: '驗證碼錯誤，請再確認一次',
     AuthErrorCode.expiredCode: '驗證碼過期了，請重新寄一次',
     AuthErrorCode.userNotConfirmed: '這個帳號還沒完成信箱驗證',
-    AuthErrorCode.notAuthorized: '信箱或密碼不對',
+    AuthErrorCode.notAuthorized: '信箱或密碼錯誤',
     AuthErrorCode.limitExceeded: '太頻繁了，請等一下再試',
     AuthErrorCode.network: '連不上網路，請檢查連線後再試一次',
     AuthErrorCode.unknown: '發生問題，請稍後再試一次',

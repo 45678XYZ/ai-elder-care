@@ -115,8 +115,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
             children: [
               BigBackButton(onTap: () => context.pop()),
               const SizedBox(height: AppSpacing.xl),
-
-              Text('收信箱拿驗證碼', style: text.headlineLarge),
+              Text('請輸入驗證碼', style: text.headlineLarge),
               const SizedBox(height: AppSpacing.md),
               Text(
                 '我們寄了一組 $_codeLength 位數字到\n${widget.email}',
@@ -124,7 +123,6 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                     text.headlineSmall?.copyWith(color: AppColors.inkSecondary),
               ),
               const SizedBox(height: AppSpacing.xl),
-
               BigTextField(
                 controller: _codeCtrl,
                 hint: '000000',
@@ -140,9 +138,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                 onSubmitted: (_) => _submit(),
               ),
               const SizedBox(height: AppSpacing.xl),
-
               BigButton(label: '確認', busy: _busy, onPressed: _submit),
-
               if (_error != null) ...[
                 const SizedBox(height: AppSpacing.lg),
                 FeedbackBanner(message: _error!, isError: true),
@@ -151,7 +147,6 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                 const SizedBox(height: AppSpacing.lg),
                 FeedbackBanner(message: _notice!, isError: false),
               ],
-
               const SizedBox(height: AppSpacing.xl),
               Center(
                 child: TextLink(

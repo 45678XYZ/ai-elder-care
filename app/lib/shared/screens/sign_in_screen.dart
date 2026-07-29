@@ -15,6 +15,13 @@ import '../widgets/form_widgets.dart';
 /// 可互動元素四個（信箱、密碼、登入、去註冊），比長者模式的上限多一個——
 /// 登入本來就需要這四個，砍掉任何一個都會讓人無路可走。這是刻意的例外，
 /// 登入之後的每一頁仍守 <=3。
+///
+/// 錯誤的位置分兩層：指得到單一欄位的（信箱格式、密碼沒填）長在該欄位下面，兩格
+/// 都有問題就兩句一起出現；指不到欄位的（「信箱或密碼錯誤」、連線失敗）留在頁尾的
+/// [FeedbackBanner]。
+///
+/// 「信箱或密碼錯誤」不能拆成兩個欄位錯誤：後端（Cognito）對「查無此人」與「密碼錯」
+/// 回同一種錯誤，本來就不知道是哪一個；硬拆會變成憑空猜測，還會洩漏某個信箱有沒有註冊過。
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
 
@@ -27,6 +34,13 @@ class _SignInScreenState extends State<SignInScreen> {
   final _passwordCtrl = TextEditingController();
 
   String? _error;
+
+  /// 欄位層級的錯誤，長在出問題的那一格下面，不丟到頁尾 banner。
+  ///
+  /// 「信箱或密碼錯誤」不在此列——它刻意不說是哪一個錯（不洩漏信箱是否註冊過），
+  /// 指不到欄位，所以留在頁尾。
+  String? _emailError;
+  String? _passwordError;
   bool _busy = false;
 
   @override
@@ -40,19 +54,28 @@ class _SignInScreenState extends State<SignInScreen> {
     final email = _emailCtrl.text.trim();
     final password = _passwordCtrl.text;
 
-    // 先擋明顯的空白與格式，不必等後端來回一趟才知道少填。
-    if (email.isEmpty || password.isEmpty) {
-      setState(() => _error = '請填信箱和密碼');
-      return;
-    }
-    if (!looksLikeEmail(email)) {
-      setState(() => _error = '信箱格式不太對，請再看一下');
+    // 先擋明顯的空白與格式，不必等後端來回一趟才知道少填。兩格一次全驗，
+    // 兩邊都有問題就兩句一起出現，不要讓人送出兩次才看完。
+    //
+    // 密碼在這裡**只檢查有沒有填**，不驗格式：既有帳號的密碼未必符合現行規則，
+    // 在登入頁擋格式會把合法使用者關在門外。格式是註冊時的事。
+    final emailError = looksLikeEmail(email) ? null : '信箱格式不太對，請再看一下';
+    final passwordError = password.isEmpty ? '請填密碼' : null;
+
+    if (emailError != null || passwordError != null) {
+      setState(() {
+        _error = null;
+        _emailError = emailError;
+        _passwordError = passwordError;
+      });
       return;
     }
 
     setState(() {
       _busy = true;
       _error = null;
+      _emailError = null;
+      _passwordError = null;
     });
 
     try {
@@ -110,7 +133,14 @@ class _SignInScreenState extends State<SignInScreen> {
                 enabled: !_busy,
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
+                onChanged: _emailError == null
+                    ? null
+                    : (_) => setState(() => _emailError = null),
               ),
+              if (_emailError != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                FieldNote(_emailError!, isError: true),
+              ],
               const SizedBox(height: AppSpacing.lg),
 
               Text('密碼', style: text.headlineSmall),
@@ -120,12 +150,21 @@ class _SignInScreenState extends State<SignInScreen> {
                 enabled: !_busy,
                 obscureText: true,
                 textInputAction: TextInputAction.done,
+                onChanged: _passwordError == null
+                    ? null
+                    : (_) => setState(() => _passwordError = null),
                 onSubmitted: (_) => _submit(),
               ),
+              if (_passwordError != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                FieldNote(_passwordError!, isError: true),
+              ],
               const SizedBox(height: AppSpacing.xl),
 
               BigButton(label: '登入', busy: _busy, onPressed: _submit),
 
+              // 這裡只留指不到欄位的錯：「信箱或密碼錯誤」（刻意不說是哪一個）、
+              // 連不上網路之類。
               if (_error != null) ...[
                 const SizedBox(height: AppSpacing.lg),
                 FeedbackBanner(message: _error!, isError: true),
