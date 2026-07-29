@@ -99,150 +99,138 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
       functions {
         name        = "get_today_routines"
         description = "Retrieve a list of scheduled routines and their completion status for a specific elder on a given date."
-        parameters {
-          parameter_detail {
-            name        = "elder_id"
+          parameters {
+            map_block_key = "elder_id"
             type        = "string"
             description = "長者的唯一識別 ID，例如 eld_001"
             required    = true
           }
-          parameter_detail {
-            name        = "date"
+          parameters {
+            map_block_key = "date"
             type        = "string"
             description = "查詢的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
             required    = true
           }
-        }
       }
 
       # 工具二：完成行程
       functions {
         name        = "complete_routine"
         description = "Mark a specific routine as completed and log a life event for the elder."
-        parameters {
-          parameter_detail {
-            name        = "elder_id"
+          parameters {
+            map_block_key = "elder_id"
             type        = "string"
             description = "長者的唯一識別 ID，例如 eld_001"
             required    = true
           }
-          parameter_detail {
-            name        = "routine_id"
+          parameters {
+            map_block_key = "routine_id"
             type        = "string"
             description = "要完成的行程 ID，例如 rtn_001"
             required    = true
           }
-          parameter_detail {
-            name        = "date"
+          parameters {
+            map_block_key = "date"
             type        = "string"
             description = "完成的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
             required    = true
           }
-          parameter_detail {
-            name        = "completed_by"
+          parameters {
+            map_block_key = "completed_by"
             type        = "string"
             description = "完成行程的角色，口語回報一律填 conversation"
             required    = true
           }
-        }
       }
 
       # 工具三：建立新行程
       functions {
         name        = "create_routine"
         description = "Create a new scheduled routine (either one-time or recurring) for the elder."
-        parameters {
-          parameter_detail {
-            name        = "elder_id"
+          parameters {
+            map_block_key = "elder_id"
             type        = "string"
             description = "長者的唯一識別 ID，例如 eld_001"
             required    = true
           }
-          parameter_detail {
-            name        = "title"
+          parameters {
+            map_block_key = "title"
             type        = "string"
             description = "行程的標題或內容，例如：吃血壓藥、看心臟科"
             required    = true
           }
-          parameter_detail {
-            name        = "type"
+          parameters {
+            map_block_key = "type"
             type        = "string"
             description = "行程類型分類，例如：medication, diet, activity, wellbeing, other"
             required    = true
           }
-          parameter_detail {
-            name        = "time"
+          parameters {
+            map_block_key = "time"
             type        = "string"
             description = "行程時間，格式為 HH:MM，例如 15:30"
             required    = true
           }
-          parameter_detail {
-            name        = "freq"
+          parameters {
+            map_block_key = "freq"
             type        = "string"
             description = "頻率：daily, weekly, once"
             required    = true
           }
-          parameter_detail {
-            name        = "date"
+          parameters {
+            map_block_key = "date"
             type        = "string"
             description = "如果是單次(once)行程，必須提供日期 YYYY-MM-DD；每日或每週則免"
             required    = false
           }
-        }
       }
 
       # 工具四：查詢近期生活事件歷史
       functions {
         name        = "get_recent_events"
         description = "Retrieve recent life events, activities, and recorded health signals for the elder."
-        parameters {
-          parameter_detail {
-            name        = "elder_id"
+          parameters {
+            map_block_key = "elder_id"
             type        = "string"
             description = "長者的唯一識別 ID，例如 eld_001"
             required    = true
           }
-          parameter_detail {
-            name        = "event_type"
+          parameters {
+            map_block_key = "event_type"
             type        = "string"
             description = "可選的事件類型過濾，例如：routine_completion, wellbeing, activity, family, diet, other"
             required    = false
           }
-        }
       }
 
       # 工具五：查詢長者個人喜好與家屬檔案
       functions {
         name        = "get_elder_profile"
         description = "Retrieve personal preferences, hobbies, health notes, and family members of the elder."
-        parameters {
-          parameter_detail {
-            name        = "elder_id"
+          parameters {
+            map_block_key = "elder_id"
             type        = "string"
             description = "長者的唯一識別 ID，例如 eld_001"
             required    = true
           }
-        }
       }
 
       # 工具六：主動提醒待辦行程
       functions {
         name        = "remind_pending_routines"
         description = "Check and retrieve pending scheduled routines for the elder to generate warm reminders."
-        parameters {
-          parameter_detail {
-            name        = "elder_id"
+          parameters {
+            map_block_key = "elder_id"
             type        = "string"
             description = "長者的唯一識別 ID，例如 eld_001"
             required    = true
           }
-          parameter_detail {
-            name        = "date"
+          parameters {
+            map_block_key = "date"
             type        = "string"
             description = "可選的查詢日期，格式為 YYYY-MM-DD，預設為今天"
             required    = false
           }
-        }
       }
 
       # 工具七：發送照護者即時緊急警報與摘要通知（醫療級安全機制）
@@ -257,58 +245,54 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
           - summary: Daily health summary report.
           IMPORTANT: Only caregivers (not elders) can fully resolve an alert via the App.
         DESC
-        parameters {
-          parameter_detail {
-            name        = "elder_id"
+          parameters {
+            map_block_key = "elder_id"
             type        = "string"
             description = "長者的唯一識別 ID，例如 eld_001"
             required    = true
           }
-          parameter_detail {
-            name        = "category"
+          parameters {
+            map_block_key = "category"
             type        = "string"
             description = "通知類別：emergency | critical_escalation | mitigation | routine | summary"
             required    = true
           }
-          parameter_detail {
-            name        = "message"
+          parameters {
+            map_block_key = "message"
             type        = "string"
             description = "要推播給照護者的詳細訊息內容（請包含事件的人事時地）"
             required    = true
           }
-          parameter_detail {
-            name        = "context_event_id"
+          parameters {
+            map_block_key = "context_event_id"
             type        = "string"
             description = "選填。用於 mitigation 或 critical_escalation 時，傳入對應的原始緊急事件 event_id（由系統在 emergency 觸發時回傳），確保 Context Matching 精準更新同一事件，防止誤蓋其他事件記錄。"
             required    = false
           }
-          parameter_detail {
-            name        = "rag_content"
+          parameters {
+            map_block_key = "rag_content"
             type        = "string"
             description = "選填。來自 RAG 衛教知識庫的相關急救或照護指南內容。將折疊附加至 Email 附錄（附免責聲明），不影響信件主要人事時地資訊版面。"
             required    = false
           }
-        }
       }
 
       # 工具八：查詢長者近幾日每日健康摘要（提供縱向健康趨勢）
       functions {
         name        = "get_daily_summaries"
         description = "Retrieve recent daily health summaries for the elder to understand health trends over multiple days. Use this when the elder or caregiver asks about recent health status, trends, or when you need context about the elder's health over the past few days."
-        parameters {
-          parameter_detail {
-            name        = "elder_id"
+          parameters {
+            map_block_key = "elder_id"
             type        = "string"
             description = "長者的唯一識別 ID，例如 eld_001"
             required    = true
           }
-          parameter_detail {
-            name        = "days"
+          parameters {
+            map_block_key = "days"
             type        = "integer"
             description = "查詢最近幾天的摘要，預設為 3 天（含今天），最多 7 天。例如 days=3 代表今天+昨天+前天。"
             required    = false
           }
-        }
       }
     }
   }
@@ -320,7 +304,7 @@ resource "aws_lambda_permission" "allow_bedrock_to_invoke_tools" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.tools.function_name
   principal     = "bedrock.amazonaws.com"
-  source_arn    = aws_bedrockagent_agent.elder_companion_agent.arn
+  source_arn    = aws_bedrockagent_agent.elder_companion_agent.agent_arn
 }
 
 

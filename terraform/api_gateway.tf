@@ -1,26 +1,26 @@
-# API Gateway（REST，路徑前綴 /v1，Cognito JWT authorizer）
+﻿# API Gateway嚗EST嚗楝敺?蝬?/v1嚗ognito JWT authorizer嚗?
 #
-# 路由 → Lambda 對應（規格見 docs/api.md 端點總覽）：
-#   POST  /chat                                             → chat ✅
-#   POST  /chat/sessions/{session_id}/close                 → session_closer ✅
-#   GET/POST /elders、GET/PATCH /elders/{elder_id}          → elders ✅
-#   GET   /summaries、POST /summaries/generate              → summaries（feature/daily-summaries 實作）
-#   GET   /events                                           → events ✅
-#   GET/POST /routines、PATCH /routines/{routine_id}、
-#   POST  /routines/{routine_id}/complete                   → routines（待其他分支實作）
-#   GET   /stats                                            → stats（待其他分支實作）
+# 頝舐 ??Lambda 撠?嚗??潸? docs/api.md 蝡舫?蝮質汗嚗?
+#   POST  /chat                                             ??chat ??
+#   POST  /chat/sessions/{session_id}/close                 ??session_closer ??
+#   GET/POST /elders?ET/PATCH /elders/{elder_id}          ??elders ??
+#   GET   /summaries?OST /summaries/generate              ??summaries嚗eature/daily-summaries 撖虫?嚗?
+#   GET   /events                                           ??events ??
+#   GET/POST /routines?ATCH /routines/{routine_id}??
+#   POST  /routines/{routine_id}/complete                   ??routines嚗??嗡??撖虫?嚗?
+#   GET   /stats                                            ??stats嚗??嗡??撖虫?嚗?
 #
-# 各模組自行補自己的路由，共用地基（REST API、authorizer、deployment、stage、
-# 存取日誌、節流）在此檔一次備妥。新增路由的固定四件事：
-#   1. aws_api_gateway_resource：路徑節點
-#   2. aws_api_gateway_method：authorization = "COGNITO_USER_POOLS" + authorizer_id
-#   3. aws_api_gateway_integration：AWS_PROXY、integration_http_method 一律 POST
-#   4. aws_lambda_permission：source_arn 收斂到該 method，並把 method 加入
-#      aws_api_gateway_deployment 的 triggers，否則改動不會重新部署
+# ?芋蝯銵??芸楛?楝?梧??梁?啣嚗EST API?uthorizer?eployment?tage??
+# 摮??亥???瘚??冽迨瑼?甈∪?憒乓憓楝?梁??箏??辣鈭?
+#   1. aws_api_gateway_resource嚗楝敺?暺?
+#   2. aws_api_gateway_method嚗uthorization = "COGNITO_USER_POOLS" + authorizer_id
+#   3. aws_api_gateway_integration嚗WS_PROXY?ntegration_http_method 銝敺?POST
+#   4. aws_lambda_permission嚗ource_arn ?嗆??啗府 method嚗蒂??method ?
+#      aws_api_gateway_deployment ??triggers嚗??????圈蝵?
 #
-# 授權一律在 handler 內做細粒度判斷（見 backend/src/shared/auth.py）：authorizer 只保證
-# token 有效，「這個呼叫者能不能碰這個長者」由 assert_can_access_elder 依 elders.caregiver_ids
-# 決定；close endpoint 另有「不存在與越權都回 404」的防洩漏規則。
+# ??銝敺 handler ?批?蝝啁?摨血?瘀?閬?backend/src/shared/auth.py嚗?authorizer ?芯?霅?
+# token ??嚗?怨銝蝣圈? assert_can_access_elder 靘?elders.caregiver_ids
+# 瘙箏?嚗lose endpoint ?行???摮??甈??404???脫援瞍???
 
 resource "aws_api_gateway_rest_api" "api" {
   name = "${var.project_name}-api"
@@ -30,9 +30,9 @@ resource "aws_api_gateway_rest_api" "api" {
   }
 }
 
-# 各端點的 method 掛此 authorizer（authorization = "COGNITO_USER_POOLS"、
-# authorizer_id = 此資源）；驗證通過後 claims 進 event.requestContext.authorizer.claims，
-# 供 backend/src/shared/auth.py 讀取。
+# ?垢暺? method ?迨 authorizer嚗uthorization = "COGNITO_USER_POOLS"??
+# authorizer_id = 甇方?皞?嚗?霅?敺?claims ??event.requestContext.authorizer.claims嚗?
+# 靘?backend/src/shared/auth.py 霈??
 resource "aws_api_gateway_authorizer" "cognito" {
   name            = "cognito"
   type            = "COGNITO_USER_POOLS"
@@ -41,8 +41,8 @@ resource "aws_api_gateway_authorizer" "cognito" {
   identity_source = "method.request.header.Authorization"
 }
 
-# 請求格式驗證器：在最前線檢查必填 Querystring / Headers 與 Request Body 格式，
-# 無效請求在 Gateway 直接擋下 (400)，不觸發後端 Lambda 節省算力與費用。
+# 隢??澆?撽??剁??冽???瑼Ｘ敹‵ Querystring / Headers ??Request Body ?澆?嚗?
+# ?⊥?隢???Gateway ?湔?? (400)嚗?閫貊敺垢 Lambda 蝭????鞎餌??
 resource "aws_api_gateway_request_validator" "validator" {
   name                        = "${var.project_name}-request-validator"
   rest_api_id                 = aws_api_gateway_rest_api.api.id
@@ -50,8 +50,8 @@ resource "aws_api_gateway_request_validator" "validator" {
   validate_request_parameters = true
 }
 
-# Gateway 產生的錯誤不經過 Lambda，預設格式是 {"message": ...}，沒有前端分支用的 code。
-# code 取 $context.error.responseType（THROTTLED、UNAUTHORIZED、INTEGRATION_TIMEOUT…）
+# Gateway ?Ｙ??隤支?蝬? Lambda嚗?閮剜撘 {"message": ...}嚗???蝡臬??舐??code??
+# code ??$context.error.responseType嚗HROTTLED?NAUTHORIZED?NTEGRATION_TIMEOUT?佗?
 locals {
   gateway_error_template = {
     "application/json" = "{\"error\":{\"code\":\"$context.error.responseType\",\"message\":$context.error.messageString}}"
@@ -70,7 +70,7 @@ resource "aws_api_gateway_gateway_response" "default_5xx" {
   response_templates = local.gateway_error_template
 }
 
-# --- GET /events（照護者事件時間軸）---
+# --- GET /events嚗霅瑁?隞嗆??遘嚗?--
 
 resource "aws_api_gateway_resource" "events" {
   rest_api_id = aws_api_gateway_rest_api.api.id
@@ -135,18 +135,18 @@ resource "aws_api_gateway_integration" "post_chat" {
   http_method             = aws_api_gateway_method.post_chat.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = module.api_chat.lambda_function_invoke_arn
+  uri                     = aws_lambda_function.chat.invoke_arn
 }
 
 resource "aws_lambda_permission" "apigw_post_chat" {
   statement_id  = "AllowApiGatewayPostChat"
   action        = "lambda:InvokeFunction"
-  function_name = module.api_chat.lambda_function_name
+  function_name = aws_lambda_function.chat.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/chat"
 }
 
-# --- GET /elders + POST /elders（列表查詢與新建）---
+# --- GET /elders + POST /elders嚗?銵冽閰Ｚ??啣遣嚗?--
 
 resource "aws_api_gateway_resource" "elders" {
   rest_api_id = aws_api_gateway_rest_api.api.id
@@ -169,7 +169,7 @@ resource "aws_api_gateway_integration" "get_elders" {
   http_method             = aws_api_gateway_method.get_elders.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = module.api_elders.lambda_function_invoke_arn
+  uri                     = aws_lambda_function.elders.invoke_arn
 }
 
 resource "aws_api_gateway_method" "post_elders" {
@@ -187,18 +187,18 @@ resource "aws_api_gateway_integration" "post_elders" {
   http_method             = aws_api_gateway_method.post_elders.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = module.api_elders.lambda_function_invoke_arn
+  uri                     = aws_lambda_function.elders.invoke_arn
 }
 
 resource "aws_lambda_permission" "apigw_elders" {
   statement_id  = "AllowApiGatewayElders"
   action        = "lambda:InvokeFunction"
-  function_name = module.api_elders.lambda_function_name
+  function_name = aws_lambda_function.elders.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/elders"
 }
 
-# --- GET /elders/{elder_id} + PATCH /elders/{elder_id}（單筆查詢與更新）---
+# --- GET /elders/{elder_id} + PATCH /elders/{elder_id}嚗蝑閰Ｚ??湔嚗?--
 
 resource "aws_api_gateway_resource" "elder_id" {
   rest_api_id = aws_api_gateway_rest_api.api.id
@@ -224,7 +224,7 @@ resource "aws_api_gateway_integration" "get_elder" {
   http_method             = aws_api_gateway_method.get_elder.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = module.api_elders.lambda_function_invoke_arn
+  uri                     = aws_lambda_function.elders.invoke_arn
 }
 
 resource "aws_api_gateway_method" "patch_elder" {
@@ -245,18 +245,18 @@ resource "aws_api_gateway_integration" "patch_elder" {
   http_method             = aws_api_gateway_method.patch_elder.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = module.api_elders.lambda_function_invoke_arn
+  uri                     = aws_lambda_function.elders.invoke_arn
 }
 
 resource "aws_lambda_permission" "apigw_elder_ops" {
   statement_id  = "AllowApiGatewayElderOps"
   action        = "lambda:InvokeFunction"
-  function_name = module.api_elders.lambda_function_name
+  function_name = aws_lambda_function.elders.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/elders/*"
 }
 
-# --- POST /chat/sessions/{session_id}/close（長者端明確關閉）---
+# --- POST /chat/sessions/{session_id}/close嚗?垢?Ⅱ??嚗?--
 
 resource "aws_api_gateway_resource" "chat_sessions" {
   rest_api_id = aws_api_gateway_rest_api.api.id
@@ -306,14 +306,14 @@ resource "aws_lambda_permission" "close_session" {
 }
 
 # =============================================================================
-# API Gateway Deployment 與 Stage（v1）
+# API Gateway Deployment ??Stage嚗1嚗?
 # =============================================================================
 
 resource "aws_api_gateway_deployment" "api" {
   rest_api_id = aws_api_gateway_rest_api.api.id
 
-  # triggers 要涵蓋所有 method／integration；漏掉的話改了設定不會重新部署，
-  # 而 API Gateway 的舊快照會繼續生效，是很難察覺的錯誤
+  # triggers 閬項????method嚗ntegration嚗???閰望鈭身摰????圈蝵莎?
+  # ??API Gateway ??敹怎?匱蝥????臬????閬箇??航炊
   triggers = {
     redeployment = sha1(jsonencode([
       aws_api_gateway_method.get_events,
@@ -352,7 +352,7 @@ resource "aws_api_gateway_stage" "v1" {
   deployment_id = aws_api_gateway_deployment.api.id
   stage_name    = "v1"
 
-  # 存取日誌不含 request body，避免逐字稿與 PII 落到日誌
+  # 摮??亥?銝 request body嚗??蝔輯? PII ?賢?亥?
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_access.arn
     format = jsonencode({
@@ -374,10 +374,11 @@ resource "aws_api_gateway_method_settings" "v1" {
   method_path = "*/*"
 
   settings {
-    # 長者端是免手持語音迴圈，單一裝置的請求頻率有限；節流是防呆與成本上限。
+    # ?瑁垢?臬???隤餈游?嚗銝鋆蔭??瘙????蝭瘚?脣????砌???
     throttling_rate_limit  = var.api_throttle_rate_limit
     throttling_burst_limit = var.api_throttle_burst_limit
     metrics_enabled = true
     logging_level   = "ERROR"
   }
 }
+
