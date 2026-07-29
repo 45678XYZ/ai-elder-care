@@ -242,10 +242,18 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
         }
       }
 
-      # 工具七：發送照護者即時緊急警報與摘要通知
+      # 工具七：發送照護者即時緊急警報與摘要通知（醫療級安全機制）
       functions {
         name        = "notify_caregiver"
-        description = "Send immediate SNS alert to the caregiver when the elder experiences emergencies (falls, chest pain, dizziness) or needs routine/summary reports."
+        description = <<-DESC
+          Send SNS notification to caregiver. Use category to control safety behavior:
+          - emergency: First-time urgent alert (fall/chest pain/cannot move). Has 5-min cooldown. Writes DB event.
+          - critical_escalation: Condition worsening (new bleeding/fainting/severe pain). BYPASSES cooldown. Use when elder reports new severe symptoms after initial emergency.
+          - mitigation: Elder verbally says they feel better. Sets status to WARNING (pending caregiver confirmation). Does NOT resolve the alert. Requires active emergency to exist.
+          - routine: Scheduled task completion digest.
+          - summary: Daily health summary report.
+          IMPORTANT: Only caregivers (not elders) can fully resolve an alert via the App.
+        DESC
         parameters {
           parameter_detail {
             name        = "elder_id"
@@ -256,14 +264,26 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
           parameter_detail {
             name        = "category"
             type        = "string"
-            description = "通知類別：emergency (跌倒不適極度緊急), routine (行程狀態), summary (健康摘要)"
+            description = "通知類別：emergency | critical_escalation | mitigation | routine | summary"
             required    = true
           }
           parameter_detail {
             name        = "message"
             type        = "string"
-            description = "要推播給照護者的詳細訊息內容內容"
+            description = "要推播給照護者的詳細訊息內容（請包含事件的人事時地）"
             required    = true
+          }
+          parameter_detail {
+            name        = "context_event_id"
+            type        = "string"
+            description = "選填。用於 mitigation 或 critical_escalation 時，傳入對應的原始緊急事件 event_id（由系統在 emergency 觸發時回傳），確保 Context Matching 精準更新同一事件，防止誤蓋其他事件記錄。"
+            required    = false
+          }
+          parameter_detail {
+            name        = "rag_content"
+            type        = "string"
+            description = "選填。來自 RAG 衛教知識庫的相關急救或照護指南內容。將折疊附加至 Email 附錄（附免責聲明），不影響信件主要人事時地資訊版面。"
+            required    = false
           }
         }
       }
