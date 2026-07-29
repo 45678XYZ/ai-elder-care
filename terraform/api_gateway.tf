@@ -50,6 +50,27 @@ resource "aws_api_gateway_request_validator" "validator" {
   validate_request_parameters = true
 }
 
+# Gateway 產生的錯誤不經過 Lambda，預設格式是 {"message": ...}，沒有前端分支用的 code。
+# code 取 $context.error.responseType（THROTTLED、UNAUTHORIZED、INTEGRATION_TIMEOUT…），
+# 新增端點或出現新錯誤類型都自動合規，不需要逐一補覆寫。
+locals {
+  gateway_error_template = {
+    "application/json" = "{\"error\":{\"code\":\"$context.error.responseType\",\"message\":$context.error.messageString}}"
+  }
+}
+
+resource "aws_api_gateway_gateway_response" "default_4xx" {
+  rest_api_id        = aws_api_gateway_rest_api.api.id
+  response_type      = "DEFAULT_4XX"
+  response_templates = local.gateway_error_template
+}
+
+resource "aws_api_gateway_gateway_response" "default_5xx" {
+  rest_api_id        = aws_api_gateway_rest_api.api.id
+  response_type      = "DEFAULT_5XX"
+  response_templates = local.gateway_error_template
+}
+
 # --- GET /events（照護者事件時間軸）---
 
 resource "aws_api_gateway_resource" "events" {
@@ -66,8 +87,10 @@ resource "aws_api_gateway_method" "get_events" {
   authorizer_id        = aws_api_gateway_authorizer.cognito.id
   request_validator_id = aws_api_gateway_request_validator.validator.id
 
+  # elder_id 不在 gateway 這層擋：擋下來的 code 是 BAD_REQUEST_PARAMETERS，
+  # 而 api.md 對查詢參數錯誤的契約是 INVALID_PARAMETER，由 handler 產生。
   request_parameters = {
-    "method.request.querystring.elder_id"   = true
+    "method.request.querystring.elder_id"   = false
     "method.request.querystring.from"       = false
     "method.request.querystring.to"         = false
     "method.request.querystring.type"       = false
@@ -169,6 +192,8 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_integration.close_session,
       aws_api_gateway_authorizer.cognito,
       aws_api_gateway_request_validator.validator,
+      aws_api_gateway_gateway_response.default_4xx,
+      aws_api_gateway_gateway_response.default_5xx,
     ]))
   }
 
