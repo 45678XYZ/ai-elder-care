@@ -41,7 +41,7 @@ resource "aws_cloudwatch_metric_alarm" "batch_extractor_errors" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    FunctionName = aws_lambda_function.batch_extractor.function_name
+    FunctionName = module.batch_extractor.lambda_function_name
   }
 
   alarm_actions = [aws_sns_topic.batch_alerts.arn]

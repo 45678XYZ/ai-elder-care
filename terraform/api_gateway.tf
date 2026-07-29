@@ -74,13 +74,13 @@ resource "aws_api_gateway_integration" "get_events" {
   # proxy 整合一律以 POST 呼叫 Lambda，與對外的 HTTP method 無關
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.api_events.invoke_arn
+  uri                     = module.api_events.lambda_function_invoke_arn
 }
 
 resource "aws_lambda_permission" "get_events" {
   statement_id  = "AllowApiGatewayGetEvents"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.api_events.function_name
+  function_name = module.api_events.lambda_function_name
   principal     = "apigateway.amazonaws.com"
 
   # 收斂到具體 method，避免整個 API 都能叫這支 Lambda
@@ -132,13 +132,13 @@ resource "aws_api_gateway_integration" "close_session" {
 
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.session_closer.invoke_arn
+  uri                     = module.session_closer.lambda_function_invoke_arn
 }
 
 resource "aws_lambda_permission" "close_session" {
   statement_id  = "AllowApiGatewayCloseSession"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.session_closer.function_name
+  function_name = module.session_closer.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/chat/sessions/*/close"
 }

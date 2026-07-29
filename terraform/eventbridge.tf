@@ -17,7 +17,7 @@ resource "aws_cloudwatch_event_rule" "session_sweep" {
 resource "aws_cloudwatch_event_target" "session_sweep" {
   rule      = aws_cloudwatch_event_rule.session_sweep.name
   target_id = "session-closer"
-  arn       = aws_lambda_function.session_closer.arn
+  arn       = module.session_closer.lambda_function_arn
 
   # handler 依 source 欄位分派；帶 sweep 旗標讓本地測試也能觸發同一條路徑
   input = jsonencode({ sweep = true })
@@ -26,7 +26,7 @@ resource "aws_cloudwatch_event_target" "session_sweep" {
 resource "aws_lambda_permission" "session_sweep" {
   statement_id  = "AllowEventBridgeSweep"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.session_closer.function_name
+  function_name = module.session_closer.lambda_function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.session_sweep.arn
 }

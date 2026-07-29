@@ -25,4 +25,4 @@ pip install -e ".[dev]"
 python -m pytest
 ```
 
-依賴管理在 `pyproject.toml`：`dependencies` 為執行期（進 Lambda 部署包），`[dev]` 為開發期工具。handlers 以 `from src.shared import ...` 匯入，editable install 後即可解析。
+依賴管理在 `pyproject.toml` 與 `requirements.txt`：`requirements.txt` 為 Lambda 執行期依賴（由 Terraform 社群模組 `terraform-aws-modules/lambda/aws` 的 `pip_requirements` 自動安裝打包），`[dev]` 為開發期工具。handlers 以 `from src.shared import ...` 匯入，editable install 後即可解析。
