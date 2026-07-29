@@ -82,40 +82,40 @@
     - 以至少 100 iterations 生成 success/failure evidence records 與 ADR references，驗證 success 的 transcript presence/count、failure 的 prerequisite/category、required fields、敏感欄位拒絕與五欄 evidence projection；包含將於 task 9 建立的 ADR template schema check。
     - _Validates: Requirements 6.5, 6.10, 7.1, 7.2, 7.3, 7.5, 8.11; Design Property 5_
 
-- [ ] 8. 建立僅人工驗證的 Colab common contract、CE 與 Formo 套件
-  - [ ] 8.1 在 `backend/asr_colab/` 建立兩模型共用的 Colab validation contract、匿名 fixture provenance 與安全 evidence 輸出規則
+- [x] 8. 建立僅人工驗證的 Colab common contract、CE 與 Formo 套件
+  - [x] 8.1 在 `backend/asr_colab/` 建立兩模型共用的 Colab validation contract、匿名 fixture provenance 與安全 evidence 輸出規則
     - 建立 common README／schema assets，規定每份 evidence 的 required fields、manifest digest、redaction version、success/failure 規則、禁止欄位與只接受 synthetic 或合法公開授權音檔的 provenance 格式。
     - 定義兩個 package 都必須提供精確 `package==version` dependency manifest、免費 GPU runtime 選擇、WAV 輸入、M4A decode、前置條件失敗分類及可執行 retry step；不得將 token、完整 transcript 或 audio bytes 寫入 notebook source/output、evidence 或 template。
     - 明定 CE/Formo 套件僅供手動 Colab validation，絕不作 production invocation，且不得呼叫 task 5 的 adapter 或任何實際 AWS service/SDK/network。
     - _Requirements: 6.1, 6.4, 6.5, 6.7, 6.8, 6.9, 6.10, 6.11, 7.1, 7.2, 7.3_
 
-  - [ ] 8.2 在 `backend/asr_colab/taiwan_tongues_asr_ce/` 建立 Taiwan-Tongues-ASR-CE 手動驗證 package
+  - [x] 8.2 在 `backend/asr_colab/taiwan_tongues_asr_ce/` 建立 Taiwan-Tongues-ASR-CE 手動驗證 package
     - 建立 `validation.ipynb`、README、全精確版本的 `requirements.lock`、fixture provenance 與 evidence schema；固定記錄 `adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0`、`zh`／`hak`、license `other` 及 `colab_validation_only`。
     - notebook 必須以人工選擇免費 GPU 為前提，提供 synthetic/authorized WAV 與 M4A decode 流程、GPU/dependency/download/decoder preflight、redacted structured evidence，並對每項前置條件失敗輸出分類與 retry step。
     - 不得在 package 中執行或宣稱 CE 的 production invocation。
     - _Requirements: 3.5, 3.6, 6.1, 6.2, 6.4, 6.5, 6.7, 6.8, 6.9, 6.10, 6.11_
 
-  - [ ] 8.3 在 `backend/asr_colab/formospeech_whisper_v3/` 建立 FormoSpeech Whisper-v3 手動驗證 package
+  - [x] 8.3 在 `backend/asr_colab/formospeech_whisper_v3/` 建立 FormoSpeech Whisper-v3 手動驗證 package
     - 建立 `validation.ipynb`、README、全精確版本的 `requirements.lock`、fixture provenance 與 evidence schema；固定記錄 `formospeech/whisper-large-v3-taiwanese-hakka`、`CC BY-NC 4.0`、gated-model prerequisite 與 `colab_validation_only`。
     - 僅從 Colab Secret 或短生命週期 runtime environment 讀取 token；不將 token 寫入 notebook、output、lockfile、evidence 或 ADR。開始轉寫前使用 task 2 的 exact validator 檢查 Formo Prompt ID，並提供 WAV/M4A、GPU/dependency/download/gated-access/token/decoder failure 的 retry steps。
     - 不得在 package 中執行或宣稱 Formo 的 production invocation。
     - _Requirements: 3.5, 3.6, 3.8, 6.1, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10, 6.11_
 
-- [ ] 9. 建立 ADR template 並使其通過既有 schema checks
-  - [ ] 9.1 建立 `docs/adr/asr-model-validation-template.md`，以 task 6 validator 與 task 7 tests 驗證其 heading 與 evidence-reference schema
+- [x] 9. 建立 ADR template 並使其通過既有 schema checks
+  - [x] 9.1 建立 `docs/adr/asr-model-validation-template.md`，以 task 6 validator 與 task 7 tests 驗證其 heading 與 evidence-reference schema
     - 提供 `title`、`status`、`date`、`owners`、`scope`、`candidate_models`、`evidence_references`、`aws_capability_gate_status`、`decision`、`rationale`、`risks`、`non_goals`、`follow_up_actions` 等必要 section。
     - 僅允許 ADR evidence reference 使用 `run_id`、`model_id`、`input_fixture_id`、`outcome`、`failure_category`；不得寫入完整 transcript、token、audio、prompt、raw provider response 或其他敏感內容。
     - 在 non-goals 明確標示 Taiwan-Tongues-ASR-CE 與 FormoSpeech Whisper-v3 的 production invocation 為本期禁止，並將 AWS capability gate 保持為外部核准紀錄，不推定服務、Region 或 deployment decision。
     - _Requirements: 7.4, 7.5, 7.6, 8.3, 8.11_
 
-- [ ] 10. Checkpoint — 執行必要 ASR-only pytest 驗證並交接人工 Colab gate
+- [x] 10. Checkpoint — 執行必要 ASR-only pytest 驗證並交接人工 Colab gate
   - Ensure all tests pass, ask the user if questions arise.
-  - [ ] 10.1 在 `backend/` 以指定命令執行必要、非 optional 的 ASR-only suite，修正本計畫範圍內任何失敗後重跑至通過
+  - [x] 10.1 在 `backend/` 以指定命令執行必要、非 optional 的 ASR-only suite，修正本計畫範圍內任何失敗後重跑至通過
     - 依序執行 `python -m pip install -e ".[dev]"` 與 `python -m pytest tests/asr -q`；確認 unit、fixture 與五類 property tests 均執行，任何失敗皆使驗證非零結束。
     - 驗證 suite 不建立實際 AWS service、SDK 或 network 呼叫，不執行真實模型或 production invocation，且不包含完整對話測試。
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 8.10, 8.11, 8.12, 8.13_
 
-  - [ ] 10.2 透過 `backend/asr_colab/` 的 README/notebook instructions 交接不可自動化的人工 Colab gate，但不在 CI 或本任務中實際呼叫模型
+  - [x] 10.2 透過 `backend/asr_colab/` 的 README/notebook instructions 交接不可自動化的人工 Colab gate，但不在 CI 或本任務中實際呼叫模型
     - 人工驗證者須在免費 Colab 選擇 GPU、只上傳 synthetic/authorized WAV 或 M4A、確認 fixture provenance、執行依賴／下載／decoder preflight，並檢查 redacted evidence 是否符合 schema。
     - Formo 額外須確認 gated-model access 與 token 只存在 runtime secret；CE/Formo 任一前置條件失敗必依 package 的 failure category 與 retry step 處理。
     - 手動 gate 的輸出僅能作為 ADR evidence；不得開啟 production invocation、實際 AWS service/SDK/network 或任何部署流程。

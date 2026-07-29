@@ -214,6 +214,114 @@
         "chatSessionId": "sess_89d93b21-6278-423d-a9cb-000c8a01f79c",
         "timestamp": 1785248834826
       }
+    ],
+    "8.1 在 `backend/asr_colab/` 建立兩模型共用的 Colab validation contract、匿名 fixture provenance 與安全 evidence 輸出規則": [
+      {
+        "executionId": "15565b15-583e-41f3-83b2-7e995c2bcdc4",
+        "chatSessionId": "sess_0e146f0b-453d-41e6-9f49-979e6116a226",
+        "timestamp": 1785286724685
+      },
+      {
+        "executionId": "17c481c7-01d4-4818-8166-c5f5c9265ecf",
+        "chatSessionId": "sess_0e146f0b-453d-41e6-9f49-979e6116a226",
+        "timestamp": 1785286965926
+      },
+      {
+        "executionId": "17c481c7-01d4-4818-8166-c5f5c9265ecf",
+        "chatSessionId": "sess_0e146f0b-453d-41e6-9f49-979e6116a226",
+        "timestamp": 1785287385589
+      }
+    ],
+    "8.2 在 `backend/asr_colab/taiwan_tongues_asr_ce/` 建立 Taiwan-Tongues-ASR-CE 手動驗證 package": [
+      {
+        "executionId": "17c481c7-01d4-4818-8166-c5f5c9265ecf",
+        "chatSessionId": "sess_0e146f0b-453d-41e6-9f49-979e6116a226",
+        "timestamp": 1785287391887
+      },
+      {
+        "executionId": "17c481c7-01d4-4818-8166-c5f5c9265ecf",
+        "chatSessionId": "sess_0e146f0b-453d-41e6-9f49-979e6116a226",
+        "timestamp": 1785289642347
+      }
+    ],
+    "8.3 在 `backend/asr_colab/formospeech_whisper_v3/` 建立 FormoSpeech Whisper-v3 手動驗證 package": [
+      {
+        "executionId": "17c481c7-01d4-4818-8166-c5f5c9265ecf",
+        "chatSessionId": "sess_0e146f0b-453d-41e6-9f49-979e6116a226",
+        "timestamp": 1785287392789
+      },
+      {
+        "executionId": "17c481c7-01d4-4818-8166-c5f5c9265ecf",
+        "chatSessionId": "sess_0e146f0b-453d-41e6-9f49-979e6116a226",
+        "timestamp": 1785289643416
+      }
+    ],
+    "8. 建立僅人工驗證的 Colab common contract、CE 與 Formo 套件": [
+      {
+        "executionId": "17c481c7-01d4-4818-8166-c5f5c9265ecf",
+        "chatSessionId": "sess_0e146f0b-453d-41e6-9f49-979e6116a226",
+        "timestamp": 1785289643496
+      }
+    ],
+    "9.1 建立 `docs/adr/asr-model-validation-template.md`，以 task 6 validator 與 task 7 tests 驗證其 heading 與 evidence-reference schema": [
+      {
+        "executionId": "6dbaec15-080e-4fad-9d77-29d5a98cbddf",
+        "chatSessionId": "sess_36393a1c-28a2-4177-8f2c-eb1c4f6da809",
+        "timestamp": 1785332736192
+      },
+      {
+        "executionId": "6dbaec15-080e-4fad-9d77-29d5a98cbddf",
+        "chatSessionId": "sess_36393a1c-28a2-4177-8f2c-eb1c4f6da809",
+        "timestamp": 1785332974483
+      }
+    ],
+    "9. 建立 ADR template 並使其通過既有 schema checks": [
+      {
+        "executionId": "6dbaec15-080e-4fad-9d77-29d5a98cbddf",
+        "chatSessionId": "sess_36393a1c-28a2-4177-8f2c-eb1c4f6da809",
+        "timestamp": 1785332974609
+      }
+    ],
+    "10.1 在 `backend/` 以指定命令執行必要、非 optional 的 ASR-only suite，修正本計畫範圍內任何失敗後重跑至通過": [
+      {
+        "executionId": "01e293d6-f432-4b7b-8b44-d05b22d7a9ef",
+        "chatSessionId": "sess_31c577d6-839c-4b18-98c8-c35ca7b08837",
+        "timestamp": 1785333077926
+      },
+      {
+        "executionId": "01e293d6-f432-4b7b-8b44-d05b22d7a9ef",
+        "chatSessionId": "sess_31c577d6-839c-4b18-98c8-c35ca7b08837",
+        "timestamp": 1785333088163
+      },
+      {
+        "executionId": "01e293d6-f432-4b7b-8b44-d05b22d7a9ef",
+        "chatSessionId": "sess_31c577d6-839c-4b18-98c8-c35ca7b08837",
+        "timestamp": 1785333211161
+      }
+    ],
+    "10.2 透過 `backend/asr_colab/` 的 README/notebook instructions 交接不可自動化的人工 Colab gate，但不在 CI 或本任務中實際呼叫模型": [
+      {
+        "executionId": "01e293d6-f432-4b7b-8b44-d05b22d7a9ef",
+        "chatSessionId": "sess_31c577d6-839c-4b18-98c8-c35ca7b08837",
+        "timestamp": 1785333078008
+      },
+      {
+        "executionId": "01e293d6-f432-4b7b-8b44-d05b22d7a9ef",
+        "chatSessionId": "sess_31c577d6-839c-4b18-98c8-c35ca7b08837",
+        "timestamp": 1785333217876
+      },
+      {
+        "executionId": "01e293d6-f432-4b7b-8b44-d05b22d7a9ef",
+        "chatSessionId": "sess_31c577d6-839c-4b18-98c8-c35ca7b08837",
+        "timestamp": 1785333368227
+      }
+    ],
+    "10. Checkpoint — 執行必要 ASR-only pytest 驗證並交接人工 Colab gate": [
+      {
+        "executionId": "01e293d6-f432-4b7b-8b44-d05b22d7a9ef",
+        "chatSessionId": "sess_31c577d6-839c-4b18-98c8-c35ca7b08837",
+        "timestamp": 1785333368313
+      }
     ]
   }
 }
