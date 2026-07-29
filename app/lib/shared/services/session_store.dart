@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/caregiver.dart';
 import '../models/elder.dart';
 import 'demo_data.dart';
 
@@ -69,6 +70,11 @@ class AppSession {
   /// 才不會把上一個人的設定寫到下一個人的 key 底下。
   String? _accountId;
 
+  /// 目前登入的照護者自己的身分（`GET /me`）。尚未載入或不是照護者時為 null。
+  ///
+  /// 屬於 [_accountId] 這個帳號，換帳號後必須重新載入——報錯 ID 的後果是家人綁到別人。
+  Caregiver? me;
+
   /// 照護者可存取的長者（`GET /elders`）。尚未載入時為空。
   List<Elder> elders = const [];
 
@@ -123,6 +129,8 @@ class AppSession {
   ///   本機旗標連同 [saveSetup] 的持久化一併移除。
   Future<void> loadForAccount(String? accountId) async {
     _accountId = accountId;
+    // 上一個帳號的 ID 不能留：這一頁的用途就是把 ID 報給家人，顯示錯的比不顯示更糟。
+    me = null;
     final p = await SharedPreferences.getInstance();
     setupDone = accountId == null
         ? false
@@ -132,6 +140,20 @@ class AppSession {
     lang = p.getString(_kLang) ?? 'zh-TW';
     selectedElderId = p.getString(_kSelectedElder);
     linkedCaregiverIds = p.getStringList(_kLinkedCaregivers) ?? const [];
+  }
+
+  /// 確保 [me] 已載入並回傳；未登入時回 null（沒有帳號可以問「我是誰」）。
+  ///
+  /// 只在照護者模式呼叫——`GET /me` 對長者帳號回 403 `FORBIDDEN`。
+  ///
+  /// TODO: 後端上線後改為 `api.getMe()`，此處的 DemoData 一併移除。
+  Future<Caregiver?> ensureMeLoaded() async {
+    final cached = me;
+    if (cached != null) return cached;
+    // 登入時由 [loadForAccount] 帶進來的 Cognito `sub`。
+    final sub = _accountId;
+    if (sub == null) return null;
+    return me = await DemoData.me(sub: sub);
   }
 
   /// 連結一位照護者到這個長者帳號。已連結過的回 false，讓畫面能給出不同回饋。
@@ -281,6 +303,7 @@ class AppSession {
     elderName = '';
     elderNickname = '';
     lang = 'zh-TW';
+    me = null;
     elders = const [];
     selectedElderId = null;
     linkedCaregiverIds = const [];

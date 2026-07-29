@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../shared/models/caregiver.dart';
 import '../../shared/models/elder.dart';
 import '../../shared/models/routine.dart';
 import '../../shared/services/demo_data.dart';
@@ -167,6 +169,9 @@ class _EldersScreenState extends State<EldersScreen> {
               title: '管理',
               subtitle: '長輩資料與例行公事',
               onElderChanged: (_) => _reload(),
+              // 綁定新的長輩要靠這組 ID（api.md「綁定照護者」），所以它得有一個
+              // 固定看得到的入口，不能只存在後端。
+              trailing: const _MyIdButton(),
             ),
             Expanded(
               child: AsyncView<List<Routine>>(
@@ -903,4 +908,210 @@ String _weekdayName(int? w) {
   const names = ['一', '二', '三', '四', '五', '六', '日'];
   if (w == null || w < 1 || w > 7) return '';
   return names[w - 1];
+}
+
+/// 頁首右側的「ID」入口——照護者自己的 ID（`GET /me`）。
+///
+/// 為什麼要有這一顆：綁定第二位長輩、或長輩自己開的帳號，都是由**家人在長輩手機上
+/// 輸入自己的 ID**完成（api.md「綁定照護者」）。ID 是後端由 Cognito `sub` 衍生的，
+/// 照護者無從得知，App 不給看就等於這條路走不通。
+class _MyIdButton extends StatelessWidget {
+  const _MyIdButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      label: '我的 ID，點一下查看並複製',
+      child: InkWell(
+        onTap: () => _showMyIdSheet(context),
+        borderRadius: const BorderRadius.all(AppRadius.pill),
+        child: Container(
+          // 照護者模式觸控下限 44dp（MASTER.md §6）。
+          constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: AppColors.chipSurface,
+            borderRadius: const BorderRadius.all(AppRadius.pill),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.badge_outlined,
+                  size: 18, color: AppColors.accentText),
+              const SizedBox(width: AppSpacing.xs),
+              Text('ID',
+                  style:
+                      text.labelSmall?.copyWith(color: AppColors.accentText)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showMyIdSheet(BuildContext context) => showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.cardAlt,
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.voicePanel),
+      builder: (_) => const _MyIdSheet(),
+    );
+
+/// 我的 ID 面板：顯示 ID、一鍵複製，並說明它要拿去哪裡用。
+///
+/// 有明確關閉鈕，不只靠往下滑（MASTER.md §12 modal escape）。
+class _MyIdSheet extends StatefulWidget {
+  const _MyIdSheet();
+
+  @override
+  State<_MyIdSheet> createState() => _MyIdSheetState();
+}
+
+class _MyIdSheetState extends State<_MyIdSheet> {
+  late Future<Caregiver?> _future;
+
+  /// 已複製的回饋刻意不設計成幾秒後消失：面板是使用者主動關的，
+  /// 停在畫面上比用 SnackBar 好——SnackBar 會被面板本身蓋住。
+  bool _copied = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  void _load() => _future = AppSession.instance.ensureMeLoaded();
+
+  Future<void> _copy(String id) async {
+    await Clipboard.setData(ClipboardData(text: id));
+    if (!mounted) return;
+    setState(() => _copied = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('我的 ID', style: text.titleMedium)),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: '關閉',
+                  icon: const Icon(Icons.close, color: AppColors.ink),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              '請在長輩的手機上打開「連結家人」，輸入這組 ID，\n您就能看到他每天的狀況。',
+              style: text.bodyMedium?.copyWith(color: AppColors.inkSecondary),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            AsyncView<Caregiver?>(
+              future: _future,
+              onRetry: () => setState(_load),
+              isEmpty: (me) => me == null,
+              emptyIcon: Icons.badge_outlined,
+              emptyText: '還沒取得您的 ID，請重新登入後再試。',
+              builder: (context, me) => _IdCard(
+                caregiver: me!,
+                copied: _copied,
+                onCopy: () => _copy(me.caregiverId),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// ID 本體與複製鈕。
+class _IdCard extends StatelessWidget {
+  const _IdCard({
+    required this.caregiver,
+    required this.copied,
+    required this.onCopy,
+  });
+
+  final Caregiver caregiver;
+  final bool copied;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AppCard(
+          color: AppColors.nest,
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          border: Border.all(color: AppColors.border),
+          shadows: const [],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 後端保證 name 有值，但 demo 的 token 沒有名字可取，所以留空時不畫這一行。
+              if (caregiver.name.trim().isNotEmpty) ...[
+                Text(caregiver.name.trim(),
+                    style: text.bodySmall
+                        ?.copyWith(color: AppColors.inkSecondary)),
+                const SizedBox(height: AppSpacing.xs),
+              ],
+              // ID 是英數混合，字距拉開避免 0/o、1/l 看錯；可長按選取，
+              // 給複製鈕失效（如某些桌面環境）時留一條路。
+              SelectableText(
+                caregiver.caregiverId,
+                style: text.titleLarge?.copyWith(letterSpacing: 2),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: FilledButton.icon(
+            onPressed: onCopy,
+            // 狀態不只靠文字：icon 一起換（MASTER.md §6）。
+            icon: Icon(copied ? Icons.check : Icons.copy_all_outlined, size: 18),
+            label: Text(copied ? '已複製' : '複製 ID', style: text.labelLarge),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.accentText,
+              foregroundColor: Colors.white,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(AppRadius.field),
+              ),
+            ),
+          ),
+        ),
+        if (copied) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              const Icon(Icons.check_circle,
+                  size: 16, color: AppColors.successFg),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text('已複製到剪貼簿，可以傳給家人了',
+                    style:
+                        text.bodySmall?.copyWith(color: AppColors.successFg)),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
 }

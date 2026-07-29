@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import '../models/ask_result.dart';
+import '../models/caregiver.dart';
 import '../models/chat_reply.dart';
 import '../models/daily_summary.dart';
 import '../models/elder.dart';
@@ -120,6 +121,17 @@ class ApiClient {
       body: const <String, dynamic>{},
     );
     return SessionCloseResult.fromJson(json);
+  }
+
+  // ---- 呼叫者身分 ----
+
+  /// `GET /me` — 呼叫者自己的身分（照護者 ID 與顯示名稱）。
+  ///
+  /// 照護者要把 ID 報給家人（長輩手機上的「連結家人」輸入它），得先看得到自己的 ID。
+  /// 長者帳號呼叫回 403 `FORBIDDEN`，所以只在照護者模式呼叫。
+  Future<Caregiver> getMe() async {
+    final json = await _request('GET', '/me');
+    return Caregiver.fromJson(json);
   }
 
   // ---- 長者資料 ----

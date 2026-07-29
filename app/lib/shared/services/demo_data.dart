@@ -1,4 +1,5 @@
-﻿import '../models/daily_summary.dart';
+﻿import '../models/caregiver.dart';
+import '../models/daily_summary.dart';
 import '../models/elder.dart';
 import '../models/life_event.dart';
 import '../models/api_page.dart';
@@ -32,6 +33,33 @@ abstract final class DemoData {
   static String _two(int v) => v.toString().padLeft(2, '0');
 
   static Future<T> _delayed<T>(T value) => Future.delayed(latency, () => value);
+
+  // ---- 呼叫者身分 ----
+
+  /// 照護者自己的身分（`GET /me`）。
+  ///
+  /// [name] 留空：demo 的 ID token 只有 `sub`，沒有 `name` 也沒有 email 可取
+  /// （見 `DemoAuthBackend._fakeIdToken`）。正式版由後端保證有值，畫面因此要能
+  /// 接受沒有名字的情況——真正要給家人的是 ID，名字只是佐證。
+  static Future<Caregiver> me({required String sub}) =>
+      _delayed(Caregiver(caregiverId: caregiverIdFor(sub), name: ''));
+
+  /// 由 Cognito `sub` 衍生 `cg_<8-lowercase-hex>`（api.md 的 ID 格式）。
+  ///
+  /// **必須是穩定的**：照護者把 ID 報給家人之後就不能再變，否則長輩那邊綁的是一組
+  /// 對不上的值。所以這裡是純函式雜湊，不用隨機值、不做持久化。
+  ///
+  /// 用 mod 2^32 的多項式雜湊而不是 FNV-1a：FNV 的乘數會讓中間值超過 2^53，
+  /// 在 web（JS number）上失去精度，同一個 sub 在不同平台會算出不同 ID。
+  ///
+  /// TODO: 後端上線後整檔刪除；正式版的 ID 由後端從 sub 衍生，App 不自己算。
+  static String caregiverIdFor(String sub) {
+    var h = 0;
+    for (final c in sub.codeUnits) {
+      h = (h * 131 + c) % 0x100000000;
+    }
+    return 'cg_${h.toRadixString(16).padLeft(8, '0')}';
+  }
 
   // ---- 長者 ----
 
