@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "taiwan_tongues_asr_ce/evidence.schema.json",
+  "title": "Taiwan-Tongues-ASR-CE Validation Evidence Record",
+  "description": "Taiwan-Tongues-ASR-CE 手動 Colab 驗證的結構化 evidence schema。繼承並遵守父層 evidence.schema.json 所有規則，固定 model_id 與 usage 為 colab_validation_only。",
+  "$ref": "../evidence.schema.json",
+  "$comment": "本 schema 引用父層 evidence.schema.json 並額外約束 model_id。驗證時需同時檢查父層 required fields、forbidden fields 與 success/failure 規則。",
+  "properties": {
+    "model_id": {
+      "type": "string",
+      "const": "adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0",
+      "description": "固定為 Taiwan-Tongues-ASR-CE v2.0 模型識別。"
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "zh",
+        "hak"
+      ],
+      "description": "僅允許 zh（華語）或 hak（客語）。"
+    },
+    "runtime_kind": {
+      "type": "string",
+      "const": "colab_free_gpu",
+      "description": "固定為免費 Colab GPU 環境。"
+    }
+  }
+}

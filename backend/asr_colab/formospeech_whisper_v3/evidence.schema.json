@@ -1,0 +1,145 @@
+{
+  "title": "FormoSpeech Whisper-v3 Colab Validation Evidence Record",
+  "description": "FormoSpeech Whisper-v3 手動驗證產出的結構化 evidence schema。繼承並嚴格遵守父層 evidence.schema.json 的欄位定義、success/failure 規則、禁止欄位與去識別化版本。model_id 固定為 formospeech/whisper-large-v3-taiwanese-hakka，language 固定為 hak。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "recorded_at",
+    "model_id",
+    "model_revision",
+    "language",
+    "input_format",
+    "input_fixture_id",
+    "audio_duration_ms",
+    "runtime_kind",
+    "dependency_manifest_digest",
+    "outcome",
+    "failure_prerequisite",
+    "failure_category",
+    "transcript_present",
+    "transcript_character_count",
+    "evidence_redaction_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Evidence schema 版本號。"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "本次驗證的唯一識別碼。"
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 紀錄時間。"
+    },
+    "model_id": {
+      "type": "string",
+      "const": "formospeech/whisper-large-v3-taiwanese-hakka",
+      "description": "模型識別，固定為 formospeech/whisper-large-v3-taiwanese-hakka。"
+    },
+    "model_revision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "模型版本或 revision hash。"
+    },
+    "language": {
+      "type": "string",
+      "const": "hak",
+      "description": "辨識語言碼，固定為 hak（客語）。"
+    },
+    "input_format": {
+      "type": "string",
+      "enum": ["wav", "m4a"],
+      "description": "輸入音訊格式，僅允許 wav 或 m4a。"
+    },
+    "input_fixture_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "匿名 fixture ID，對應 fixture_provenance.json。"
+    },
+    "audio_duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "音訊時長（毫秒）。"
+    },
+    "runtime_kind": {
+      "type": "string",
+      "const": "colab_free_gpu",
+      "description": "執行環境類型，固定為 colab_free_gpu。"
+    },
+    "dependency_manifest_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "requirements.lock 的 SHA-256 hex digest。"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["success", "failure"],
+      "description": "驗證結果：success 或 failure。"
+    },
+    "failure_prerequisite": {
+      "type": "string",
+      "description": "失敗時的前置條件描述；成功時為空字串。"
+    },
+    "failure_category": {
+      "type": "string",
+      "description": "失敗分類；成功時為空字串。"
+    },
+    "transcript_present": {
+      "type": "boolean",
+      "description": "是否成功產生逐字稿。"
+    },
+    "transcript_character_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "逐字稿字元數；outcome=success 時必須 > 0，failure 時為 0。"
+    },
+    "evidence_redaction_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "去識別化規則版本號。"
+    }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["transcript"] },
+      { "required": ["token"] },
+      { "required": ["hf_token"] },
+      { "required": ["audio"] },
+      { "required": ["audio_bytes"] },
+      { "required": ["pcm_samples"] },
+      { "required": ["prompt_id"] },
+      { "required": ["formo_prompt_id"] },
+      { "required": ["raw_response"] },
+      { "required": ["raw_provider_response"] }
+    ]
+  },
+  "additionalProperties": false,
+  "if": {
+    "properties": { "outcome": { "const": "success" } },
+    "required": ["outcome"]
+  },
+  "then": {
+    "properties": {
+      "transcript_present": { "const": true },
+      "transcript_character_count": { "type": "integer", "minimum": 1 }
+    }
+  },
+  "else": {
+    "if": {
+      "properties": { "outcome": { "const": "failure" } },
+      "required": ["outcome"]
+    },
+    "then": {
+      "properties": {
+        "failure_prerequisite": { "type": "string", "minLength": 1 },
+        "failure_category": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
