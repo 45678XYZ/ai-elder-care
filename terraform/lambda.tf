@@ -54,6 +54,8 @@ module "pre_token" {
   source_path   = "${path.module}/../backend/src/handlers/pre_token_generation.py"
   artifacts_dir = "${path.module}/build"
 
+  cloudwatch_logs_retention_in_days = 30
+
   environment_variables = {
     ELDER_ACCOUNTS_TABLE = aws_dynamodb_table.elder_accounts.name
   }
@@ -242,6 +244,8 @@ module "batch_extractor" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  cloudwatch_logs_retention_in_days = 30
+
   environment_variables = merge(local.extraction_env, {
     BATCH_LEASE_SECONDS = tostring(var.batch_lambda_timeout * 2)
   })
@@ -275,6 +279,8 @@ module "session_closer" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  cloudwatch_logs_retention_in_days = 30
+
   environment_variables = merge(local.extraction_env, {
     SESSION_IDLE_MINUTES = tostring(var.session_idle_minutes)
   })
@@ -297,6 +303,8 @@ module "dlq_reconciler" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
 
   environment_variables = merge(local.extraction_env, {
     BATCH_ALERT_TOPIC_ARN = aws_sns_topic.batch_alerts.arn
@@ -330,6 +338,8 @@ module "api_events" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
 
   environment_variables = local.extraction_env
 }

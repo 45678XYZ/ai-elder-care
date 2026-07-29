@@ -41,6 +41,15 @@ resource "aws_api_gateway_authorizer" "cognito" {
   identity_source = "method.request.header.Authorization"
 }
 
+# 請求格式驗證器：在最前線檢查必填 Querystring / Headers 與 Request Body 格式，
+# 無效請求在 Gateway 直接擋下 (400)，不觸發後端 Lambda 節省算力與費用。
+resource "aws_api_gateway_request_validator" "validator" {
+  name                        = "${var.project_name}-request-validator"
+  rest_api_id                 = aws_api_gateway_rest_api.api.id
+  validate_request_body       = true
+  validate_request_parameters = true
+}
+
 # --- GET /events（照護者事件時間軸）---
 
 resource "aws_api_gateway_resource" "events" {
@@ -50,11 +59,12 @@ resource "aws_api_gateway_resource" "events" {
 }
 
 resource "aws_api_gateway_method" "get_events" {
-  rest_api_id   = aws_api_gateway_rest_api.api.id
-  resource_id   = aws_api_gateway_resource.events.id
-  http_method   = "GET"
-  authorization = "COGNITO_USER_POOLS"
-  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.events.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
 
   request_parameters = {
     "method.request.querystring.elder_id"   = true
@@ -114,11 +124,12 @@ resource "aws_api_gateway_resource" "chat_session_close" {
 }
 
 resource "aws_api_gateway_method" "close_session" {
-  rest_api_id   = aws_api_gateway_rest_api.api.id
-  resource_id   = aws_api_gateway_resource.chat_session_close.id
-  http_method   = "POST"
-  authorization = "COGNITO_USER_POOLS"
-  authorizer_id = aws_api_gateway_authorizer.cognito.id
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.chat_session_close.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
 
   request_parameters = {
     "method.request.path.session_id" = true
@@ -157,6 +168,7 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_method.close_session,
       aws_api_gateway_integration.close_session,
       aws_api_gateway_authorizer.cognito,
+      aws_api_gateway_request_validator.validator,
     ]))
   }
 
