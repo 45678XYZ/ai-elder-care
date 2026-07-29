@@ -7,7 +7,9 @@ src/
 ├── handlers/     # chat / elders / summaries / events / routines / stats / summary_generator / pre_token_generation（Cognito trigger）
 ├── extraction/   # 生活記錄（Module B）萃取 pipeline：分類體系、分塊、分類、萃取、canonical identity、去重
 │   └── assets/   # 隨部署包發佈的資產：taxonomy/ 分類體系、segmenter/ 分塊模型
-└── shared/       # auth（token 授權）、db（DynamoDB 六表）、responses（統一回應格式）、bedrock（模型呼叫）
+└── shared/       # auth（token 授權）、db（DynamoDB 六表）、models（Pydantic schema）、
+                  # responses（統一回應格式）、routines（例行公事版本與 occurrence 推導）、
+                  # bedrock（模型呼叫）、sessions（session 生命週期）、metrics（觀測指標）
 scripts/          # 離線工具（資產檢視、索引建置、模型導出）
 tests/            # pytest
 ```

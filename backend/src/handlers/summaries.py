@@ -1,6 +1,6 @@
 """每日摘要 API。規格見 docs/api.md。
 
-- GET  /summaries?elder_id=&from=&to=   僅回已生成日期；sections 固定六類、無資料為 null
+- GET  /summaries?elder_id=&from=&to=   僅回已生成日期；sections 固定七類、無資料為 null
 - POST /summaries/generate              手動觸發（同步、同日覆寫；無對話仍回 200）
 """
 from src.shared import responses
