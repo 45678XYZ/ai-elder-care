@@ -85,8 +85,7 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
 
   # 綁定 Tools 處理的後端 Lambda 函數
   action_group_executor {
-    # 這裡假設 lambda.tf 中定義了名為 aws_lambda_function.tools_lambda 的資源
-    lambda = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}-tools"
+    lambda = aws_lambda_function.tools.arn
   }
 
   # 定義 Inline Functions (無需外部 Swagger/OpenAPI JSON 檔案)
@@ -315,8 +314,7 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
 resource "aws_lambda_permission" "allow_bedrock_to_invoke_tools" {
   statement_id  = "AllowBedrockInvoke"
   action        = "lambda:InvokeFunction"
-  # 這裡假設 lambda.tf 中定義了名為 aws_lambda_function.tools_lambda 的資源
-  function_name = "${var.project_name}-tools"
+  function_name = aws_lambda_function.tools.function_name
   principal     = "bedrock.amazonaws.com"
   source_arn    = aws_bedrockagent_agent.elder_companion_agent.arn
 }
