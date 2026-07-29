@@ -6,8 +6,6 @@
 
 resource "aws_s3_bucket" "audio" {
   bucket        = "${var.project_name}-audio"
-  force_destroy = true # 為了開發環境能輕易 destroy，實際專案請拿掉
-
   tags = {
     Project     = var.project_name
     Environment = "production"
