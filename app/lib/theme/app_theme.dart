@@ -175,45 +175,47 @@ abstract final class AppShadows {
 
 /// §3 字體家族依**用途**分工，不是依字級：
 ///
-/// - **襯線（Noto Serif TC）** — 標題與大數字。品牌記憶點，也是農民曆牌面的來源。
-/// - **黑體（Noto Sans TC）** — 內文、按鈕、輸入框等所有 UI 元件，含長者模式的 24sp 內文。
+/// - **黑體（Noto Sans TC）** — 標題、大數字、內文、按鈕、輸入框，所有 UI 文字。
+/// - **襯線（Noto Serif TC）** — 只留農民曆牌面，見 [AlmanacTypography]。
 ///
-/// 原本的規則是「>=24sp 一律襯線」，但長者模式內文全在 24sp 以上，等於整個 App
-/// 都是明體。明體橫畫細，對比敏感度下降的長輩讀起來是實質負擔；西文（如 email）
-/// 用襯線渲染也跟中文不搭。標題留襯線就足以維持手帳感。
+/// 這條規則收斂過兩次。最早是「>=24sp 一律襯線」，但長者模式內文全在 24sp 以上，
+/// 等於整個 App 都是明體；接著收成「標題與大數字襯線」，實機看標題級的中文還是
+/// 同一個問題，只是輕一點。明體橫畫細，對比敏感度下降的長輩讀起來是實質負擔；
+/// 西文（如 email）用襯線渲染也跟中文不搭。手帳感由牌面、紙感底與朱紅點綴撐著，
+/// 不必靠 UI 文字的字形。
 ///
 /// 永遠走 Theme.of(context).textTheme，不要寫死 fontSize。
 abstract final class AppTypography {
   /// 字檔打包在 assets/fonts/（見 pubspec）。**不用 google_fonts 執行期下載**——
   /// 下載版第一次啟動與離線時會先用系統字頂著、載完才跳字，而且各家 Android
   /// 的預設中文字不同，畫面會因機而異。
+  ///
+  /// [serifFamily] 現在只有牌面在用，但常數留在這裡：牌面的字級組是照這一份
+  /// token 表定的，字體家族跟著一起放才找得到。
   static const serifFamily = 'NotoSerifTC';
   static const sansFamily = 'NotoSansTC';
 
-  static TextStyle _serif(double size, FontWeight w) => TextStyle(
-      fontFamily: serifFamily,
-      fontSize: size,
-      fontWeight: w,
-      height: 1.5,
-      color: AppColors.ink);
-  static TextStyle _sans(double size, FontWeight w) => TextStyle(
-      fontFamily: sansFamily,
-      fontSize: size,
-      fontWeight: w,
-      height: 1.55,
-      color: AppColors.ink);
+  /// [height] 只有標題那兩階會覆寫：46/32 沿用收斂前的 1.5，行距跟著字級一起
+  /// 放大會讓標題散開。
+  static TextStyle _sans(double size, FontWeight w, {double height = 1.55}) =>
+      TextStyle(
+          fontFamily: sansFamily,
+          fontSize: size,
+          fontWeight: w,
+          height: height,
+          color: AppColors.ink);
 
   static final textTheme = TextTheme(
     // 大數字（麥克風狀態等）— 行高 .78
     displayLarge: const TextStyle(
-        fontFamily: serifFamily,
+        fontFamily: sansFamily,
         fontSize: 66,
         fontWeight: FontWeight.w900,
         height: .78,
         color: AppColors.accentText),
-    displayMedium: _serif(46, FontWeight.w900),
-    // 長者模式標題——襯線只留在這一階與更大的數字
-    headlineLarge: _serif(32, FontWeight.w900),
+    displayMedium: _sans(46, FontWeight.w900, height: 1.5),
+    // 長者模式標題
+    headlineLarge: _sans(32, FontWeight.w900, height: 1.5),
     // 狀態大字（麥克風狀態等）：是 UI 而非標題，走黑體
     headlineMedium: _sans(26, FontWeight.w900),
     // 長者模式內文下限（§3 硬性 24）：內文與按鈕、輸入框都用這階，走黑體
@@ -238,8 +240,8 @@ abstract final class AppTypography {
 /// 六個元素是一組互相依賴的比例，缺一個或單獨改一個就不是撕曆的樣子了——
 /// 之前小卡／過場／放大檢視各寫一套絕對字級，三個地方的版面才會各長各的。
 ///
-/// 字體沿用「大字襯線、小字黑體」的分工，但**農曆與干支是刻意的例外**：
-/// 它們是曆書的一部分，維持襯線才有黃曆的樣子，即使字級小於 24。
+/// 牌面是**全 App 唯一用襯線的地方**（見 [AppTypography] §3 的收斂過程）：整組
+/// 六個元素都是曆書的一部分，維持襯線才有黃曆的樣子，即使字級小於 24。
 ///
 /// 顏色由呼叫端決定（台灣日曆慣例：假日朱紅、平日藍），此處不預設。
 abstract final class AlmanacTypography {

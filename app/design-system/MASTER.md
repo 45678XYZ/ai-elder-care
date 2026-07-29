@@ -1,6 +1,6 @@
 # 設計系統 — 暖紙手帳（長照陪伴）
 
-方向定案：**1b 暖紙手帳**——紙感底、朱紅點綴、Noto Serif TC 襯線、農民曆牌面、極簡。
+方向定案：**1b 暖紙手帳**——紙感底、朱紅點綴、農民曆牌面（襯線）、極簡。
 本檔為 design token 的**單一真實來源**（純數值，非 CSS）。改任何 `lib/theme/` 值之前先回這裡對。
 
 > 來源：Claude Design 原型「長照陪伴原型 手帳」。Flutter 端轉換規則見 [../CLAUDE.md](../CLAUDE.md) 與計畫書 Phase 3。
@@ -81,7 +81,7 @@
 
 ## 字體 Typography
 
-- **字體**：Noto Serif TC → fallback `system-ui, sans-serif`
+- **字體**：所有 UI 文字（含標題與大數字）走 **Noto Sans TC**；**Noto Serif TC 只用於農民曆牌面**那一組（見下方「農民曆牌面」）。兩支字檔都打包在 `assets/fonts/`，不走執行期下載。理由與收斂過程見 `lib/theme/app_theme.dart` 的 §3 註解
 - **字重**：400 · 500 · 700 · 900
 - **行高**：`.78`（農民曆數字） · `1` · `1.5` · `1.55` · `1.6`
 - **字距**：`.12em` · `.15em`（分區標題）
