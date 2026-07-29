@@ -287,6 +287,26 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
           }
         }
       }
+
+      # 工具八：查詢長者近幾日每日健康摘要（提供縱向健康趨勢）
+      functions {
+        name        = "get_daily_summaries"
+        description = "Retrieve recent daily health summaries for the elder to understand health trends over multiple days. Use this when the elder or caregiver asks about recent health status, trends, or when you need context about the elder's health over the past few days."
+        parameters {
+          parameter_detail {
+            name        = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameter_detail {
+            name        = "days"
+            type        = "integer"
+            description = "查詢最近幾天的摘要，預設為 3 天（含今天），最多 7 天。例如 days=3 代表今天+昨天+前天。"
+            required    = false
+          }
+        }
+      }
     }
   }
 }

@@ -500,6 +500,59 @@ def _publish_sns(topic_arn: Optional[str], subject: str, message: str) -> str:
 
 
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# 工具八：查詢長者近幾日每日健康摘要（供大腦提供縱向健康趨勢參考）
+# -----------------------------------------------------------------------------
+
+def handle_get_daily_summaries(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具八：查詢長者近幾日的每日健康摘要，讓大腦能參考歷史紀錄提供更貼心的對話。
+
+    預設查詢過去 3 天（含今天）的摘要；可透過 days 參數調整，最多 7 天。
+    """
+    elder_id = params.get("elder_id")
+    days = int(params.get("days", 3))
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+
+    # 限制最多查 7 天，避免資料過大影響 LLM Context
+    days = max(1, min(days, 7))
+
+    try:
+        from datetime import datetime, timedelta, timezone
+        TZ_TAIPEI = timezone(timedelta(hours=8))
+        today = datetime.now(TZ_TAIPEI)
+        to_date = today.strftime("%Y-%m-%d")
+        from_date = (today - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+
+        summaries = db.get_daily_summaries(elder_id, from_date, to_date)
+
+        # 整理為大腦易讀的精簡格式
+        formatted = []
+        for s in summaries:
+            formatted.append({
+                "date": s.get("date"),
+                "overview": s.get("overview", "（無摘要）"),
+                "routines": s.get("routines", {}),
+                "data_status": s.get("data_status", "unknown"),
+                "sections": {
+                    k: v for k, v in (s.get("sections") or {}).items() if v
+                }
+            })
+
+        return {
+            "status": "success",
+            "elder_id": elder_id,
+            "from_date": from_date,
+            "to_date": to_date,
+            "count": len(formatted),
+            "summaries": formatted
+        }
+    except Exception as e:
+        print(f"[Error] handle_get_daily_summaries 失敗: {e}")
+        return {"status": "error", "message": f"查詢每日摘要失敗: {str(e)}"}
+
+
 # 工具分流映射字典 (Function Name -> Handler Function)
 # -----------------------------------------------------------------------------
 
@@ -511,6 +564,7 @@ TOOL_HANDLERS = {
     "get_elder_profile": handle_get_elder_profile,
     "remind_pending_routines": handle_remind_pending_routines,
     "notify_caregiver": handle_notify_caregiver,
+    "get_daily_summaries": handle_get_daily_summaries,
 }
 
 

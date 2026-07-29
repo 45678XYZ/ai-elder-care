@@ -163,7 +163,7 @@ resource "aws_sns_topic" "caregiver_notifications" {
 resource "aws_lambda_function" "chat" {
   function_name = "${var.project_name}-chat"
   role          = aws_iam_role.lambda_backend_role.arn
-  handler       = "handlers.chat.handler"
+  handler       = "src.handlers.chat.handler"
   runtime       = "python3.11"
   timeout       = 30
   memory_size   = 512
@@ -190,7 +190,7 @@ resource "aws_lambda_function" "chat" {
 resource "aws_lambda_function" "tools" {
   function_name = "${var.project_name}-tools"
   role          = aws_iam_role.lambda_backend_role.arn
-  handler       = "handlers.tools.handler"
+  handler       = "src.handlers.tools.handler"
   runtime       = "python3.11"
   timeout       = 15
   memory_size   = 256
@@ -213,7 +213,7 @@ resource "aws_lambda_function" "tools" {
 resource "aws_lambda_function" "elders" {
   function_name = "${var.project_name}-elders"
   role          = aws_iam_role.lambda_backend_role.arn
-  handler       = "handlers.elders.handler"
+  handler       = "src.handlers.elders.handler"
   runtime       = "python3.11"
   timeout       = 10
 

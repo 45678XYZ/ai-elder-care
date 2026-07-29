@@ -314,6 +314,54 @@ def test_notify_mitigation_without_active_emergency_ignored(monkeypatch):
 
 
 # =============================================================================
+# 工具八：get_daily_summaries
+# =============================================================================
+
+def test_handle_get_daily_summaries_success(monkeypatch):
+    """測試 get_daily_summaries 工具：正常回傳近期摘要清單。"""
+    monkeypatch.setattr(
+        db,
+        "get_daily_summaries",
+        lambda eid, from_d, to_d: [
+            {
+                "date": "2026-07-29",
+                "overview": "今日身體狀況良好，按時服藥",
+                "routines": {"completed": 2, "missed": 0},
+                "data_status": "complete",
+                "sections": {"diet": "三餐正常", "medication": "血壓藥已服用"}
+            }
+        ]
+    )
+    res = tools.handle_get_daily_summaries({"elder_id": "eld_001", "days": "1"})
+    assert res["status"] == "success"
+    assert res["count"] == 1
+    assert res["summaries"][0]["overview"] == "今日身體狀況良好，按時服藥"
+
+
+def test_handle_get_daily_summaries_missing_elder_id():
+    """測試缺少 elder_id 時回傳 error。"""
+    res = tools.handle_get_daily_summaries({})
+    assert res["status"] == "error"
+
+
+def test_handle_get_daily_summaries_days_capped(monkeypatch):
+    """測試 days > 7 時自動截斷至 7 天。"""
+    captured = {}
+    def mock_get_summaries(eid, from_d, to_d):
+        captured["from"] = from_d
+        captured["to"] = to_d
+        return []
+
+    monkeypatch.setattr(db, "get_daily_summaries", mock_get_summaries)
+    res = tools.handle_get_daily_summaries({"elder_id": "eld_001", "days": "99"})
+    assert res["status"] == "success"
+    # 7 天範圍：to - from 應為 6 天差距
+    from datetime import datetime
+    delta = (datetime.fromisoformat(captured["to"]) - datetime.fromisoformat(captured["from"])).days
+    assert delta == 6, f"預期 6 天差距，實際得到 {delta} 天"
+
+
+# =============================================================================
 # Lambda handler 完整 Bedrock 傳入格式轉發流程
 # =============================================================================
 
