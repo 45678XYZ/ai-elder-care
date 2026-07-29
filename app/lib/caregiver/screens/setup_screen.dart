@@ -5,12 +5,24 @@ import '../../shared/services/notification_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../theme/app_theme.dart';
 
-/// S1 `/setup` — 初次設定（照護者填寫，只在首次安裝出現一次）。
+/// S1 `/setup` — 初次設定（只在還沒有長輩資料時出現一次）。
 ///
 /// 照護者規格：字級 13–24sp、觸控 >=48dp。
 /// §5.1 依據：語言（輸入方式）由照護者設定，長者端不切換，避免迷惑感。
+///
+/// 同一個畫面服務兩種情境，靠 [email] 區分：
+/// - **註冊流程中**（[email] 非 null，此時還沒登入）：註冊頁選了「長輩」後 push 進來，
+///   完成設定 → 資料按 email 暫存 → 進驗證碼頁。
+/// - **登入之後**（[email] 為 null）：這個帳號在本機沒有資料時的退路（換裝置登入），
+///   完成設定 → 直接寫進帳號 → 交給 router 決定落點。
 class SetupScreen extends StatefulWidget {
-  const SetupScreen({super.key});
+  const SetupScreen({super.key, this.email});
+
+  /// 註冊流程中要暫存資料的信箱；已登入時為 null。
+  ///
+  /// 為什麼註冊流程要靠 email 而不是直接寫帳號：那時還沒有 Cognito `sub`，
+  /// 沒有帳號可以掛（完整理由見 AppSession 的 `setup_pending_` 前綴說明）。
+  final String? email;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -79,11 +91,24 @@ class _SetupScreenState extends State<SetupScreen> {
     }
     // TODO: 串接後 POST /elders 建立長者資料（name / nickname / lang_preference）。
     // 目前先持久化到本機：標記已完成首次設定並存長者資料，之後啟動不再進此畫面。
-    await AppSession.instance.saveSetup(
-      name: _nameCtrl.text.trim(),
-      nickname: _nicknameCtrl.text.trim(),
-      lang: _lang,
-    );
+    final email = widget.email;
+    final name = _nameCtrl.text.trim();
+    final nickname = _nicknameCtrl.text.trim();
+    if (email != null) {
+      // 註冊流程：還沒登入，資料先寄放在這個信箱底下，第一次登入時才兌現到帳號。
+      await AppSession.instance.savePendingSetup(
+        email: email,
+        name: name,
+        nickname: nickname,
+        lang: _lang,
+      );
+    } else {
+      await AppSession.instance.saveSetup(
+        name: name,
+        nickname: nickname,
+        lang: _lang,
+      );
+    }
 
     // 在這裡才要通知權限，不在 App 一啟動就問——照護者剛設定完長輩資料，
     // 這時「要不要提醒吃藥」是有情境的問題，答應的機率也高得多。
@@ -96,7 +121,15 @@ class _SetupScreenState extends State<SetupScreen> {
       // 忽略：通知權限失敗不影響設定完成
     }
 
-    if (mounted) context.go('/');
+    if (!mounted) return;
+    if (email != null) {
+      // 註冊流程的下一站是驗證碼；信箱要帶過去（那一頁用它送驗證碼與重寄）。
+      // 用 push 而不是 go：驗證碼頁的返回鍵要能退回這裡改資料。
+      context.push('/auth/verify', extra: email);
+    } else {
+      // 已登入：落點不在這裡決定，交給 router 的 redirect（長者→今日頁）。
+      context.go('/');
+    }
   }
 
   @override

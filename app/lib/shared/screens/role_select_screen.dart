@@ -2,8 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../theme/app_theme.dart';
+import '../services/auth_service.dart';
 
-/// S2 `/` — 角色選擇（Demo 用；正式由帳號角色決定）。
+/// S2 `/` — 身分宣告的**退路**，不是正常流程的一站。
+///
+/// 身分現在在註冊頁就問完了（見 [SignUpScreen]），所以照正常路徑走的人不會看到這一頁。
+///
+/// 為什麼還留著：角色判定看 ID token 的 `elder_id` claim（與後端 auth.py 同一套判準），
+/// 但照護者身上本來就沒有這個 claim，所以「沒有 claim」同時代表兩件事——
+/// 「我是照護者」與「還沒選過」。而照護者的身分只存在本機（見 AuthService 檔尾
+/// TODO(backend)），因此換一台裝置登入、或清掉 App 資料之後，本機就沒有身分記錄了。
+/// 這時 `effectiveRole` 是 null，總得有地方能重新問一次，否則使用者會卡在門外。
+///
+/// 記下之後就不會再出現：之後啟動由 [AuthService.effectiveRole] 直接分流。
 class RoleSelectScreen extends StatelessWidget {
   const RoleSelectScreen({super.key});
 
@@ -31,16 +42,24 @@ class RoleSelectScreen extends StatelessWidget {
               const SizedBox(height: AppSpacing.xl),
               Text('請問你是？', style: text.headlineLarge),
               const SizedBox(height: AppSpacing.xl),
+              // 先寫入身分再導航：redirect 會用 effectiveRole 重新判定落點，
+              // 沒寫進去就走，會在下一次判定時被踢回這一頁。
               _RoleCard(
                 avatarIcon: Icons.elderly,
                 title: '長輩',
-                onTap: () => context.go('/elder/chat'),
+                onTap: () async {
+                  await AuthService.instance.chooseRole(UserRole.elder);
+                  if (context.mounted) context.go('/setup');
+                },
               ),
               const SizedBox(height: AppSpacing.lg),
               _RoleCard(
                 avatarIcon: Icons.favorite_border,
                 title: '家人 / 照護者',
-                onTap: () => context.go('/care/summary'),
+                onTap: () async {
+                  await AuthService.instance.chooseRole(UserRole.caregiver);
+                  if (context.mounted) context.go('/care/summary');
+                },
               ),
             ],
           ),

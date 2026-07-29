@@ -1,4 +1,5 @@
-﻿import 'package:ai_elder_care/shared/screens/sign_in_screen.dart';
+﻿import 'package:ai_elder_care/caregiver/screens/setup_screen.dart';
+import 'package:ai_elder_care/shared/screens/sign_in_screen.dart';
 import 'package:ai_elder_care/shared/screens/sign_up_screen.dart';
 import 'package:ai_elder_care/shared/screens/verify_email_screen.dart';
 import 'package:ai_elder_care/shared/services/auth_service.dart';
@@ -7,6 +8,8 @@ import 'package:ai_elder_care/shared/widgets/form_widgets.dart';
 import 'package:ai_elder_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 登入／註冊／驗證碼三頁。
 ///
@@ -16,6 +19,8 @@ void main() {
   setUp(() {
     // 每個測試給乾淨的假後端，且不要人為延遲。
     AuthService.instance.backend = DemoAuthBackend(latency: Duration.zero);
+    // 註冊頁會把宣告的身分寫進 SharedPreferences，每個測試都要從空的開始。
+    SharedPreferences.setMockInitialValues({});
   });
 
   Future<void> pump(
@@ -133,6 +138,97 @@ void main() {
       await tapPrimary(tester);
 
       expect(find.text('密碼至少 8 個字，要有英文字母和數字'), findsOneWidget);
+    });
+
+    testWidgets('兩個身分都沒有預設選取', (tester) async {
+      // 預設任一邊，等於在使用者沒表態時默默替他指派身分。
+      await pump(tester, const SignUpScreen());
+
+      final cards = tester.widgetList<BigChoiceCard>(find.byType(BigChoiceCard));
+      expect(cards.length, 2);
+      expect(cards.every((c) => !c.selected), isTrue);
+    });
+
+    /// 註冊頁 + 註冊流程下一站的最小路由。
+    ///
+    /// 「有沒有進到下一頁」不能只看畫面上有沒有錯誤訊息——註冊頁是用 `context.push`
+    /// 導航的，沒有 router 就根本 push 不了，等於測不到那條路。
+    ///
+    /// 要收 `/setup`：長輩的下一站是先建基本資料，不是驗證碼（見 SignUpScreen）。
+    /// 兩條路徑的完整銜接在 first_run_flow_test.dart，這裡只看註冊頁把人送去哪裡。
+    Future<void> pumpWithRouter(WidgetTester tester) async {
+      tester.view
+        ..physicalSize = const Size(390, 3000)
+        ..devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final router = GoRouter(
+        initialLocation: '/auth/sign-up',
+        routes: [
+          GoRoute(path: '/auth/sign-up', builder: (_, __) => const SignUpScreen()),
+          GoRoute(
+            path: '/setup',
+            builder: (_, state) => SetupScreen(email: state.extra as String?),
+          ),
+          GoRoute(
+            path: '/auth/verify',
+            builder: (_, state) =>
+                VerifyEmailScreen(email: state.extra as String? ?? ''),
+          ),
+          GoRoute(path: '/auth/sign-in', builder: (_, __) => const SignInScreen()),
+        ],
+      );
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp.router(theme: buildAppTheme(), routerConfig: router),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> fillForm(WidgetTester tester) async {
+      await tester.enterText(find.byType(TextField).first, 'a@example.com');
+      await tester.enterText(find.byType(TextField).last, 'secret123');
+      await tester.pump();
+    }
+
+    testWidgets('沒選身分就按註冊 → 說明原因，而且不會進驗證碼頁', (tester) async {
+      await pumpWithRouter(tester);
+      await fillForm(tester);
+      await tapPrimary(tester);
+
+      expect(find.text('請先選擇你是長輩還是家人'), findsOneWidget);
+      expect(find.byType(VerifyEmailScreen), findsNothing);
+      // 也不該偷偷把帳號建起來
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('auth_pending_role_a@example.com'), isNull);
+    });
+
+    testWidgets('選長輩 → 先去建基本資料，並把身分暫存起來', (tester) async {
+      await pumpWithRouter(tester);
+      await fillForm(tester);
+      await tester.tap(find.text('長輩'));
+      await tester.pump();
+      await tapPrimary(tester);
+
+      // 長輩的基本資料在註冊流程裡就填完，不是等第一次登入之後才補。
+      expect(find.byType(SetupScreen), findsOneWidget);
+      expect(find.byType(VerifyEmailScreen), findsNothing);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('auth_pending_role_a@example.com'), 'elder');
+    });
+
+    testWidgets('選家人 → 直接進驗證碼頁（照護者沒有要填的資料）', (tester) async {
+      await pumpWithRouter(tester);
+      await fillForm(tester);
+      await tester.tap(find.text('家人 / 照護者'));
+      await tester.pump();
+      await tapPrimary(tester);
+
+      expect(find.byType(VerifyEmailScreen), findsOneWidget);
+      expect(find.byType(SetupScreen), findsNothing);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('auth_pending_role_a@example.com'), 'caregiver');
     });
   });
 

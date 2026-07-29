@@ -253,3 +253,81 @@ class BigBackButton extends StatelessWidget {
     );
   }
 }
+
+/// 可選取的大卡片：目前用在註冊頁問「你是長輩還是家人」。
+///
+/// 樣式與觸控尺寸比照 `caregiver/screens/setup_screen.dart` 裡的私有 `_LangCard`
+/// （選取 = 2px accentText 外框 + 淺底 + 實心圓點，§9 狀態不只靠顏色傳遞），
+/// 但字級走長者規格：註冊頁在登入前，還不知道對面是長輩還是家人，一律照長者做——
+/// 大字對照護者不會不好用，反過來則會。因此觸控下限取 60dp 而非 48dp。
+///
+/// TODO(refactor): `_LangCard` 之後應該收斂過來用這個元件。目前沒動它，是因為它多了
+/// 範例句、且吃照護者規格（48dp／小字），一併改會把「首次設定」的版面也翻掉；
+/// 等這個元件補上 `subtitle` 與尺寸級別後再合。
+class BigChoiceCard extends StatelessWidget {
+  const BigChoiceCard({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      selected: selected,
+      button: true,
+      label: '$label${selected ? '，已選' : ''}',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: const BorderRadius.all(AppRadius.card),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(minHeight: 60),
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          decoration: BoxDecoration(
+            // 選取時底色也換一階：外框在紙底上不夠顯眼，長輩要能一眼看出選了哪張。
+            color: selected ? AppColors.avatarBg : AppColors.card,
+            borderRadius: const BorderRadius.all(AppRadius.card),
+            border: Border.all(
+              color: selected ? AppColors.accentText : AppColors.border,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              // 實心圓點：選取狀態的形狀線索
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: selected ? AppColors.accentText : Colors.transparent,
+                  border: Border.all(
+                    color: selected ? AppColors.accentText : AppColors.chevron,
+                    width: 2,
+                  ),
+                ),
+                child: selected
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
+                    : null,
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Icon(icon, size: 32, color: AppColors.avatarFg),
+              const SizedBox(width: AppSpacing.md),
+              // Expanded：兩倍字級時文字換行，不把卡片撐破。
+              Expanded(child: Text(label, style: text.headlineSmall)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

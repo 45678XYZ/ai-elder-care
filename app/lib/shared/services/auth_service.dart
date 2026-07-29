@@ -1,7 +1,11 @@
 import 'dart:convert';
+import 'dart:math';
+
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_backend.dart';
 import 'demo_auth_backend.dart';
+import 'session_store.dart';
 
 /// 使用者角色。判定方式與後端 `backend/src/shared/auth.py` 一致：
 /// ID token 帶 `elder_id` → 長者，否則照護者。
@@ -43,12 +47,56 @@ class AuthService {
   /// User Pool 部署後換成 Cognito 實作即可，畫面不用改。
   AuthBackend backend = DemoAuthBackend();
 
+  /// 持久化的 key。登入狀態要跨啟動保留——長輩不會每天重新登入一次。
+  static const _kIdToken = 'auth_id_token';
+  static const _kChosenRole = 'auth_chosen_role';
+  static const _kChosenRoleSub = 'auth_chosen_role_sub';
+
+  /// 註冊時宣告、但還沒有 token 可綁定的身分，key 前綴。
+  ///
+  /// 為什麼要按 email 存而不是直接用 [chooseRole]：註冊當下還沒登入，拿不到 Cognito
+  /// `sub`，而 [chooseRole] 記的是「哪個 sub 選了什麼」。email 是註冊那一刻唯一能識別
+  /// 帳號的東西，所以先寄放在 email 底下，等第一次登入拿到 sub 再轉正。
+  static const _kPendingRolePrefix = 'auth_pending_role_';
+
   String? _idToken;
+
+  /// 使用者在角色選擇頁宣告過的身分；沒選過為 null。
+  UserRole? _chosenRole;
+
+  /// [_chosenRole] 是哪個 Cognito `sub` 選的。
+  ///
+  /// 一定要記 sub：同一台裝置換人登入時，上一個人的選擇不能沿用——
+  /// 否則照護者的手機借長輩登入，會直接被丟進照護者模式。
+  String? _chosenRoleSub;
 
   /// 目前的 Cognito ID token；未登入為 null。供 [ApiClient] 的 `tokenProvider` 取用。
   String? get idToken => _idToken;
 
   bool get isSignedIn => _idToken != null;
+
+  /// App 啟動時還原登入狀態。
+  ///
+  /// token 解不出身分（過期格式、寫壞、換版）就當作沒登入並清掉：帶著一個讀不出角色的
+  /// token 進 App 只會在後面每一次 API 呼叫都失敗，不如在這裡就要求重新登入。
+  Future<void> restore() async {
+    final p = await SharedPreferences.getInstance();
+    final token = p.getString(_kIdToken);
+    if (token != null && parseIdentity(token) == null) {
+      await p.remove(_kIdToken);
+      _idToken = null;
+    } else {
+      _idToken = token;
+    }
+
+    final role = p.getString(_kChosenRole);
+    _chosenRole = switch (role) {
+      'elder' => UserRole.elder,
+      'caregiver' => UserRole.caregiver,
+      _ => null,
+    };
+    _chosenRoleSub = p.getString(_kChosenRoleSub);
+  }
 
   /// 登入並記住 token。回傳解析後的身分，讓呼叫端據此決定進哪個模式。
   ///
@@ -65,12 +113,146 @@ class AuthService {
       throw AuthException.of(AuthErrorCode.unknown);
     }
     _idToken = token;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kIdToken, token);
+
+    // 先設好 _idToken 再處理註冊時暫存的資料：轉正時要綁這次 token 的 sub。
+    await _consumePendingSignUpData(email: email, identity: parsed);
     return parsed;
   }
 
+  /// 登出：清掉 token、本機宣告的身分，以及**這個帳號**在本機留下的狀態。
+  ///
+  /// 一起清 [AppSession] 是必要的：長者資料與「已完成首次設定」目前還存在本機，
+  /// 下一個登入的人可能是別人（同一支手機借用、demo 換帳號），殘留下來他會看到
+  /// 上一個人的稱呼，或被當成已經設定過而跳過建立資料。
   Future<void> signOut() async {
+    // sub 要在清掉 token 之前取——清掉之後就問不出這次登出的是誰了。
+    final sub = identity?.userId;
+
     await backend.signOut();
     _idToken = null;
+    _chosenRole = null;
+    _chosenRoleSub = null;
+    final p = await SharedPreferences.getInstance();
+    await p.remove(_kIdToken);
+    await p.remove(_kChosenRole);
+    await p.remove(_kChosenRoleSub);
+
+    await AppSession.instance.clearForAccount(sub);
+  }
+
+  /// 這次登入實際該用哪個角色分流；null 代表「還沒宣告過身分」，要先問。
+  ///
+  /// 順序有意義：token 的 `elder_id` claim 是後端認定的事實，永遠優先；沒有 claim 時才
+  /// 看本機宣告過的身分，而且必須是**這個帳號**選的（sub 相符）才算。
+  UserRole? get effectiveRole {
+    final id = identity;
+    if (id == null) return null;
+    if (id.elderId != null) return UserRole.elder;
+    if (_chosenRole != null && _chosenRoleSub == id.userId) return _chosenRole;
+    return null;
+  }
+
+  /// 記下使用者在角色選擇頁宣告的身分（連同宣告者的 sub）。
+  Future<void> chooseRole(UserRole role) async {
+    _chosenRole = role;
+    _chosenRoleSub = identity?.userId;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+        _kChosenRole, role == UserRole.elder ? 'elder' : 'caregiver');
+    final sub = _chosenRoleSub;
+    if (sub == null) {
+      await p.remove(_kChosenRoleSub);
+    } else {
+      await p.setString(_kChosenRoleSub, sub);
+    }
+  }
+
+  /// 記下註冊當下宣告的身分，暫時掛在 email 底下（見 [_kPendingRolePrefix]）。
+  ///
+  /// 在註冊頁就問身分，是為了省掉登入後多一頁「請問你是？」；代價是那個時間點還沒有
+  /// token，所以不能直接用 [chooseRole]（它綁 sub）。真正轉正的時機在 [signIn]。
+  Future<void> declarePendingRole({
+    required String email,
+    required UserRole role,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_pendingRoleKey(email),
+        role == UserRole.elder ? 'elder' : 'caregiver');
+
+    // ---- demo 專用接線（正式版由後端負責，見下方 TODO）----
+    //
+    // 讓 demo 的長者登入後 token 真的帶 elder_id claim，走的是與正式版**完全相同**的
+    // 判定路徑（[effectiveRole] 先看 claim），而不是靠本機宣告假裝成長者——否則
+    // demo 走得通、接上 Cognito 反而壞掉。
+    //
+    // TODO(backend): 正式版這一步是「`POST /elders` 建立長者資料 ＋ 寫入 elder_accounts
+    //   (sub→elder_id)」，或改由 post-confirmation trigger 代勞；寫進去之後
+    //   pre-token-generation trigger 才注得出 elder_id claim。這塊後端目前還缺。
+    final b = backend;
+    if (role == UserRole.elder && b is DemoAuthBackend) {
+      b.markAsElder(email: email, elderId: _newDemoElderId());
+    }
+  }
+
+  /// 把註冊流程中按 email 暫存的東西一次兌現到這個帳號。
+  ///
+  /// 現在有兩樣：宣告的身分（[declarePendingRole]）與長輩基本資料
+  /// （`AppSession.savePendingSetup`）。兩者是**同一個時序問題**——註冊當下還沒有 sub，
+  /// 只能先寄放在 email 底下——所以兌現的時機也該是同一個，集中在這裡才不會有一邊漏掉
+  /// （例如日後只改了其中一條路徑的觸發點）。
+  Future<void> _consumePendingSignUpData({
+    required String email,
+    required CognitoIdentity identity,
+  }) async {
+    await _consumePendingRole(email: email, identity: identity);
+
+    // 沒有 sub 就沒有帳號可以掛，暫存項留著等下一次登入（token 少了 sub 是異常狀況）。
+    final sub = identity.userId;
+    if (sub != null) {
+      await AppSession.instance
+          .consumePendingSetup(email: email, accountId: sub);
+    }
+  }
+
+  /// 把 [declarePendingRole] 寄放的身分兌現，並清掉暫存項（只兌現一次）。
+  ///
+  /// token 有 `elder_id` 時不採用暫存值：claim 是後端認定的事實，本機宣告沒有資格覆寫它
+  /// （[effectiveRole] 的優先順序也是這樣）。此時暫存項一樣清掉——它想達成的事已經成立了，
+  /// 留著只會在下次登入被重複套用。
+  Future<void> _consumePendingRole({
+    required String email,
+    required CognitoIdentity identity,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    final key = _pendingRoleKey(email);
+    final raw = p.getString(key);
+    if (raw == null) return;
+
+    if (identity.elderId == null) {
+      final role = switch (raw) {
+        'elder' => UserRole.elder,
+        'caregiver' => UserRole.caregiver,
+        _ => null,
+      };
+      if (role != null) await chooseRole(role);
+    }
+    await p.remove(key);
+  }
+
+  /// email 一律 trim + 轉小寫，與 [DemoAuthBackend] 的正規化一致——
+  /// 註冊打「A@Example.com 」、登入打「a@example.com」要指到同一筆暫存。
+  static String _pendingRoleKey(String email) =>
+      '$_kPendingRolePrefix${email.trim().toLowerCase()}';
+
+  /// demo 用的 elder_id，格式對齊 docs/framework.md 的 `eld_<12-lowercase-hex>`。
+  /// 正式版由後端產生（`"eld_" + uuid4().hex[:12]`），App 不得指定。
+  static String _newDemoElderId() {
+    final rnd = Random();
+    final hex =
+        List.generate(12, (_) => '0123456789abcdef'[rnd.nextInt(16)]).join();
+    return 'eld_$hex';
   }
 
   /// 目前登入者的身分（角色 + sub + elderId）；未登入或 token 格式不對為 null。
@@ -126,4 +308,13 @@ class AuthService {
   // TODO(cognito): token 自動更新——過期時用 refresh token 換新（或每次 API 呼叫前取最新）。
   // TODO(cognito): 接上後，[ApiClient] 建構時 tokenProvider 指向 `() async => idToken`
   //   （務必給 ID token，非 access token——sub 與 custom:elder_id 只在 ID token 內）。
+
+  // ---- 角色來源的後端缺口 ----
+
+  // TODO(backend): 目前沒有任何程式碼寫入 elder_accounts 表（sub→elder_id）。註冊時選
+  //   「長輩」只有在 demo 後端底下才會讓 token 帶 elder_id（見 [declarePendingRole]）；
+  //   正解是註冊／首次設定時由後端建立長者資料並寫入 elder_accounts，
+  //   之後 pre-token trigger 才注得進 claim。
+  // TODO(backend): 照護者身分只存在本機（[_kChosenRole]），換裝置或清除 App 資料就會再被問
+  //   一次「請問你是？」。正解是後端記錄使用者的 role，App 端只讀不猜。
 }

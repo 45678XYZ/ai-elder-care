@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../theme/app_theme.dart';
 import '../services/auth_backend.dart';
 import '../services/auth_service.dart';
+import '../services/session_store.dart';
 import '../widgets/form_widgets.dart';
 
 /// `/auth/sign-in` — 登入。
@@ -57,10 +58,14 @@ class _SignInScreenState extends State<SignInScreen> {
     try {
       final identity =
           await AuthService.instance.signIn(email: email, password: password);
+      // 換帳號後要重載長者情境：「已完成首次設定」等狀態是按帳號存的（見 AppSession），
+      // 而 AppSession 是單例，這時候手上可能還是上一個帳號的值。少了這一步，
+      // 下面的 redirect 會拿別人的旗標來決定這一位要不要先建資料。
+      await AppSession.instance.loadForAccount(identity.userId);
       if (!mounted) return;
-      // 進哪個模式由 token 的 elder_id claim 決定，與後端 auth.py 同一套判準。
-      context.go(
-          identity.role == UserRole.elder ? '/elder/today' : '/care/summary');
+      // 落點不在這裡決定：登入成功只代表「可以進 App 了」，至於進哪個模式還要看
+      // 有沒有宣告身分、長者有沒有建資料。統一丟給 router 的 redirect 判定（app_router）。
+      context.go('/');
     } on AuthException catch (e) {
       if (!mounted) return;
       // 帳號還沒驗證信箱時，該做的是把人帶去輸入驗證碼，不是丟一句錯誤讓他自己想辦法。

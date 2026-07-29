@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/elder.dart';
@@ -18,7 +20,32 @@ class AppSession {
   AppSession._();
   static final AppSession instance = AppSession._();
 
-  static const _kSetupDone = 'setup_done';
+  /// 「已完成首次設定」的 key，綁 Cognito `sub`。
+  ///
+  /// 為什麼要按帳號存而不是一台裝置一個旗標：這件事是**帳號**的屬性，不是裝置的。
+  /// 裝置層級的旗標會在兩種情況下害人跳過建立資料——照護者在這台瀏覽器用過 `/setup`
+  /// 之後長者登入（旗標已是 true），以及一位長者登出、換另一位長者登入。
+  /// 兩者都會直接進今日頁，而系統裡根本沒有這位長者的資料。
+  static String _setupDoneKey(String accountId) => 'setup_done_$accountId';
+
+  // 舊的裝置層級 key `setup_done` **刻意不遷移、也不再讀**：那個 true 是誰按出來的
+  // 已經無從得知（很可能是登入功能還不存在時、照護者自己填的），無法歸屬到任何帳號。
+  // 猜錯的代價是讓長者跳過建立基本資料——之後每一頁都沒有稱呼與行程可用；
+  // 重填一次的成本低得多，所以直接忽略，讓它留在那裡不再有任何效力。
+
+  /// 註冊流程中填好、但還沒有帳號可以掛的長輩資料，key 前綴（後面接 email）。
+  ///
+  /// **為什麼要按 email 暫存，不直接寫進帳號**：建立基本資料被安排在註冊流程之內
+  /// （註冊 → /setup → 驗證碼 → 登入），而那個時間點使用者**還沒登入**，拿不到
+  /// Cognito `sub`；而「已完成設定」這件事是**帳號**的屬性（[_setupDoneKey] 綁 sub），
+  /// 沒有 sub 就沒有正確的地方可以寫。硬寫成裝置層級的旗標正是先前修掉的 bug——
+  /// 同一台裝置換人登入會被誤判成已設定，長者就此跳過建資料。
+  ///
+  /// email 是註冊那一刻唯一能識別帳號的東西，所以先寄放在 email 底下，第一次登入拿到
+  /// sub 之後由 [consumePendingSetup] 兌現到該帳號並清掉暫存。做法與
+  /// `AuthService` 的 `auth_pending_role_` 一致（身分也是同一個時序問題）。
+  static const _kPendingSetupPrefix = 'setup_pending_';
+
   static const _kName = 'elder_name';
   static const _kNickname = 'elder_nickname';
   static const _kLang = 'elder_lang';
@@ -31,8 +58,16 @@ class AppSession {
   /// 語言偏好，對齊 api.md：'zh-TW' | 'hak'。決定長者端輸入路徑。
   String lang = 'zh-TW';
 
-  /// 是否已完成首次設定；決定 App 啟動落點（見 main.dart）。
+  /// 是否已完成首次設定；決定登入後的落點（見 app_router 的 redirect）。
+  ///
+  /// 值屬於 [_accountId] 這個帳號，換帳號後必須重新 [loadForAccount]。
   bool setupDone = false;
+
+  /// 這份狀態屬於哪個帳號（Cognito `sub`）；null = 未登入。
+  ///
+  /// 單例活得比登入狀態久，所以要記住「現在手上這份資料是誰的」，
+  /// 才不會把上一個人的設定寫到下一個人的 key 底下。
+  String? _accountId;
 
   /// 照護者可存取的長者（`GET /elders`）。尚未載入時為空。
   List<Elder> elders = const [];
@@ -75,10 +110,23 @@ class AppSession {
     return '阿公／阿嬤';
   }
 
-  /// App 啟動時載入已保存的設定狀態與長者資料（首次未設定則維持預設）。
-  Future<void> load() async {
+  /// 載入某個帳號已保存的設定狀態與長者資料（首次未設定則維持預設）。
+  ///
+  /// 呼叫時機有兩個：App 啟動（還原登入狀態之後，見 main.dart）、以及登入成功之後
+  /// （見 SignInScreen）。第二個不能省——單例裡可能還放著上一個帳號的值。
+  ///
+  /// [accountId] 傳 `AuthService.instance.identity?.userId`。未登入（null）時一律視為
+  /// **未完成設定**：這時候沒有任何帳號可以歸屬，猜「已完成」會讓長者跳過建立資料。
+  ///
+  /// TODO(backend): 後端上線後這件事不該由 App 記——改用 `GET /elders`
+  ///   （長者只會回自己那一筆）判定：有資料就是設定完成，沒有就進 /setup。
+  ///   本機旗標連同 [saveSetup] 的持久化一併移除。
+  Future<void> loadForAccount(String? accountId) async {
+    _accountId = accountId;
     final p = await SharedPreferences.getInstance();
-    setupDone = p.getBool(_kSetupDone) ?? false;
+    setupDone = accountId == null
+        ? false
+        : (p.getBool(_setupDoneKey(accountId)) ?? false);
     elderName = p.getString(_kName) ?? '';
     elderNickname = p.getString(_kNickname) ?? '';
     lang = p.getString(_kLang) ?? 'zh-TW';
@@ -125,7 +173,7 @@ class AppSession {
     await p.setString(_kSelectedElder, elderId);
   }
 
-  /// 首次設定完成：寫入長者資料並標記已完成，之後啟動不再進 /setup。
+  /// 首次設定完成：寫入長者資料並標記**這個帳號**已完成，之後登入不再進 /setup。
   /// TODO: 後端上線後改為 POST /elders，此持久化僅為登入前的 Demo 過渡。
   Future<void> saveSetup({
     required String name,
@@ -140,6 +188,102 @@ class AppSession {
     await p.setString(_kName, name);
     await p.setString(_kNickname, nickname);
     await p.setString(_kLang, lang);
-    await p.setBool(_kSetupDone, true);
+    // 未登入時只留在記憶體：沒有 sub 就沒有帳號可以掛，寫成裝置層級的旗標正是
+    // 先前修掉的問題。註冊流程裡的 /setup（尚未登入）不走這裡，走
+    // [savePendingSetup]——那條路徑才有 email 可以當寄放的依據。
+    final account = _accountId;
+    if (account != null) await p.setBool(_setupDoneKey(account), true);
+  }
+
+  /// 註冊流程中完成設定：把長輩資料暫存在 [email] 底下（見 [_kPendingSetupPrefix]）。
+  ///
+  /// 這裡**刻意不動**記憶體欄位與帳號旗標：現在還沒登入，這份資料還不屬於任何帳號，
+  /// 提前寫進去就等於讓下一個在這台裝置登入的人繼承它。
+  Future<void> savePendingSetup({
+    required String email,
+    required String name,
+    required String nickname,
+    required String lang,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+      _pendingSetupKey(email),
+      jsonEncode({'name': name, 'nickname': nickname, 'lang': lang}),
+    );
+  }
+
+  /// 把 [savePendingSetup] 寄放的資料兌現到 [accountId] 這個帳號，並清掉暫存項。
+  ///
+  /// 由 `AuthService.signIn` 在第一次登入成功、拿到 sub 之後呼叫。沒有暫存項就什麼都不做
+  /// （例如在別台裝置註冊、或註冊時選的是照護者）——這時 redirect 會把長者帶去 /setup
+  /// 重填一次，那是刻意保留的退路。
+  ///
+  /// 兌現後直接 [loadForAccount]，讓記憶體狀態與剛寫進去的持久化一致：redirect 讀的是
+  /// 記憶體裡的 [setupDone]，只寫 prefs 不重載會讓人再被送去 /setup 一次。
+  Future<void> consumePendingSetup({
+    required String email,
+    required String accountId,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    final key = _pendingSetupKey(email);
+    final raw = p.getString(key);
+    if (raw == null) return;
+
+    // 寫壞或換過格式的暫存資料一律丟掉：這裡塞不進正確的資料，
+    // 留著只會在每次登入重試一次；清掉之後由 /setup 重填，使用者仍走得下去。
+    Map<String, dynamic>? data;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) data = decoded;
+    } catch (_) {
+      data = null;
+    }
+    if (data == null) {
+      await p.remove(key);
+      return;
+    }
+
+    final name = data['name'];
+    final nickname = data['nickname'];
+    final lang = data['lang'];
+    await p.setString(_kName, name is String ? name : '');
+    await p.setString(_kNickname, nickname is String ? nickname : '');
+    await p.setString(_kLang, lang is String ? lang : 'zh-TW');
+    await p.setBool(_setupDoneKey(accountId), true);
+    await p.remove(key);
+
+    await loadForAccount(accountId);
+  }
+
+  /// email 一律 trim + 轉小寫，與 `DemoAuthBackend` 及 `AuthService` 的暫存 key 一致——
+  /// 註冊打「A@Example.com 」、登入打「a@example.com」要指到同一筆暫存。
+  static String _pendingSetupKey(String email) =>
+      '$_kPendingSetupPrefix${email.trim().toLowerCase()}';
+
+  /// 登出時清掉這個帳號在本機留下的狀態。
+  ///
+  /// 為什麼連長者資料一起清：姓名／稱呼／語言／選定的長者目前都還存在本機（後端未接），
+  /// 而下一個登入的人可能是別人——同一支手機借用、demo 換帳號都會發生。留著只會讓他
+  /// 看到上一個人的稱呼。至於已完成設定的旗標，雖然綁了 sub 不會被誤用，一樣清掉：
+  /// 這台裝置已經不代表這個帳號了，留著沒有用處。
+  Future<void> clearForAccount(String? accountId) async {
+    final p = await SharedPreferences.getInstance();
+    if (accountId != null) await p.remove(_setupDoneKey(accountId));
+    await p.remove(_kName);
+    await p.remove(_kNickname);
+    await p.remove(_kLang);
+    await p.remove(_kSelectedElder);
+    await p.remove(_kLinkedCaregivers);
+
+    // 記憶體欄位也要回到預設值：單例活得比登入狀態久，只清持久化的話，
+    // 下一個人登入後在載入完成之前會先看到上一個人的資料。
+    setupDone = false;
+    elderName = '';
+    elderNickname = '';
+    lang = 'zh-TW';
+    elders = const [];
+    selectedElderId = null;
+    linkedCaregiverIds = const [];
+    _accountId = null;
   }
 }
