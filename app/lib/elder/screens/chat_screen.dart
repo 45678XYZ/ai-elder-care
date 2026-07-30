@@ -44,6 +44,13 @@ class _ChatScreenState extends State<ChatScreen>
   bool _conversationActive = false;
   bool _micAvailable = false;
 
+  /// 目前這一輪問答的序號。每開始一輪就 +1，[_stopConversation] 也 +1。
+  ///
+  /// 用來作廢「已經送出、但使用者中途按了停止」的請求：`await` 回來之後如果序號
+  /// 已經不是自己那一輪，就什麼都不做。沒有這道檢查的話，按停止之後回應照樣會把
+  /// 階段拉回 speaking 並唸出來——長輩按了停止，它還在講話。
+  int _turnSeq = 0;
+
   /// 這次進入畫面後的完整對話。每一輪問答都往後加，不覆蓋前一輪——
   /// 長輩會想回頭看剛才問過什麼、AI 說過什麼，蓋掉等於對話沒發生過。
   final List<_Message> _messages = [];
@@ -128,6 +135,9 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<void> _stopConversation() async {
+    // 先作廢在飛的那一輪，再停裝置：順序反過來的話，回應可能在 stop 與 setState
+    // 之間回來，照樣把階段拉回 speaking。
+    _turnSeq++;
     setState(() => _conversationActive = false);
     await _speech.stop();
     await _audio.stop();
@@ -164,6 +174,7 @@ class _ChatScreenState extends State<ChatScreen>
   /// 送問題到後端，顯示答案並唸出來；[continueLoop] 為 true 且迴圈開啟時唸完自動再聆聽。
   Future<void> _handleQuestion(String question,
       {required bool continueLoop}) async {
+    final seq = ++_turnSeq;
     await _speech.stop();
     // 問題定案，移進歷史；暫存的辨識文字清掉，避免同一句出現兩次。
     setState(() {
@@ -180,7 +191,9 @@ class _ChatScreenState extends State<ChatScreen>
       //   為 true 時要 unawaited(syncReminders())——長輩用講的新增行程（「提醒我三點吃藥」）
       //   後端會寫進 routines，但本地通知是 App 自己排的，不重排就要等下次啟動才會生效。
       //   現在的 ask() 是 RAG PoC 端點，沒有這個欄位，所以還接不上。
-      if (!mounted) return;
+      // 使用者在等待期間按了停止（或又開了新的一輪）：這份回應已經沒人要了。
+      // 不顯示、不唸、不改階段——那一輪的停止動作已經把畫面收成 idle。
+      if (!mounted || seq != _turnSeq) return;
       setState(() {
         _messages.add(_Message(isElder: false, text: result.answer));
         _setPhase(_Phase.speaking);
@@ -188,12 +201,12 @@ class _ChatScreenState extends State<ChatScreen>
       _scrollToBottom();
       await _audio.speak(result.answer);
     } on ApiException catch (_) {
-      if (!mounted) return;
+      if (!mounted || seq != _turnSeq) return;
       setState(() => _conversationActive = false); // 出錯就停迴圈，避免一直重打
       _appendNotHeardHint();
     }
 
-    if (!mounted) return;
+    if (!mounted || seq != _turnSeq) return;
     setState(() => _setPhase(_Phase.idle));
     if (continueLoop && _conversationActive) _listenTurn();
   }
@@ -347,8 +360,17 @@ class _ChatScreenState extends State<ChatScreen>
               phase: _phase,
               pulse: _pulse,
               reduceMotion: reduceMotion,
-              onTap:
-                  _conversationActive ? _stopConversation : _startConversation,
+              // thinking 期間不給按：這時上一句已經送出、還在等回覆，按下去
+              // 會開始新的一輪聆聽，把還在飛的那一輪晾在那裡。
+              //
+              // 判斷要看 [_phase] 而不是 [_conversationActive]——打字送出時
+              // continueLoop 是 false，迴圈沒開但階段照樣是 thinking，只看
+              // _conversationActive 會落到 _startConversation 去。
+              onTap: _phase == _Phase.thinking
+                  ? null
+                  : (_conversationActive
+                      ? _stopConversation
+                      : _startConversation),
             ),
             const SizedBox(height: 12),
             // liveRegion：狀態文字變化時由螢幕報讀器朗讀（§9）。
@@ -527,7 +549,10 @@ class _MicOrb extends StatelessWidget {
   final _Phase phase;
   final AnimationController pulse;
   final bool reduceMotion;
-  final VoidCallback onTap;
+
+  /// null 代表此刻不可按（thinking 期間）。Semantics 的 `button` 會跟著關掉，
+  /// 螢幕報讀器才不會把一顆按不動的東西讀成按鈕。
+  final VoidCallback? onTap;
 
   /// 圓球直徑。仍遠大於 60dp 觸控下限，縮小是為了把畫面留給對話內容。
   static const double _size = 84;
@@ -537,11 +562,12 @@ class _MicOrb extends StatelessWidget {
     final pulsing = !reduceMotion &&
         (phase == _Phase.listening || phase == _Phase.speaking);
     return Semantics(
-      button: true,
+      button: onTap != null,
+      enabled: onTap != null,
       label: switch (phase) {
         _Phase.idle => '開始說話',
         _Phase.listening => '聆聽中，點一下結束',
-        _Phase.thinking => '思考中',
+        _Phase.thinking => '思考中，請稍等',
         _Phase.speaking => '回覆中，點一下停止',
       },
       child: GestureDetector(
