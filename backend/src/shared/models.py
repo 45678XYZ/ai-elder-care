@@ -303,3 +303,50 @@ class RoutineOccurrence(BaseModel):
     status: Literal["pending", "done", "missed"] = Field(..., description="完成狀態")
     completed_at: str | None = Field(default=None, description="完成時間 (ISO 8601)")
     completed_by: str | None = Field(default=None, description="完成角色 (conversation/elder/caregiver)")
+
+
+# -----------------------------------------------------------------------------
+# 統計 Response 模型（GET /stats；由 conversations、routines 與 events 即時彙總）
+# -----------------------------------------------------------------------------
+
+class StatsToday(BaseModel):
+    """當日互動統計。"""
+    interaction_count: int = Field(default=0, description="當日 /chat 對話輪數")
+    last_interaction_at: str | None = Field(default=None, description="當日最後一次互動時間 (ISO 8601)；無互動時省略")
+
+
+class StatsPeriod(BaseModel):
+    """區間互動統計。"""
+    days: int = Field(..., description="統計天數（含今天）")
+    interaction_count: int = Field(default=0, description="區間內 /chat 對話輪數")
+    active_days: int = Field(default=0, description="區間內有互動的天數")
+
+
+class StatsRoutineItem(BaseModel):
+    """單一例行公事在區間內的完成度。"""
+    routine_id: str = Field(..., description="例行公事 ID")
+    title: str = Field(..., description="行程標題")
+    completed: int = Field(default=0, description="已完成的 occurrence 數（依 canonical completion event 計數）")
+    total: int = Field(default=0, description="區間內排程的 occurrence 數")
+
+
+class StatsRoutines(BaseModel):
+    """例行公事完成度統計。"""
+    by_routine: list[StatsRoutineItem] = Field(default_factory=list, description="只列區間內至少排程一次的 routine")
+
+
+class StatsDailyPoint(BaseModel):
+    """逐日趨勢的單日資料點。"""
+    date: str = Field(..., description="日期 (YYYY-MM-DD，台灣日界)")
+    interaction_count: int = Field(default=0, description="當日 /chat 對話輪數")
+    routines_completed: int = Field(default=0, description="當日已完成的 occurrence 數")
+    routines_total: int = Field(default=0, description="當日排程的 occurrence 數")
+
+
+class StatsResponse(BaseModel):
+    """統計 Response 物件 (GET /stats)。"""
+    elder_id: str = Field(..., description="長者 ID")
+    today: StatsToday = Field(..., description="當日互動統計")
+    period: StatsPeriod = Field(..., description="區間互動統計")
+    routines: StatsRoutines = Field(..., description="例行公事完成度統計")
+    daily: list[StatsDailyPoint] = Field(default_factory=list, description="近 N 日趨勢，依日期遞增，區間內每天一筆")
