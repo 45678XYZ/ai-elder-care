@@ -8,6 +8,21 @@ output "cognito_user_pool_client_id" {
   value       = aws_cognito_user_pool_client.app.id
 }
 
+output "kb_knowledge_base_id" {
+  description = "Bedrock Knowledge Base ID（chat Lambda 環境變數、同步腳本用）"
+  value       = aws_bedrockagent_knowledge_base.kb.id
+}
+
+output "kb_data_source_id" {
+  description = "Knowledge Base data source ID（同步腳本觸發 ingestion job 用）"
+  value       = aws_bedrockagent_data_source.kb_documents.data_source_id
+}
+
+output "kb_documents_bucket" {
+  description = "衛教文件 S3 bucket 名稱（同步腳本上傳目標）"
+  value       = aws_s3_bucket.kb_documents.bucket
+}
+
 output "api_base_url" {
   description = "API 基底位址（App SDK 設定用）；所有端點掛在此前綴下"
   value       = aws_api_gateway_stage.v1.invoke_url

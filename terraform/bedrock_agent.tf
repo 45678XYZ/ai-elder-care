@@ -326,12 +326,23 @@ resource "aws_lambda_permission" "allow_bedrock_to_invoke_tools" {
 }
 
 
-# 6. 條件式將 Bedrock Knowledge Base (衛教知識庫) 綁定至 Agent
+# 6. 將 Bedrock Knowledge Base (衛教知識庫) 綁定至 Agent
+# KB 本體見 bedrock_kb.tf 的 aws_bedrockagent_knowledge_base.kb
+#
+# description 不是註解，是**給模型看的**：agent 靠它判斷「這個問題該不該查 KB」。
+# 所以要對得上 data/knowledge/ 裡實際有的 29 篇主題——沒被提到的領域，agent 可能
+# 根本不會想到要檢索（長輩問「有沒有人可以幫忙照顧」，描述裡看不出涵蓋喘息服務，
+# 就會直接用自己的知識回答而繞過 KB）。增刪文件時這段要跟著更新。
+#
+# 上限 200 **bytes** 而非字元，中文一字 3 bytes，實際只放得下約 66 字。取捨：
+# 病名寫具體的（使用者問「血壓高怎麼辦」，「慢性病照護」對不上），氣喘、肺阻塞、
+# 骨鬆、代謝症候群因額度不足捨去；服務用長輩會講的詞，不用官方全名。
+# 「什麼情況該檢索」的引導句塞不進來——若實測發現該查而沒查，補在本檔上方
+# aws_bedrockagent_agent 的 instruction，那裡沒有這個限制。
 resource "aws_bedrockagent_agent_knowledge_base_association" "health_kb" {
-  count                = var.health_knowledge_base_id != "" ? 1 : 0
   agent_id             = aws_bedrockagent_agent.elder_companion_agent.id
   agent_version        = "DRAFT"
-  description          = "長者衛教與健康照護知識庫，包含血壓與慢性病照護、口腔清潔與用藥規範注意事項"
-  knowledge_base_id    = var.health_knowledge_base_id
+  description          = "長者衛教與長照知識庫：慢性病（高血壓、糖尿病、中風）、失智、跌倒預防、輔具、口腔照護、喘息服務、交通接送、照顧服務、季節保健"
+  knowledge_base_id    = aws_bedrockagent_knowledge_base.kb.id
   knowledge_base_state = "ENABLED"
 }
