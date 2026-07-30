@@ -1,6 +1,6 @@
 # backend/ — Python Lambda
 
-每個 handler 對應一組 API 資源，由 API Gateway（Cognito JWT authorizer）觸發；`summary_generator` 由 EventBridge Scheduler 每晚觸發。API 規格見 [docs/api.md](../docs/api.md)。
+每個 handler 對應一組 API 資源，由 API Gateway（Cognito JWT authorizer）觸發；`summary_generator` 由 EventBridge Scheduler 每晚觸發。API 規格見 [docs/api.md](../docs/api.md)。ASR 子系統架構見 [docs/asr/framework.md](../docs/asr/framework.md)。
 
 ```
 src/

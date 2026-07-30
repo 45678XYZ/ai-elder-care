@@ -4,6 +4,7 @@
 
 - 系統框架：[docs/framework.md](docs/framework.md)
 - API 規格：[docs/api.md](docs/api.md)
+- ASR 子系統架構：[docs/asr/framework.md](docs/asr/framework.md)
 - ASR 遠端化遷移計畫：[docs/asr/remote-only-migration-plan.md](docs/asr/remote-only-migration-plan.md)
 - 開發流程：[docs/workflow.md](docs/workflow.md)
 - 開發慣例：[docs/conventions.md](docs/conventions.md)

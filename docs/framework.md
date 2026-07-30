@@ -18,7 +18,7 @@
 ```mermaid
 flowchart TB
     subgraph app["Flutter App（長者／照護者模式）"]
-        elder["長者模式<br/>免手持語音迴圈<br/>裝置端 ASR + 音訊播放"]
+        elder["長者模式<br/>免手持語音迴圈<br/>音訊錄製與播放"]
         caregiver["照護者模式<br/>行程、事件、摘要、統計"]
     end
 
@@ -80,9 +80,9 @@ flowchart TB
     apis --> ddb
 ```
 
-- **語音對話迴圈**：裝置端辨識（zh-TW）→ `POST /chat` 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
+- **語音對話迴圈**：App 錄音 → `POST /chat` 後端 ASR 辨識 → 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
-- **後端 ASR** 是可獨立整合的領域模組，可同時服務多個請求：每個推論 provider 有併發上限，飽和或故障時依設定的備援鏈換下一個 provider；音訊本身的問題與未核准的路由則直接終止，不靠備援繞過。模型上線需通過逐項人工核准，未核准時一律 fail closed。模組職責、閘門與遙測欄位見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
+- **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論，只將正規化音訊傳送到 SageMaker Endpoint、驗證回應並將文字交給聊天流程。模型上線需通過逐項人工核准，未核准時一律 fail closed。ASR 子系統完整架構見 [`docs/asr/framework.md`](docs/asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
 - realtime rail 使用既有 chat 模型的一次 structured output，再套用 deterministic safety rules 產生 `rt_labels`；不為每個 turn 另呼叫一次完整 extraction LLM。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
 

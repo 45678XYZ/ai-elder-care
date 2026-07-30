@@ -65,7 +65,7 @@ flowchart LR
 
 ## 實作任務
 
-### Task 1: 建立遠端 ASR 設定與路由測試基線
+### Task 1: 建立遠端 ASR 設定與路由測試基線 ✅ 已完成
 
 **目標：** 先以測試描述只允許 `hak_mock`、`ce_remote`、`formo_remote` 的安全路由行為。
 
@@ -74,7 +74,9 @@ flowchart LR
 - 測試必須證明沒有任何情況會呼叫本機推論。
 - **Demo：** 無 AWS 設定時只能使用 mock ASR，不會使用模型。
 
-### Task 2: 簡化 provider 型別與設定模型
+**完成紀錄：** 新增 `backend/tests/asr/test_remote_only_routing.py`（20 項測試含 property tests），全部通過。
+
+### Task 2: 簡化 provider 型別與設定模型 ✅ 已完成
 
 **目標：** 將 `ASR_CONFIG_JSON` 建立為唯一可用的 Lambda ASR 設定來源。
 
@@ -82,9 +84,11 @@ flowchart LR
 - 定義 JSON schema：allowed providers、routing、endpoint 名稱與 enablement gate。
 - 保留遠端 provider 仍使用的 base/concurrency/slot 工具。
 - **測試：** 合法與非法 JSON、缺少 endpoint、錯誤路由、fail-closed 行為。
+
+**完成紀錄：** 移除 `ProviderKind.LOCAL_MODEL`/`AWS_MANAGED`，更新 router 移除 AWS gate 檢查，重構 composition 為 remote-only（default_config 改用 ce_remote/formo_remote），刪除 aws_zh_adapter 測試，更新所有相關測試。378 項 ASR 測試全部通過。
 - **Demo：** 一段 JSON 可建立可檢查的 provider registry 與路由表。
 
-### Task 3: 強化 SageMaker 音訊傳輸契約
+### Task 3: 強化 SageMaker 音訊傳輸契約 ✅ 已完成
 
 **目標：** 固定 `RemoteEndpointSpec` 與 `SageMakerAsrProvider` 的安全傳輸與回應驗證。
 
@@ -93,7 +97,9 @@ flowchart LR
 - **測試：** mock boto3 client 覆蓋成功、回應無效、逾時、endpoint 失敗。
 - **Demo：** 單元測試可顯示 Lambda 產生正確 InvokeEndpoint 請求。
 
-### Task 4: 刪除本機與 AWS managed placeholder 推論
+**完成紀錄：** 移除 remote_endpoints.py 中的 TODO 註解（契約已確定），新增 4 個測試類別共 22 個新測試（SageMakerContract、TimeoutErrors、ResponseBodyErrors、SecurityConstraints），共 41 項測試全部通過。
+
+### Task 4: 刪除本機與 AWS managed placeholder 推論 ✅ 已完成
 
 **目標：** 徹底移除不符合 remote-only 架構的推論路徑。
 
@@ -103,7 +109,9 @@ flowchart LR
 - **測試：** ASR 測試集與 import smoke test。
 - **Demo：** 程式碼搜尋與測試證明 Lambda 不再有本機模型路徑。
 
-### Task 5: 將聊天 ASR bridge 接到純遠端 facade
+**完成紀錄：** 刪除 `local_models.py`、`aws_zh_adapter.py`、`test_local_models.py`、`test_aws_zh_adapter.py`、`test_property_aws_adapter.py`。移除 `AwsCapabilityGate`（含 config field、parser、所有測試引用）、`TransportRequest`、`TestAwsCapabilityGate`。更新 `AsrConfig` 為 4 個 field。369 ASR tests + 33 chat bridge tests 全部通過。
+
+### Task 5: 將聊天 ASR bridge 接到純遠端 facade ✅ 已完成
 
 **目標：** 維持 chat handler 的責任邊界，僅適配 remote-only provider registry。
 
@@ -111,7 +119,9 @@ flowchart LR
 - **測試：** `test_chat_asr_bridge.py` 覆蓋遠端成功、路由未核准與 endpoint 錯誤。
 - **Demo：** 模擬 endpoint 回傳文字後，聊天流程可繼續執行。
 
-### Task 6: 文件化 SageMaker inference container contract
+**完成紀錄：** chat handler 不需修改（已透過 `get_asr_facade()` 使用 remote-only composition）。新增 4 個 bridge 測試（remote success、route_not_approved、provider_unavailable、deadline_exceeded），共 37 項測試全部通過。
+
+### Task 6: 文件化 SageMaker inference container contract ✅ 已完成
 
 **目標：** 新增 `docs/asr/sagemaker-inference-contract.md`。
 
@@ -120,7 +130,9 @@ flowchart LR
 - 建立可重複使用的 contract-test fixture 或最小 smoke-test 規格。
 - **Demo：** 未來 container 實作者可依文件建立 Lambda 相容 endpoint。
 
-### Task 7: 建立 SageMaker endpoint Terraform 基礎設施
+**完成紀錄：** 新增 `docs/asr/sagemaker-inference-contract.md`，共 11 個章節涵蓋 endpoint 類型、health check、invocation 格式、音訊規格、成功/錯誤回應、逾時、Formo prompt 邊界、PII 限制、contract test fixture、CE/Formo 差異。
+
+### Task 7: 建立 SageMaker endpoint Terraform 基礎設施 ✅ 已完成
 
 **目標：** 在 `terraform/asr_models.tf` 與 `variables.tf` 宣告 endpoint 所需資源及 fail-closed validation。
 
@@ -130,7 +142,9 @@ flowchart LR
 - **測試：** `terraform fmt -check`、`terraform validate` 與設定範例。
 - **Demo：** 不完整 tfvars 安全失敗；完整設定才產生 endpoint plan。
 
-### Task 8: 注入 Lambda 設定並授予最小 IAM 權限
+**完成紀錄：** 現有 `asr_models.tf` 已包含完整 endpoint 資源（IAM role、SageMaker model/endpoint/autoscaling、invoke policy）。新增 `check "asr_endpoints_require_all_parameters"` fail-closed validation（Terraform 1.5+ check block），確保啟用時 5 個必要參數全部提供。更新檔案頂部註解指向 contract 文件，更新 variables.tf 加入啟用前置條件說明。（terraform 未安裝於此環境，格式以 HCL 標準撰寫）
+
+### Task 8: 注入 Lambda 設定並授予最小 IAM 權限 ✅ 已完成
 
 **目標：** 由 Terraform 組裝唯一的 `ASR_CONFIG_JSON`，並只允許 chat Lambda 呼叫預期 endpoint。
 
@@ -140,7 +154,21 @@ flowchart LR
 - **測試：** Terraform validation 與 Python config contract test。
 - **Demo：** 可檢查 Lambda environment 與 IAM policy 的最小權限邊界。
 
-### Task 9: 建立 ASR 文件體系並同步架構文件
+**完成紀錄：** 新增 `terraform/asr_lambda_config.tf`（組裝 ASR_CONFIG_JSON 的 local value），新增 `asr_config_json` output。更新 `outputs.tf` 說明組裝用途。新增 `backend/tests/asr/test_terraform_config_contract.py`（9 項測試驗證 Terraform JSON 與 Python parser 的契約一致），382 項 ASR 測試全部通過。
+
+### Task 9: 刪除 ASR dead code 與不再使用的測試部件
+
+**目標：** 移除在 remote-only 遷移後已無用途的程式碼、測試輔助工具與設定殘留，確保程式庫只保留有效路徑。
+
+- 搜尋 `backend/src/shared/asr/` 與 `backend/tests/asr/` 中不再被任何 import 或測試引用的模組、class、function 與 fixture。
+- 刪除僅服務已移除 provider（local model、AWS managed）的 test helper、mock、factory 與 conftest fixture。
+- 移除殘留的環境變數讀取（如舊版分散 endpoint/device/compute type env vars）與對應的 fallback 邏輯。
+- 檢查 `backend/pyproject.toml`（或 `setup.cfg`）的 dev dependencies，移除僅用於本機模型推論的套件（如 `torch`、`transformers`、`onnxruntime` 等，若存在）。
+- 確認 `asr-lambda/` 內的 Conda 環境檔仍為容器開發用途，不刪除。
+- **測試：** 刪除後執行 `python -m pytest tests/asr -q` 與 `python -m pytest tests/test_chat_asr_bridge.py -q`，確保無 import error、無測試失敗。
+- **Demo：** `grep -r` 搜尋已移除的 symbol 名稱，確認零命中；測試通過數量不低於刪除前。
+
+### Task 10: 建立 ASR 文件體系並同步架構文件
 
 **目標：** 建立 `docs/asr/` 完整文件體系，並將專案文件統一為 backend remote ASR 的唯一架構。
 
@@ -196,7 +224,7 @@ flowchart LR
 - **測試：** 檢查跨文件連結與路徑；每份文件的「指向」目標都存在。
 - **Demo：** 維護者從 `docs/asr/framework.md` 出發，可循導覽地圖到達任何 ASR 相關文件，不遺漏也不重複。
 
-### Task 10: 建立 ASR 專用 Kiro skill
+### Task 11: 建立 ASR 專用 Kiro skill
 
 **目標：** 建立 `.kiro/skills/developing-ai-elder-care-asr/SKILL.md`。
 
@@ -206,7 +234,7 @@ flowchart LR
 - **測試：** 依 skill checklist 人工走讀，確認每個引用路徑存在。
 - **Demo：** 後續 Kiro agent 啟用 skill 後可取得完整 ASR 修改護欄。
 
-### Task 11: 以新交接資料取代舊 spec
+### Task 12: 以新交接資料取代舊 spec
 
 **目標：** 在所有現行文件、測試、contract 與 skill 完成後，移除舊規格。
 
@@ -215,7 +243,7 @@ flowchart LR
 - 搜尋並移除所有指向舊 spec 的連結。
 - **Demo：** 交接依現行程式、測試、ADR、contract、skill 與 Git history 完成。
 
-### Task 12: 驗證與交接 smoke test
+### Task 13: 驗證與交接 smoke test
 
 **目標：** 在不部署 AWS 資源的條件下，驗證程式、Terraform 與文件的一致性。
 

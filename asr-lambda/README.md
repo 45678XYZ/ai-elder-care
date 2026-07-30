@@ -1,6 +1,10 @@
-# ASR 模型整合 — 開發環境
+# ASR 模型整合 — 容器開發與驗證環境
 
-本目錄提供 ASR 模型整合所需的 conda 環境設定，用於本機開發與模型人工驗證。
+本目錄提供 ASR 模型的 conda 環境設定，定位為 **SageMaker inference container 開發與人工驗證**用途。
+
+> **重要**：Lambda 不在 process 內執行模型推論（remote-only 架構）。
+> 本環境用於建立與測試 inference container，不是 Lambda 執行環境。
+> 架構說明見 [`docs/asr/framework.md`](../docs/asr/framework.md)。
 
 ## 涵蓋模型
 
