@@ -186,11 +186,14 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
         raise RuntimeError(f"Bedrock Agent invoke error: {e.response['Error']['Message']}")
 
 
-def upload_audio_to_s3(audio_bytes: bytes, conversation_id: str) -> str:
-    """將 TTS 合成之 MP3 上傳至 S3，回傳 object key。
+def upload_audio_to_s3(audio_bytes: bytes, conversation_id: str) -> str | None:
+    """將 TTS 合成之 MP3 上傳至 S3，回傳 object key；上傳失敗回 None。
 
     只回 key 不回 URL：presigned URL 有 15 分鐘效期，存進 DynamoDB 之後重播就是一條死連結，
     因此 turn 只保存 key，每次回應再簽發（見 docs/framework.md 的音訊欄位規則）。
+
+    失敗必須回 None 而不是照樣回 key：turn 一旦帶著 key 提交成 completed，那個 key 就是
+    永久的——之後每次重播都會簽出一條指向不存在物件的連結，長者永遠聽不到這句回覆。
     """
     object_key = f"tts/{conversation_id}.mp3"
     try:
@@ -200,13 +203,18 @@ def upload_audio_to_s3(audio_bytes: bytes, conversation_id: str) -> str:
             Body=audio_bytes,
             ContentType="audio/mpeg"
         )
-    except Exception as e:
-        print(f"[Warning] S3 upload failed: {e}")
+    except Exception:
+        logger.exception("回覆語音上傳失敗，本輪不附音檔：conversation_id=%s", conversation_id)
+        return None
     return object_key
 
 
 def presign_audio(object_key: str | None) -> str | None:
-    """簽發 15 分鐘有效的 Presigned URL；沒有音檔時回 None。"""
+    """簽發 15 分鐘有效的 Presigned URL；沒有音檔或簽發失敗回 None。
+
+    簽不出來時不回未簽名的 URL：那條連結一定會被 S3 擋掉，App 只會拿到一個播不出來的網址，
+    還不如明確地沒有音檔、直接走文字降級。
+    """
     if not object_key:
         return None
     try:
@@ -215,10 +223,9 @@ def presign_audio(object_key: str | None) -> str | None:
             Params={"Bucket": S3_BUCKET_NAME, "Key": object_key},
             ExpiresIn=900  # 15 分鐘有效
         )
-    except Exception as e:
-        print(f"[Warning] Presigned URL generation failed: {e}")
-        # 當開發環境無 S3 存取權時的回傳預設 URL
-        return f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{object_key}"
+    except Exception:
+        logger.exception("簽發回覆語音 URL 失敗：object_key=%s", object_key)
+        return None
 
 
 class ImmediateResponse(Exception):
@@ -429,8 +436,12 @@ def requested_session(req: ChatRequest) -> Dict[str, Any] | None:
 
 def run_turn(
     req: ChatRequest, audio_bytes: bytes, conversation_id: str
-) -> Tuple[str, str, bool, str]:
-    """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, audio key)。"""
+) -> Tuple[str, str, bool, str | None]:
+    """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, audio key)。
+
+    音檔存不進 S3 時 audio key 為 None，本輪仍然成立：回覆內容與已提交的 routine 副作用都是
+    真的，把整輪判成失敗只會逼長者再講一次，反而可能讓對話產生的 routine 被重複建立。
+    """
     if req.text:
         transcript = req.text
     else:

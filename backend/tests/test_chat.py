@@ -100,7 +100,9 @@ def stack(monkeypatch):
         monkeypatch.setattr(
             chat, "upload_audio_to_s3", lambda audio, conv_id: f"tts/{conv_id}.mp3"
         )
-        monkeypatch.setattr(chat, "presign_audio", lambda key: f"https://s3.example.com/{key}")
+        monkeypatch.setattr(
+            chat, "presign_audio", lambda key: f"https://s3.example.com/{key}" if key else None
+        )
 
         yield chat, db, sessions, turns, calls
 
@@ -412,6 +414,21 @@ def test_failed_turn_replays_the_same_error(stack, monkeypatch):
     assert response["statusCode"] == 500
     assert body_of(response)["error"]["code"] == "TTS_FAILED"
     assert calls == [TRANSCRIPT]
+
+
+def test_unstored_audio_does_not_become_a_dead_link(stack, monkeypatch):
+    """存不進 S3 就不留 key：帶著 key 提交成 completed，之後每次重播都是一條死連結。"""
+    chat, _, _, turns, _ = stack
+    monkeypatch.setattr(chat, "upload_audio_to_s3", lambda audio, conv_id: None)
+
+    body = body_of(post(chat))
+    assert body["reply_audio_url"] is None
+    # 回覆內容與副作用都是真的，這一輪仍然成立
+    assert body["reply_text"] == REPLY
+
+    turn = turns.get_turn(ELDER, body["conversation_id"])
+    assert turn["request_status"] == turns.STATUS_COMPLETED
+    assert "ai_respond_audio_s3_key" not in turn
 
 
 def test_bedrock_failure_is_recorded_as_failed(stack, monkeypatch):

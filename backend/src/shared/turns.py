@@ -512,11 +512,17 @@ def _release_reservation_item(
 
 
 def _set_expression(fields: dict[str, Any]) -> tuple[str, dict[str, str], dict[str, Any]]:
-    """把欄位字典組成 UpdateExpression 的 SET 子句（欄位名一律走 placeholder 避開保留字）。"""
+    """把欄位字典組成 UpdateExpression 的 SET 子句（欄位名一律走 placeholder 避開保留字）。
+
+    值為 None 的欄位直接略過而不寫成 DynamoDB 的 NULL：欄位不存在與「存在但是 null」對讀取端
+    是兩件事，後者會讓 `turn.get(...)` 拿到 None 之後還得再判斷一次。
+    """
     parts: list[str] = []
     names: dict[str, str] = {}
     values: dict[str, Any] = {}
-    for index, (field, value) in enumerate(sorted(fields.items())):
+    for index, (field, value) in enumerate(
+        sorted((item for item in fields.items() if item[1] is not None))
+    ):
         parts.append(f"#f{index} = :f{index}")
         names[f"#f{index}"] = field
         values[f":f{index}"] = _serialize(value)
