@@ -1,8 +1,7 @@
 """
 模型型 provider 的共用骨架。
 
-本機推論（local_models.py）與遠端端點推論（remote_endpoints.py）的差別只在
-「怎麼算出文字」；其餘流程完全相同，而那些流程正是安全性所在：
+遠端端點推論（remote_endpoints.py）的固定安全流程：
 
     cancel/deadline preflight → 取號（bounded） → 取 handle（bounded）
       → 推論 → cancel/deadline postflight → 正規化輸出

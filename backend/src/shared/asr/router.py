@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from .aws_zh_adapter import AwsZhAdapter
 from .config import (
     AsrConfig,
     ProviderKind,
@@ -65,14 +64,13 @@ class AsrRouter:
         Args:
             config: 後端受控設定。
             providers: provider registry（identifier → provider 實例）。
-                未提供的項目會以安全預設補上：`hak_mock` 與 `aws_zh` 都不會
-                建立模型、網路或雲端呼叫，因此可安全地內建。實體模型 provider
-                一律由 composition root 注入，router 不自行建構。
+                未提供的項目會以安全預設補上：`hak_mock` 不會建立模型、網路或
+                雲端呼叫，因此可安全地內建。實體模型 provider 一律由
+                composition root 注入，router 不自行建構。
         """
         self._config = config
         registry: dict[str, object] = {
             "hak_mock": HakMockProvider(),
-            "aws_zh": AwsZhAdapter(config.aws_capability_gate, transport=None),
         }
         if providers:
             registry.update(providers)
@@ -207,11 +205,6 @@ class AsrRouter:
             return "no provider instance registered"
 
         kind = provider_config.kind
-
-        if kind is ProviderKind.AWS_MANAGED:
-            gate = self._config.aws_capability_gate
-            if not gate.is_complete:
-                return "AWS capability gate incomplete"
 
         if kind.requires_model_approval and not provider_config.metadata_ref:
             return f"{kind.value} provider has no model metadata reference"

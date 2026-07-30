@@ -107,24 +107,21 @@ class ProviderKind(enum.Enum):
     router 靠它決定要驗哪一道閘門，而不是靠 provider 名稱猜：
 
     - `mock`：不呼叫模型、網路或雲端服務，只需 status 為 enabled。
-    - `local_model`：在本 process 執行推論，必須有 model metadata 且
-      production gate 逐項核准。
-    - `remote_model`：呼叫我們自己託管的推論端點（SageMaker）。閘門與
-      `local_model` 相同——是同一個模型，只是換個地方跑——另外必須有
-      endpoint_name。
-    - `aws_managed`：呼叫 AWS 代管的現成 ASR 服務，必須 AWS capability gate
-      九項全核准。與 `remote_model` 的差別是「服務是誰的模型」。
+    - `remote_model`：呼叫我們自己託管的推論端點（SageMaker）。必須有
+      model metadata 且 production gate 逐項核准，另外必須有 endpoint_name。
+
+    已移除（remote-only 架構）：
+    - `local_model`：Lambda 不可在 process 內執行模型推論。
+    - `aws_managed`：無使用場景的 AWS 代管 ASR placeholder。
     """
 
     MOCK = "mock"
-    LOCAL_MODEL = "local_model"
     REMOTE_MODEL = "remote_model"
-    AWS_MANAGED = "aws_managed"
 
     @property
     def requires_model_approval(self) -> bool:
         """是否受 model production gate 管制。"""
-        return self in (ProviderKind.LOCAL_MODEL, ProviderKind.REMOTE_MODEL)
+        return self is ProviderKind.REMOTE_MODEL
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -391,80 +388,22 @@ class ConcurrencyPolicy:
 
 
 # ─────────────────────────────────────────────────────────────────
-# AWS Capability Gate — 9 項全部核准才完整
-# ─────────────────────────────────────────────────────────────────
-_AWS_CAPABILITY_GATE_ITEMS = (
-    "region_zh_tw_support",
-    "service_input_output_mode",
-    "canonical_pcm_compatibility",
-    "timeout_behavior",
-    "cancellation_behavior",
-    "iam_permissions",
-    "s3_necessity",
-    "s3_result_handling",
-    "s3_cleanup_requirement",
-)
-
-
-@dataclass(frozen=True)
-class AwsCapabilityGate:
-    """
-    AWS Capability Gate：9 項核准旗標。
-
-    任何缺項/false/不可讀皆為未核准。全部 True 才是完整。
-    """
-
-    region_zh_tw_support: bool
-    service_input_output_mode: bool
-    canonical_pcm_compatibility: bool
-    timeout_behavior: bool
-    cancellation_behavior: bool
-    iam_permissions: bool
-    s3_necessity: bool
-    s3_result_handling: bool
-    s3_cleanup_requirement: bool
-    approval_record_ref: str | None = None
-
-    @property
-    def is_complete(self) -> bool:
-        """所有 9 項皆為 True 才是完整。"""
-        return all(
-            getattr(self, item) is True for item in _AWS_CAPABILITY_GATE_ITEMS
-        )
-
-    @classmethod
-    def default_incomplete(cls) -> "AwsCapabilityGate":
-        """建立預設不完整的 gate（所有項目為 False）。"""
-        return cls(
-            region_zh_tw_support=False,
-            service_input_output_mode=False,
-            canonical_pcm_compatibility=False,
-            timeout_behavior=False,
-            cancellation_behavior=False,
-            iam_permissions=False,
-            s3_necessity=False,
-            s3_result_handling=False,
-            s3_cleanup_requirement=False,
-            approval_record_ref=None,
-        )
-
-
-# ─────────────────────────────────────────────────────────────────
 # ASR Config — 頂層受控設定
 # ─────────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class AsrConfig:
     """
-    後端 ASR 設定。
+    後端 ASR 設定（remote-only 架構）。
 
-    包含 language routes、providers、model metadata、AWS capability gate、
-    併發政策與 Formo Prompt ID allowlist。
+    包含 language routes、providers、model metadata、併發政策與
+    Formo Prompt ID allowlist。
+
+    ASR_CONFIG_JSON 是 Lambda 唯一的 ASR 設定來源。
     """
 
     routes: dict[str, RouteConfig]
     providers: dict[str, ProviderConfig]
     model_metadata: dict[str, ModelMetadata]
-    aws_capability_gate: AwsCapabilityGate
     formo_prompt_id_allowlist: FrozenSet[str]
     concurrency: ConcurrencyPolicy = ConcurrencyPolicy()
 
@@ -664,44 +603,16 @@ def _parse_model_production_gate(data: Any, context: str) -> ModelProductionGate
     )
 
 
-def _parse_aws_capability_gate(data: Any, context: str) -> AwsCapabilityGate:
-    """
-    解析 AWS Capability Gate。
-
-    任何缺項、非 bool 值、不可讀皆視為 False（fail closed）。
-    """
-    if not isinstance(data, dict):
-        raise ConfigParseError(
-            f"AWS capability gate must be a dict in {context}. Fail closed."
-        )
-
-    gate_values: dict[str, bool] = {}
-    for item in _AWS_CAPABILITY_GATE_ITEMS:
-        value = data.get(item)
-        # 非 True 一律視為未核准（fail closed）
-        gate_values[item] = value is True
-
-    approval_record_ref = data.get("approval_record_ref")
-    if approval_record_ref is not None and not isinstance(approval_record_ref, str):
-        raise ConfigParseError(
-            f"approval_record_ref must be a string or null in {context}. Fail closed."
-        )
-
-    return AwsCapabilityGate(
-        **gate_values,
-        approval_record_ref=approval_record_ref,
-    )
-
-
 def parse_asr_config(data: Any) -> AsrConfig:
     """
-    從 dict-like 資料解析 ASR 設定。
+    從 dict-like 資料解析 ASR 設定（remote-only 架構）。
 
     缺欄位、未知 schema、矛盾狀態或不可讀 approval record 一律 fail closed。
+    ASR_CONFIG_JSON 是 Lambda 唯一的 ASR 設定來源。
 
     Args:
-        data: dict-like 結構，包含 routes、providers、model_metadata、
-              aws_capability_gate 與 formo_prompt_id_allowlist。
+        data: dict-like 結構，包含 routes、providers、model_metadata
+              與 formo_prompt_id_allowlist。
 
     Returns:
         驗證通過的 AsrConfig。
@@ -745,12 +656,6 @@ def parse_asr_config(data: Any) -> AsrConfig:
         model_metadata[mid] = _parse_model_metadata(
             meta_data, f"model_metadata[{mid}]"
         )
-
-    # AWS capability gate
-    gate_data = _require_key(data, "aws_capability_gate", "asr_config")
-    aws_capability_gate = _parse_aws_capability_gate(
-        gate_data, "aws_capability_gate"
-    )
 
     # Formo Prompt ID allowlist
     formo_data = _require_key(data, "formo_prompt_id_allowlist", "asr_config")
@@ -806,7 +711,6 @@ def parse_asr_config(data: Any) -> AsrConfig:
         routes=routes,
         providers=providers,
         model_metadata=model_metadata,
-        aws_capability_gate=aws_capability_gate,
         formo_prompt_id_allowlist=formo_allowlist,
         concurrency=concurrency,
     )

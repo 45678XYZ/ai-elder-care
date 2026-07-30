@@ -23,7 +23,6 @@ from .config import (
     AccessStatus,
     ApprovalState,
     AsrConfig,
-    AwsCapabilityGate,
     CE_MODEL_METADATA,
     COLAB_CANDIDATE_MODEL_IDS,
     ConcurrencyPolicy,
@@ -55,7 +54,6 @@ from .providers import (
     AsrProvider,
     AttemptRecord,
     ConcurrentAsrProvider,
-    TransportRequest,
 )
 from .failover import (
     DEFAULT_FAILOVER_CATEGORIES,
@@ -63,7 +61,6 @@ from .failover import (
     ChainOutcome,
     FailoverChain,
 )
-from .local_models import CeLocalProvider, FormoLocalProvider, LocalModelSpec
 from .composition import (
     MODEL_PROVIDER_REGISTRY,
     ModelProviderRegistration,
@@ -76,13 +73,6 @@ from .composition import (
     reset_asr_facade,
 )
 from .hak_mock import HakMockProvider
-from .aws_zh_adapter import (
-    AwsZhAdapter,
-    FakeTransport,
-    TransportCancelled,
-    TransportDeadlineExceeded,
-    TransportUnavailable,
-)
 from .router import AsrRouter
 from .facade import AsrFacade
 from .telemetry import (
@@ -131,7 +121,6 @@ __all__ = [
     "ProviderConfig",
     "ProviderKind",
     "RouteConfig",
-    "AwsCapabilityGate",
     "ConcurrencyPolicy",
     "AsrConfig",
     "ConfigParseError",
@@ -152,16 +141,11 @@ __all__ = [
     "AsrProvider",
     "AttemptRecord",
     "ConcurrentAsrProvider",
-    "TransportRequest",
     # failover.py
     "FailoverChain",
     "ChainOutcome",
     "DEFAULT_FAILOVER_CATEGORIES",
     "NON_FAILOVER_CATEGORIES",
-    # local_models.py
-    "LocalModelSpec",
-    "CeLocalProvider",
-    "FormoLocalProvider",
     # composition.py
     "default_config",
     "load_config",
@@ -174,12 +158,6 @@ __all__ = [
     "ModelProviderRegistration",
     # hak_mock.py
     "HakMockProvider",
-    # aws_zh_adapter.py
-    "AwsZhAdapter",
-    "FakeTransport",
-    "TransportCancelled",
-    "TransportDeadlineExceeded",
-    "TransportUnavailable",
     # router.py
     "AsrRouter",
     # facade.py

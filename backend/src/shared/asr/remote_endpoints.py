@@ -145,10 +145,12 @@ class SageMakerAsrProvider(ModelProviderBase):
         # 送出前最後一次檢查：網路呼叫一旦送出就無法收回。
         guard(cancellation, deadline)
 
-        # TODO: 推論容器的輸入契約尚未實作（terraform 需要 image URI 才能建立
-        # 端點）。目前約定為：body 是 raw PCM s16le bytes，語言與取樣率走
-        # CustomAttributes，回應是 {"text": "..."} 的 JSON。容器實作完成後
-        # 必須與此處對齊。
+        # SageMaker inference container contract（見 docs/asr/sagemaker-inference-contract.md）：
+        # - Body：raw PCM s16le bytes（CanonicalAudio.pcm_s16le）
+        # - ContentType：application/octet-stream
+        # - Accept：application/json
+        # - CustomAttributes：language、sample_rate_hz、channels（分號分隔）
+        # - 回應：{"text": "辨識結果"} 的 JSON
         try:
             response = handle.invoke_endpoint(
                 EndpointName=self._spec.endpoint_name,
