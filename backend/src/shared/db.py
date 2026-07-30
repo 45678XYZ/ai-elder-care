@@ -34,7 +34,8 @@ from botocore.exceptions import ClientError
 # canonical 事件身分與時間正規化只有一份實作，避免同一筆資料在兩處算出不同 ID／精度
 from src.extraction.canonical import event_id_for, event_time_key, routine_completion_key
 from src.extraction.temporal import day_end, day_start, format_ts, normalize_ts
-from src.shared.models import ConversationCreate, EventCreate
+from src.shared.models import ConversationCreate, DailySummaryCreate, EventCreate
+
 
 logger = logging.getLogger(__name__)
 
@@ -297,17 +298,6 @@ def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
     table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
     
     data = dict(conversation_data)
-    
-    # 雙向欄位規範化（確保 elder_transcript / transcript 與 ai_respond_text / reply_text 齊備）
-    if "transcript" in data and "elder_transcript" not in data:
-        data["elder_transcript"] = data["transcript"]
-    elif "elder_transcript" in data and "transcript" not in data:
-        data["transcript"] = data["elder_transcript"]
-
-    if "reply_text" in data and "ai_respond_text" not in data:
-        data["ai_respond_text"] = data["reply_text"]
-    elif "ai_respond_text" in data and "reply_text" not in data:
-        data["reply_text"] = data["ai_respond_text"]
 
     # 自動補全 conversation_id (前綴 cnv_)
     conv_id = data.get("conversation_id")
@@ -416,7 +406,17 @@ def _prepare_event(event_data: dict[str, Any]) -> dict[str, Any]:
     now = format_ts(datetime.now(TZ_TAIPEI))
     data.setdefault("created_at", now)
     data.setdefault("updated_at", data["created_at"])
+
+    # 透過 EventCreate 校驗事件型別與必填欄位
+    try:
+        validated = EventCreate.model_validate(data)
+        validated_dict = validated.model_dump(exclude_none=True)
+        data.update(validated_dict)
+    except Exception as exc:
+        raise DBError(f"建立事件校驗失敗: {exc}")
+
     return data
+
 
 
 def create_event(event_data: dict[str, Any]) -> dict[str, Any]:
@@ -851,12 +851,24 @@ def complete_routine_with_event(
 
 def save_daily_summary(summary_data: dict[str, Any]) -> dict[str, Any]:
     """儲存/覆寫每日摘要。"""
+    data = dict(summary_data)
+    if not data.get("generated_at"):
+        data["generated_at"] = datetime.now(TZ_TAIPEI).isoformat()
+
+    try:
+        validated = DailySummaryCreate.model_validate(data)
+        data.update(validated.model_dump(exclude_none=True))
+    except Exception as exc:
+        raise DBError(f"儲存每日摘要校驗失敗: {exc}")
+
     table = get_dynamodb_resource().Table(TABLE_DAILY_SUMMARIES)
     try:
-        table.put_item(Item=summary_data)
-        return convert_decimals(summary_data)
+        item = prepare_item(data)
+        table.put_item(Item=item)
+        return convert_decimals(item)
     except ClientError as e:
         raise DBError(f"儲存每日摘要失敗: {e.response['Error']['Message']}")
+
 
 
 def get_daily_summaries(elder_id: str, from_date: str, to_date: str) -> list[dict[str, Any]]:

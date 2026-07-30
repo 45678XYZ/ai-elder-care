@@ -259,7 +259,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # 6. 雙寫對話紀錄至 DynamoDB conversations 表 (確保隊友摘要與萃取 API 100% 相容)
         try:
             conv_model = ConversationCreate(
+                conversation_id=conversation_id,
                 elder_id=elder_id,
+                created_at=now_ts,
+                ts=now_ts,
                 source="elder_initiated",
                 user_status="replied",
                 system_status="success",
@@ -269,19 +272,12 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 ai_respond_text=reply_text,
                 routines_updated=routines_updated,
             )
-            conv_record = conv_model.model_dump(exclude_none=True)
-            conv_record.update({
-                "conversation_id": conversation_id,
-                "ts": now_ts,
-                "created_at": now_ts,
-                "transcript": transcript,
-                "reply_text": reply_text,
-            })
-            db.save_conversation(conv_record)
+            db.save_conversation(conv_model.model_dump(exclude_none=True))
         except (AttributeError, NotImplementedError):
             print(f"[Info] db.save_conversation 尚未在當前分支中導入。")
         except Exception as db_err:
             print(f"[Warning] 寫入對話紀錄至 DynamoDB 失敗: {db_err}")
+
 
         # 7. 語音合成 (TTS Factory - 中文用 Polly，客語用 OmniVoice 帶 Fallback)
         try:

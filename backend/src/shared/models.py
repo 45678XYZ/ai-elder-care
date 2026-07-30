@@ -216,6 +216,20 @@ class EventResponse(BaseModel):
 # Daily Summaries 表模型
 # -----------------------------------------------------------------------------
 
+class DailySummaryCreate(BaseModel):
+    """每日摘要寫入 Schema。"""
+    elder_id: str = Field(..., description="長者 ID")
+    date: str = Field(..., description="日期 (YYYY-MM-DD)")
+    overview: str = Field(default="", description="當日總覽")
+    sections: dict[str, str | None] = Field(default_factory=dict, description="固定分類區塊，key 與 EventType 對應")
+    routines: dict[str, Any] = Field(default_factory=dict, description="例行公事統計 (completed, missed, items)")
+    alerts: list[str] = Field(default_factory=list, description="警訊清單")
+    interaction_count: int = Field(default=0, description="當日對話輪數")
+    data_status: Literal["complete", "partial"] = Field(default="complete", description="資料完整度")
+    pending_session_count: int = Field(default=0, description="待處理 Session 數")
+    generated_at: str | None = Field(default=None, description="生成時間")
+
+
 class DailySummaryResponse(BaseModel):
     """每日摘要 Response 物件 (GET /summaries)。"""
     elder_id: str = Field(..., description="長者 ID")
@@ -228,6 +242,7 @@ class DailySummaryResponse(BaseModel):
     data_status: Literal["complete", "partial"] = Field(default="complete", description="資料完整度")
     pending_session_count: int = Field(default=0, description="待處理 Session 數")
     generated_at: str = Field(..., description="生成時間")
+
 
 
 # -----------------------------------------------------------------------------
