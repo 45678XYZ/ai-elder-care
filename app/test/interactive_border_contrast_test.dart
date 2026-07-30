@@ -54,6 +54,26 @@ void main() {
     });
   });
 
+  group('分類 chip 選取時的外框', () {
+    // 選取時填的是 category.bg，但七個 bg 對頁面底都只有 1.0:1——當外框等於沒有。
+    // 其他六類還靠色相分得出來，`other` 是低彩度（#F2ECE1 vs app #F3ECDD），
+    // 明度與色相都一樣，選了跟沒選看不出差別。外框因此改走 category.dot。
+    test('每一類的 dot 對頁面底都達 3:1', () {
+      for (final c in EventCategory.values) {
+        final ratio = contrast(c.dot, AppColors.app);
+        expect(ratio, greaterThanOrEqualTo(3.0),
+            reason: '${c.label} 的 dot 只有 ${ratio.toStringAsFixed(2)}:1');
+      }
+    });
+
+    test('迴歸：bg 當外框是不夠的（尤其 other）', () {
+      for (final c in EventCategory.values) {
+        expect(contrast(c.bg, AppColors.app), lessThan(3.0),
+            reason: '${c.label}：若哪天 bg 變得夠深，這裡的取捨要重新檢討');
+      }
+    });
+  });
+
   group('迴歸：原本的 border 撐不起可互動元件', () {
     // 留著這條是為了說明「為什麼不能直接用 border」——它本身沒壞，只是用途不同。
     test('border 在紙色底上不足 3:1，不可用於可點元件邊界', () {

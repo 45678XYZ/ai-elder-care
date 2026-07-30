@@ -108,7 +108,12 @@ class EventTypeChip extends StatelessWidget {
         color: selected ? category.bg : Colors.transparent,
         borderRadius: const BorderRadius.all(AppRadius.pill),
         border: Border.all(
-          color: selected ? category.bg : AppColors.borderInteractive,
+          // 選取時的外框走 [EventCategory.dot]（中間調）而不是跟填色同一個 bg：
+          // 七個分類的 bg 對頁面底都只有 1.0:1，當外框等於沒有外框。其他六類還
+          // 靠色相分得出來（偏黃、偏綠、偏粉），但 `other` 依設計是低彩度
+          // （#F2ECE1 vs app #F3ECDD），明度與色相都一樣，選了跟沒選看不出差別。
+          // dot 是每個分類已有的中間調，七個對頁面底都在 3.09–8.16:1。
+          color: selected ? category.dot : AppColors.borderInteractive,
           width: selected ? 2 : 1,
         ),
       ),
