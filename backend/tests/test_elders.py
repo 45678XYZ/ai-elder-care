@@ -33,7 +33,7 @@ def test_get_elders_caregiver_list(monkeypatch):
     monkeypatch.setattr(
         db,
         "list_elders",
-        lambda caregiver_id: [{"elder_id": "eld_001", "name": "陳阿蘭"}]
+        lambda caregiver_id: [{"elder_id": "eld_001", "name": "陳阿蘭", "created_at": "2026-07-28T12:00:00+08:00"}]
     )
 
     event = _make_event("GET", sub="usr_c1", role="caregiver")
@@ -50,7 +50,7 @@ def test_get_elders_single_success(monkeypatch):
     monkeypatch.setattr(
         db,
         "get_elder",
-        lambda eid: {"elder_id": eid, "name": "陳阿蘭", "gender": "female"}
+        lambda eid: {"elder_id": eid, "name": "陳阿蘭", "gender": "female", "created_at": "2026-07-28T12:00:00+08:00"}
     )
 
     event = _make_event("GET", path_params={"elder_id": "eld_001"}, sub="usr_c1")
@@ -73,6 +73,16 @@ def test_post_elder_server_owned_field_400():
 def test_post_elder_missing_name_400():
     """測試建立長者未帶 name 回傳 400 INVALID_PARAMETER。"""
     event = _make_event("POST", body={"gender": "female"})
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 400
+    body = json.loads(resp["body"])
+    assert body["error"]["code"] == "INVALID_PARAMETER"
+    assert "name" in body["error"]["message"]
+
+
+def test_post_elder_invalid_gender_400():
+    """測試建立長者帶入無效 gender 回傳 400 INVALID_PARAMETER。"""
+    event = _make_event("POST", body={"name": "陳阿蘭", "gender": "unknown"})
     resp = elders.handler(event, None)
     assert resp["statusCode"] == 400
     body = json.loads(resp["body"])
@@ -108,7 +118,12 @@ def test_patch_elder_success(monkeypatch):
     monkeypatch.setattr(
         db,
         "update_elder",
-        lambda eid, patch: {"elder_id": eid, "name": patch["name"], "updated_at": "2026-07-28T12:05:00+08:00"}
+        lambda eid, patch: {
+            "elder_id": eid,
+            "name": patch["name"],
+            "created_at": "2026-07-28T12:00:00+08:00",
+            "updated_at": "2026-07-28T12:05:00+08:00"
+        }
     )
 
     event = _make_event("PATCH", body={"name": "陳阿蘭（更新）"}, path_params={"elder_id": "eld_001"}, sub="usr_c1")
@@ -116,3 +131,4 @@ def test_patch_elder_success(monkeypatch):
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
     assert body["name"] == "陳阿蘭（更新）"
+

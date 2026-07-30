@@ -34,8 +34,11 @@ from botocore.exceptions import ClientError
 # canonical 事件身分與時間正規化只有一份實作，避免同一筆資料在兩處算出不同 ID／精度
 from src.extraction.canonical import event_id_for, event_time_key, routine_completion_key
 from src.extraction.temporal import day_end, day_start, format_ts, normalize_ts
+from src.shared.models import ConversationCreate, DailySummaryCreate, EventCreate
+
 
 logger = logging.getLogger(__name__)
+
 
 # 台灣時區 (+08:00)
 TZ_TAIPEI = timezone(timedelta(hours=8))
@@ -301,28 +304,42 @@ def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
     table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
     
     data = dict(conversation_data)
-    
+
     # 自動補全 conversation_id (前綴 cnv_)
-    if not data.get("conversation_id"):
-        data["conversation_id"] = f"cnv_{uuid.uuid4().hex[:12]}"
+    conv_id = data.get("conversation_id")
+    if not conv_id:
+        conv_id = f"cnv_{uuid.uuid4().hex[:12]}"
+        data["conversation_id"] = conv_id
         
-    # 自動補全 created_at 時間戳記 (+08:00)
+    # 自動補全 DynamoDB Sort Key: record_id ("TURN#cnv_...") 與 item_type ("conversation")
+    if not data.get("record_id"):
+        data["record_id"] = f"TURN#{conv_id}"
+    data.setdefault("item_type", "conversation")
+
+    # 自動補全 created_at 與 ts 時間戳記 (+08:00)
+    now_iso = datetime.now(TZ_TAIPEI).isoformat()
     if not data.get("created_at"):
-        data["created_at"] = datetime.now(TZ_TAIPEI).isoformat()
+        data["created_at"] = now_iso
+    if not data.get("ts"):
+        data["ts"] = data["created_at"]
+
+    # 自動補全 GSI Sort Key: conversation_time_key (<created_at>#<conversation_id>)
+    if not data.get("conversation_time_key"):
+        data["conversation_time_key"] = f"{data['created_at']}#{conv_id}"
+
         
-    # 設定預設欄位
-    data.setdefault("source", "elder_initiated")
-    data.setdefault("user_status", "replied")
-    data.setdefault("system_status", "success")
-    data.setdefault("lang", "zh-TW")
-    data.setdefault("input_type", "text")
-    data.setdefault("routines_updated", False)
+    # 透過 ConversationCreate 進行校驗與預設值補充
+    validated = ConversationCreate.model_validate(data)
+    validated_dict = validated.model_dump(exclude_none=True)
+    data.update(validated_dict)
 
     try:
-        table.put_item(Item=data)
+        table.put_item(Item=prepare_item(data))
         return convert_decimals(data)
     except ClientError as e:
         raise DBError(f"儲存對話紀錄失敗: {e.response['Error']['Message']}")
+
+
 
 
 def get_recent_conversations(
@@ -432,7 +449,17 @@ def _prepare_event(event_data: dict[str, Any]) -> dict[str, Any]:
     now = format_ts(datetime.now(TZ_TAIPEI))
     data.setdefault("created_at", now)
     data.setdefault("updated_at", data["created_at"])
+
+    # 透過 EventCreate 校驗事件型別與必填欄位
+    try:
+        validated = EventCreate.model_validate(data)
+        validated_dict = validated.model_dump(exclude_none=True)
+        data.update(validated_dict)
+    except Exception as exc:
+        raise DBError(f"建立事件校驗失敗: {exc}")
+
     return data
+
 
 
 def create_event(event_data: dict[str, Any]) -> dict[str, Any]:
