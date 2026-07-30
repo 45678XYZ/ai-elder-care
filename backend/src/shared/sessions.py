@@ -133,12 +133,19 @@ def put_session(session: dict[str, Any]) -> dict[str, Any]:
     item.setdefault("item_type", "session")
     item.setdefault("record_id", session_record_id(item["session_id"]))
     item.setdefault("schema_version", 1)
+    item.setdefault("state", STATE_ACTIVE)
+    item.setdefault("turn_ids", [])
+    item.setdefault("turn_count", len(item.get("turn_ids", [])))
+    item.setdefault("inflight_turn_ids", [])
+    item.setdefault("inflight_turn_count", len(item.get("inflight_turn_ids", [])))
+    item.setdefault("input_bytes", 0)
     table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
     try:
         table.put_item(Item=db.prepare_item(item))
     except ClientError as exc:
         raise SessionError(f"寫入 session 失敗: {exc.response['Error']['Message']}")
     return db.convert_decimals(item)
+
 
 
 def is_pending_materialization(session: dict[str, Any]) -> bool:
