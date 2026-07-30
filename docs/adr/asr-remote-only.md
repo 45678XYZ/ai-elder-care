@@ -79,6 +79,5 @@ container 使用哪個腔調；這也避免了 prompt ID 在 request 流經的�
 
 ## 相關文件
 
-- 遷移計畫：[`docs/asr/remote-only-migration-plan.md`](../asr/remote-only-migration-plan.md)
 - 架構入口：[`docs/asr/framework.md`](../asr/framework.md)
 - 設定規格：[`docs/asr/config-schema.md`](../asr/config-schema.md)
