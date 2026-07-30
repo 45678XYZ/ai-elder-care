@@ -138,7 +138,7 @@ response 前只執行：
 | `session_id` | 本 turn 首次接納時實際使用的 session；相同 `client_request_id` replay 一律回原 ID，即使該 session 後續已 closing/closed。只有全新 ID 在指定原 session idle、closing、closed 或達上限時才會取得新 ID |
 | `transcript` | audio 的 ASR 結果；text 則原樣回傳 |
 | `reply_text` | AI 回覆 |
-| `reply_audio_url` | 15 分鐘 S3 presigned URL；回覆語音無法儲存或簽發時為 `null`，App 以 `reply_text` 降級顯示 |
+| `reply_audio_url` | 15 分鐘 S3 presigned URL；回覆語音無法儲存或簽發時為 `null` |
 | `routines_updated` | 本次 response 前已成功建立、修改、停用 routine 或完成 occurrence 時為 true，否則為 false |
 
 `routines_updated` 必須反映已提交的業務結果，不得只代表模型曾提出候選。App 收到 true 後可背景呼叫 `GET /routines` 更新定義與當日狀態。一般 events 尚未產生不影響 200 response；回覆失敗時沿用通用錯誤格式。
