@@ -1,4 +1,4 @@
-﻿# Lambda（Python，程式碼在 backend/src/）
+# Lambda（Python，程式碼在 backend/src/）
 #
 # functions：chat / elders / summaries / events / routines / stats / summary_generator
 #
@@ -242,6 +242,14 @@ resource "aws_lambda_function" "chat" {
       TABLE_EVENTS               = aws_dynamodb_table.events.name
       TABLE_ROUTINES             = aws_dynamodb_table.routines.name
       CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+
+      # turn 狀態機：租約長度必須大於本函數的 timeout，否則同一個請求還在跑就會被判定為
+      # 「前一個 invocation 已死」而被接管，副作用會做第二次
+      REQUEST_LEASE_SECONDS      = tostring(var.request_lease_seconds)
+      SESSION_IDLE_MINUTES       = tostring(var.session_idle_minutes)
+      SESSION_MAX_TURNS          = tostring(var.session_max_turns)
+      SESSION_MAX_INFLIGHT_TURNS = tostring(var.session_max_inflight_turns)
+      SESSION_MAX_INPUT_BYTES    = tostring(var.session_max_input_bytes)
     }
   }
 }
@@ -337,6 +345,8 @@ data "aws_iam_policy_document" "extraction_data" {
     effect = "Allow"
     actions = [
       "dynamodb:GetItem",
+      # completion event 由 canonical key 穩定推導，因此逐日 occurrence 一律批次取回
+      "dynamodb:BatchGetItem",
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
       "dynamodb:Query",
@@ -361,9 +371,17 @@ data "aws_iam_policy_document" "extraction_data" {
       "${aws_dynamodb_table.conversations.arn}/index/*",
     ]
   }
+  # 統計只讀 routine 定義：occurrence 狀態由 completion event 推導，統計不回寫 routines
+  statement {
+    sid     = "RoutinesRead"
+    effect  = "Allow"
+    actions = ["dynamodb:Query"]
+    resources = [
+      aws_dynamodb_table.routines.arn,
+      "${aws_dynamodb_table.routines.arn}/index/*",
+    ]
+  }
 
-  # Scan 是排程摘要用的：sweep 要逐一長者產生摘要，而 elders 表沒有「列出全部」的索引。
-  # 表很小（數十筆），Scan 的成本遠低於為此另建一個 GSI。
   statement {
     sid    = "EldersRead"
     effect = "Allow"
@@ -542,9 +560,8 @@ module "api_events" {
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = local.extraction_env
-}
-
 # --- 每日摘要（見 docs/feature_daily-summarization.md）---
+
 
 # 摘要相關 Lambda 共用的環境變數；模型呼叫與等待窗口都可調，不寫死在程式碼
 locals {
@@ -597,3 +614,31 @@ resource "aws_lambda_function" "summary_generator" {
     variables = merge(local.extraction_env, local.summary_env)
   }
 }
+
+module "api_stats" {
+
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
+  function_name = "${var.project_name}-api-stats"
+  description   = "照護者端互動與行程統計 API"
+  handler       = "src.handlers.stats.handler"
+  runtime       = "python3.11"
+  # 統計即時彙總最多一個月的 occurrence 與 completion event，比單頁列表查詢多幾次讀取
+  timeout     = 30
+  memory_size = 512
+
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  # ROUTINE_GRACE_MINUTES 讓 routines、摘要與統計共用同一套 missed 判定門檻
+  environment_variables = merge(local.extraction_env, {
+    ROUTINE_GRACE_MINUTES = tostring(var.routine_grace_minutes)
+  })
+}
+

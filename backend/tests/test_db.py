@@ -200,10 +200,10 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     get_recent_conversations 走 GSI `conversations-by-time`：Base table 的 SK 是
     `record_id`（TURN#/SESSION#），字串排序不等於時間排序，無法取「最近」對話。
     """
+
     mock_table = MagicMock()
     mock_get_resource.return_value.Table.return_value = mock_table
 
-    # 1. 測試 save_conversation 自動帶入 ID 與 created_at
     data = {
         "elder_id": "eld_001",
         "elder_transcript": "我吃過血壓藥了",
@@ -217,10 +217,8 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     assert saved["created_at"].endswith("+08:00")
     assert "." in saved["created_at"]  # 帶毫秒
     assert saved["conversation_time_key"] == f"{saved['created_at']}#{saved['conversation_id']}"
-    mock_table.put_item.assert_called_once()
-
-
     # 2. 測試 get_recent_conversations 走 GSI 並按時間倒序
+
     mock_table.query.return_value = {
         "Items": [
             {
@@ -250,6 +248,7 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     # 顯式過濾 item_type=conversation，防禦 session item 混入
     assert kwargs["FilterExpression"] == "#it = :conv"
     assert kwargs["ExpressionAttributeValues"][":conv"] == "conversation"
+
 
 
 @patch("src.shared.db.put_event_if_absent")

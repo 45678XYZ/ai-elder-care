@@ -1,6 +1,7 @@
-﻿# API Gateway嚗EST嚗楝敺?蝬?/v1嚗ognito JWT authorizer嚗?
+# API Gateway嚗EST嚗楝敺?蝬?/v1嚗ognito JWT authorizer嚗?
 #
 # API Gateway（REST，路徑前綴 /v1，Cognito JWT authorizer）
+
 #
 # 路由 → Lambda 對應（規格見 docs/api.md 端點總覽）：
 #   POST  /chat                                             → chat ✅
@@ -112,9 +113,8 @@ resource "aws_lambda_permission" "get_events" {
   function_name = module.api_events.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/events"
-}
-
 # --- GET /summaries、POST /summaries/generate（照護者每日摘要）---
+
 # 兩條路由掛同一支 Lambda，handler 內依 httpMethod 分派。
 
 resource "aws_api_gateway_resource" "summaries" {
@@ -189,6 +189,44 @@ resource "aws_lambda_permission" "generate_summary" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/summaries/generate"
 }
+
+# --- GET /stats（互動與行程統計）---
+
+resource "aws_api_gateway_resource" "stats" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "stats"
+}
+
+resource "aws_api_gateway_method" "get_stats" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.stats.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.querystring.elder_id" = false
+    "method.request.querystring.days"     = false
+  }
+}
+
+resource "aws_api_gateway_integration" "get_stats" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.stats.id
+  http_method             = aws_api_gateway_method.get_stats.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.api_stats.lambda_function_invoke_arn
+}
+
+resource "aws_lambda_permission" "get_stats" {
+  statement_id  = "AllowApiGatewayGetStats"
+  action        = "lambda:InvokeFunction"
+  function_name = module.api_stats.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+}
+
 
 # --- POST /chat + GET|POST /elders + GET|PATCH /elders/{elder_id} ---
 
@@ -397,6 +435,8 @@ resource "aws_api_gateway_deployment" "api" {
     redeployment = sha1(jsonencode([
       aws_api_gateway_method.get_events,
       aws_api_gateway_integration.get_events,
+      aws_api_gateway_method.get_stats,
+      aws_api_gateway_integration.get_stats,
       aws_api_gateway_method.post_chat,
       aws_api_gateway_integration.post_chat,
       aws_api_gateway_method.get_elders,

@@ -99,8 +99,12 @@ class ChatAudio(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """【API Request】POST /chat Request Body。"""
-    client_request_id: str | None = Field(default=None, description="冪等 UUID")
+    """POST /chat Request Body 模型。"""
+    # 必填：turn 的身分由 elder_id + client_request_id 穩定產生，沒有它就沒有冪等性，
+    # 斷線重送會把同一句話寫成兩輪對話、做兩次 routine 副作用。
+    client_request_id: str = Field(
+        ..., min_length=1, description="冪等 UUID；同一次輸入重送沿用同值"
+    )
     session_id: str | None = Field(default=None, description="Session ID")
     elder_id: str = Field(..., description="長者 ID")
     lang: Literal["zh-TW", "hak"] = Field(..., description="對話語言 (zh-TW | hak)")
@@ -126,6 +130,29 @@ class ConversationCreate(BaseModel):
     item_type: str = Field(default="conversation", description="DynamoDB 項目類型 (conversation)")
     created_at: str | None = Field(default=None, description="建立時間 (ISO 8601)")
     ts: str | None = Field(default=None, description="時間戳記")
+
+    client_request_id: str | None = Field(default=None, description="冪等 UUID")
+    idempotency_key: str | None = Field(default=None, description="同 client_request_id")
+    request_hash: str | None = Field(default=None, description="請求內容 hash")
+    request_status: Literal["processing", "completed", "failed"] = Field(
+        default="completed", description="turn 處理狀態；統計與摘要只計 completed"
+    )
+    request_lease_owner: str | None = Field(default=None, description="租約擁有者")
+    request_lease_until: str | None = Field(default=None, description="租約到期時間")
+    error_http_status: int | None = Field(default=None, description="HTTP 狀態碼")
+    error_code: str | None = Field(default=None, description="錯誤代碼")
+    error_message: str | None = Field(default=None, description="錯誤訊息")
+
+    source: Literal["elder_initiated", "system_routine_inquiry"] = Field(
+        default="elder_initiated", description="對話發起來源"
+    )
+    user_status: Literal["replied", "no_response"] = Field(
+        default="replied", description="長者行為狀態"
+    )
+    system_status: Literal["success", "failed"] = Field(
+        default="success", description="系統技術處理狀態"
+    )
+    routine_id: str | None = Field(default=None, description="關聯例行公事 ID")
 
     lang: Literal["zh-TW", "hak"] = Field(default="zh-TW", description="對話語言")
     input_type: Literal["text", "audio"] = Field(default="text", description="輸入類型 (文字 / 語音)")
@@ -332,3 +359,50 @@ class RoutineOccurrence(BaseModel):
     status: Literal["pending", "done", "missed"] = Field(..., description="完成狀態")
     completed_at: str | None = Field(default=None, description="完成時間 (ISO 8601)")
     completed_by: str | None = Field(default=None, description="完成角色 (conversation/elder/caregiver)")
+
+
+# -----------------------------------------------------------------------------
+# 統計 Response 模型（GET /stats；由 conversations、routines 與 events 即時彙總）
+# -----------------------------------------------------------------------------
+
+class StatsToday(BaseModel):
+    """當日互動統計。"""
+    interaction_count: int = Field(default=0, description="當日 /chat 對話輪數")
+    last_interaction_at: str | None = Field(default=None, description="當日最後一次互動時間 (ISO 8601)；無互動時省略")
+
+
+class StatsPeriod(BaseModel):
+    """區間互動統計。"""
+    days: int = Field(..., description="統計天數（含今天）")
+    interaction_count: int = Field(default=0, description="區間內 /chat 對話輪數")
+    active_days: int = Field(default=0, description="區間內有互動的天數")
+
+
+class StatsRoutineItem(BaseModel):
+    """單一例行公事在區間內的完成度。"""
+    routine_id: str = Field(..., description="例行公事 ID")
+    title: str = Field(..., description="行程標題")
+    completed: int = Field(default=0, description="已完成的 occurrence 數（依 canonical completion event 計數）")
+    total: int = Field(default=0, description="區間內排程的 occurrence 數")
+
+
+class StatsRoutines(BaseModel):
+    """例行公事完成度統計。"""
+    by_routine: list[StatsRoutineItem] = Field(default_factory=list, description="只列區間內至少排程一次的 routine")
+
+
+class StatsDailyPoint(BaseModel):
+    """逐日趨勢的單日資料點。"""
+    date: str = Field(..., description="日期 (YYYY-MM-DD，台灣日界)")
+    interaction_count: int = Field(default=0, description="當日 /chat 對話輪數")
+    routines_completed: int = Field(default=0, description="當日已完成的 occurrence 數")
+    routines_total: int = Field(default=0, description="當日排程的 occurrence 數")
+
+
+class StatsResponse(BaseModel):
+    """統計 Response 物件 (GET /stats)。"""
+    elder_id: str = Field(..., description="長者 ID")
+    today: StatsToday = Field(..., description="當日互動統計")
+    period: StatsPeriod = Field(..., description="區間互動統計")
+    routines: StatsRoutines = Field(..., description="例行公事完成度統計")
+    daily: list[StatsDailyPoint] = Field(default_factory=list, description="近 N 日趨勢，依日期遞增，區間內每天一筆")

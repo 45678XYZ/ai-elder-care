@@ -458,6 +458,7 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 | `CHUNK_PLANNER_VERSION`、`BATCH_EXTRACTOR_VERSION` | 寫入 session／turn 的版本戳記 |
 | `METRICS_NAMESPACE`、`METRICS_ENABLED` | EMF 指標的 namespace 與開關；指標寫 stdout 由 CloudWatch Logs 解析，不需額外 IAM |
 | `BATCH_LEASE_SECONDS`、`SESSION_IDLE_MINUTES`、`SESSION_SWEEP_LIMIT` | batch lease 長度、idle close 門檻與單次 sweep 上限 |
+| `REQUEST_LEASE_SECONDS` | `/chat` turn 的 request lease 長度；必須大於 chat Lambda 的 timeout |
 | `BATCH_ALERT_TOPIC_ARN` | batch 收斂為 `failed` 時的告警 topic |
 | `SUMMARY_GENERATOR_VERSION` | 寫入 `daily_summaries.generator_version` 的版本戳記 |
 | `BEDROCK_SUMMARY_MODEL_ID` | 摘要階段模型覆寫；留空沿用主模型 |

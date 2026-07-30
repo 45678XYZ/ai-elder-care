@@ -97,6 +97,12 @@ variable "event_slot_minutes" {
   default     = 30
 }
 
+variable "routine_grace_minutes" {
+  description = "occurrence 由 pending 轉 missed 的寬限（分鐘）；routines、摘要與統計共用"
+  type        = number
+  default     = 120
+}
+
 variable "chunker_type" {
   description = "分塊策略：llm_prompt | embedding_depth | pairwise_v2"
   type        = string
@@ -131,6 +137,30 @@ variable "session_sweep_minutes" {
   description = "session sweep 的執行間隔（分鐘）；應短於 batch lease"
   type        = number
   default     = 5
+}
+
+variable "session_max_turns" {
+  description = "單一 session 可接納的 turn 數上限；不得高於 100（close 驗證與 BatchGet 的單次上限）"
+  type        = number
+  default     = 100
+}
+
+variable "session_max_inflight_turns" {
+  description = "同時處理中的 turn 數上限；預設 1 讓 turn 按接納順序提交"
+  type        = number
+  default     = 1
+}
+
+variable "session_max_input_bytes" {
+  description = "單一 session 累計輸入位元組上限；避免 session item 逼近 DynamoDB 400 KB"
+  type        = number
+  default     = 200000
+}
+
+variable "request_lease_seconds" {
+  description = "/chat turn 的 request lease 長度（秒）；必須大於 chat Lambda 的 timeout"
+  type        = number
+  default     = 60
 }
 
 variable "api_throttle_rate_limit" {
