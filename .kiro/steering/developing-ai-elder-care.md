@@ -1,6 +1,5 @@
 ---
-name: developing-ai-elder-care
-description: "Guide to the ai-elder-care project (Flutter app + AWS Python Lambda + Terraform): which doc is authoritative for each topic, plus the workflow and coding conventions to follow. Use at the start of any development task in this repo — writing code, branching, committing, opening PRs, or editing docs."
+inclusion: always
 ---
 
 # Repo Guide for Agent Tools
