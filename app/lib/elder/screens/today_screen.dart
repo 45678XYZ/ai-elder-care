@@ -6,6 +6,7 @@ import '../../shared/models/routine.dart';
 import '../../shared/services/demo_data.dart';
 import '../../shared/services/lunar_date.dart';
 import '../../shared/services/session_store.dart';
+import '../../shared/services/taiwan_holiday.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
 import '../../shared/widgets/status_chip.dart';
@@ -170,13 +171,11 @@ class _CalendarSheet extends StatelessWidget {
     final now = DateTime.now();
     final lunar = LunarDate.of(now);
 
-    // 台灣日曆慣例：假日紅、平日藍。農曆節日（春節、中秋…）也算假日。
-    // TODO: 國定假日（如雙十、清明補假）需要行事曆資料才判得出來，目前只認週末與農曆節日。
-    final isHoliday = now.weekday == DateTime.saturday ||
-        now.weekday == DateTime.sunday ||
-        lunar.festival != null;
+    // 台灣日曆慣例：假日紅、平日藍。判斷集中在 [isTaiwanHoliday]（含國定假日、
+    // 農曆假日與補假），不看 [LunarDate.festival]——那是套件的中國節日表，
+    // 元宵、重陽在台灣不放假，照它塗色會把上班日畫成紅的。
     final calColor =
-        isHoliday ? AppColors.accentText : AppColors.calendarWeekday;
+        isTaiwanHoliday(now) ? AppColors.accentText : AppColors.calendarWeekday;
 
     return LayoutBuilder(
       builder: (context, constraints) {

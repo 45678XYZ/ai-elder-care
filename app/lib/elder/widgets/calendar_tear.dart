@@ -5,6 +5,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../../shared/services/calendar_tear_store.dart';
 import '../../shared/services/lunar_date.dart';
+import '../../shared/services/taiwan_holiday.dart';
 import '../../theme/app_theme.dart';
 import 'almanac_face.dart';
 
@@ -186,13 +187,10 @@ class _TearStageState extends State<_TearStage>
     }
   }
 
-  /// 台灣日曆慣例：假日紅、平日藍。
-  static Color _colorOf(DateTime d, LunarDate lunar) {
-    final isHoliday = d.weekday == DateTime.saturday ||
-        d.weekday == DateTime.sunday ||
-        lunar.festival != null;
-    return isHoliday ? AppColors.accentText : AppColors.calendarWeekday;
-  }
+  /// 台灣日曆慣例：假日紅、平日藍。判斷集中在 [isTaiwanHoliday]，
+  /// 不看 [LunarDate.festival]——那是套件的中國節日表，元宵、重陽在台灣不放假。
+  static Color _colorOf(DateTime d) =>
+      isTaiwanHoliday(d) ? AppColors.accentText : AppColors.calendarWeekday;
 
   @override
   Widget build(BuildContext context) {
@@ -207,8 +205,7 @@ class _TearStageState extends State<_TearStage>
     // 原本整棵樹（含兩張牌面的字體排版與陰影）每幀重建，動畫就是這樣卡的：
     // 動起來的是 transform，重算的卻是整份排版。
     final today = RepaintBoundary(
-      child:
-          _StageCalendar(now: now, lunar: lunar, color: _colorOf(now, lunar)),
+      child: _StageCalendar(now: now, lunar: lunar, color: _colorOf(now)),
     );
     final sheet = RepaintBoundary(
       child: ClipPath(
@@ -216,7 +213,7 @@ class _TearStageState extends State<_TearStage>
         child: _StageCalendar(
           now: yesterday,
           lunar: yesterdayLunar,
-          color: _colorOf(yesterday, yesterdayLunar),
+          color: _colorOf(yesterday),
         ),
       ),
     );
