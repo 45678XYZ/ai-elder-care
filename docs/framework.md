@@ -235,7 +235,12 @@ tool calling 副作用（routine create/update/deactivate/complete、safety even
 | `close_reason` | String | 否 | `idle` \| `client_requested` \| `max_turns` |
 | `turn_ids` | List[String] | 是 | 按接納順序保存的有界 completed turn ID 列表 |
 | `turn_count` | Number | 是 | `turn_ids` 數量 (上限 50/100) |
+| `inflight_turn_ids` | List[String] | 是 | 飛在半空中 (`processing`) 的 turn ID 列表 |
+| `inflight_turn_count` | Number | 是 | `inflight_turn_ids` 數量 (受控於 `SESSION_MAX_INFLIGHT_TURNS`) |
+| `input_bytes` | Number | 是 | 對話總輸入位元組累積值 (受控於 `SESSION_MAX_INPUT_BYTES`) |
+| `recent_conversation_ids` | List[String] | 否 | 近期 active 對話 context ID 列表 |
 | `session_snapshot_hash` | String | 否 | frozen ordered turns 與內容版本的 stable hash |
+
 | `session_state_key`, `session_state_time_key` | String | 否 | sparse GSI 欄位 |
 | `batch_status` | String | 否 | closed 後為 `pending` \| `processing` \| `completed` \| `failed` |
 | `batch_attempts` | Number | 是 | 預設 `0` |

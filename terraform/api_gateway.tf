@@ -1,6 +1,4 @@
-# API Gateway嚗EST嚗楝敺?蝬?/v1嚗ognito JWT authorizer嚗?
-#
-# API Gateway（REST，路徑前綴 /v1，Cognito JWT authorizer）
+﻿# API Gateway（REST，路徑前綴 /v1，Cognito JWT authorizer）
 
 #
 # 路由 → Lambda 對應（規格見 docs/api.md 端點總覽）：
@@ -113,6 +111,8 @@ resource "aws_lambda_permission" "get_events" {
   function_name = module.api_events.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/events"
+}
+
 # --- GET /summaries、POST /summaries/generate（照護者每日摘要）---
 
 # 兩條路由掛同一支 Lambda，handler 內依 httpMethod 分派。
@@ -137,7 +137,6 @@ resource "aws_api_gateway_method" "get_summaries" {
     "method.request.querystring.limit"      = false
     "method.request.querystring.next_token" = false
   }
-
 }
 
 resource "aws_api_gateway_integration" "get_summaries" {
@@ -226,6 +225,7 @@ resource "aws_lambda_permission" "get_stats" {
   action        = "lambda:InvokeFunction"
   function_name = module.api_stats.lambda_function_name
   principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/stats"
 }
 
 
