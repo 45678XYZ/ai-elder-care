@@ -117,41 +117,33 @@ class ChatRequest(BaseModel):
 
 
 class ConversationCreate(BaseModel):
-    """【DB Schema】conversations 表寫入驗證；由 shared/db.py 與 chat handler 共同引用。"""
+    """【DB Schema】conversations 表 Turn 寫入驗證；由 shared/db.py 與 chat handler 共同引用。"""
     conversation_id: str | None = Field(default=None, description="對話 ID (前綴 cnv_)")
+    session_id: str | None = Field(default=None, description="關聯 Session ID (前綴 ses_)")
+    elder_id: str = Field(..., description="對話歸屬之長者 ID（必填）")
     record_id: str | None = Field(default=None, description="DynamoDB Sort Key (TURN#cnv_...)")
     conversation_time_key: str | None = Field(default=None, description="DynamoDB GSI Sort Key (<created_at>#<conversation_id>)")
     item_type: str = Field(default="conversation", description="DynamoDB 項目類型 (conversation)")
-    elder_id: str = Field(..., description="對話歸屬之長者 ID（必填）")
-    session_id: str | None = Field(default=None, description="關聯 Session ID (前綴 ses_)")
+    created_at: str | None = Field(default=None, description="建立時間 (ISO 8601)")
     ts: str | None = Field(default=None, description="時間戳記")
 
-    created_at: str | None = Field(default=None, description="建立時間")
-
-    source: Literal["elder_initiated", "system_routine_inquiry"] = Field(
-        default="elder_initiated", description="對話發起來源（長者主動 / 系統例行公事詢問）"
-    )
-    user_status: Literal["replied", "no_response"] = Field(
-        default="replied", description="長者行為狀態（已回覆 / 逾時無回應）"
-    )
-    system_status: Literal["success", "failed"] = Field(
-        default="success", description="系統技術處理狀態（成功 / 處理失敗）"
-    )
-    error_message: str | None = Field(default=None, description="系統失敗時之錯誤訊息說明")
-    routine_id: str | None = Field(default=None, description="若為系統 Routine 詢問，關聯之例行公事 ID")
     lang: Literal["zh-TW", "hak"] = Field(default="zh-TW", description="對話語言")
     input_type: Literal["text", "audio"] = Field(default="text", description="輸入類型 (文字 / 語音)")
-    ai_prompt_text: str | None = Field(default=None, description="系統發起提醒之提示內文 (AI 1)；長者主動發話時為 None")
-    elder_transcript: str | None = Field(default=None, description="長者說的話 / 語音轉寫文字 (Elder)；逾時無回應時為 None")
-    ai_respond_text: str | None = Field(default=None, description="AI 最終回應/確認內文 (AI 2)")
-    ai_prompt_audio_s3_key: str | None = Field(default=None, description="系統提醒語音 S3 物件路徑 (AI 1)")
-    ai_respond_audio_s3_key: str | None = Field(default=None, description="AI 最終回應語音 S3 物件路徑 (AI 2)")
-    ai_prompt_audio_url: str | None = Field(default=None, description="系統提醒語音 URL (AI 1)")
-    ai_respond_audio_url: str | None = Field(default=None, description="AI 最終回應語音 URL (AI 2)")
-    prompt_sent_at: str | None = Field(default=None, description="系統送出提醒發問之時間戳記")
-    elder_received_at: str | None = Field(default=None, description="接收到長者輸入之時間戳記 (長者反應時間分析)")
-    ai_responded_at: str | None = Field(default=None, description="AI 推理完成送出回應之時間戳記 (後端 Latency 分析)")
+
+    elder_transcript: str | None = Field(default=None, description="長者說的話 / 語音轉寫文字 (Elder)")
+    ai_respond_text: str | None = Field(default=None, description="AI 最終回應內文 (AI)")
+    ai_respond_audio_s3_key: str | None = Field(default=None, description="AI 回應語音 S3 物件路徑 (不存 URL)")
+
+    elder_received_at: str | None = Field(default=None, description="接收到長者發話之時間戳記")
+    ai_responded_at: str | None = Field(default=None, description="AI 推理完成送出回應之時間戳記")
     routines_updated: bool = Field(default=False, description="本輪對話是否觸發例行公事狀態更新")
+
+    # 離線萃取追蹤欄位
+    batch_extraction_status: str = Field(default="pending", description="離線批次萃取狀態 (pending/completed/failed)")
+    batch_chunk_id: str | None = Field(default=None, description="離線批次所屬 Chunk ID")
+    batch_extractor_version: str | None = Field(default=None, description="完成本 turn 的 batch extractor 版本")
+    batch_extracted_at: str | None = Field(default=None, description="batch 萃取完成時間")
+
 
 
 

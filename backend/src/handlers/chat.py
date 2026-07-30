@@ -292,20 +292,17 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 elder_id=elder_id,
                 created_at=now_ts,
                 ts=now_ts,
-                source="elder_initiated",
-                user_status="replied",
-                system_status="success",
                 lang=lang,
                 input_type="audio" if req.audio else "text",
                 elder_transcript=transcript,
                 ai_respond_text=reply_text,
                 ai_respond_audio_s3_key=s3_key,
-                ai_respond_audio_url=reply_audio_url,
                 elder_received_at=elder_received_at,
                 ai_responded_at=ai_responded_at,
                 routines_updated=routines_updated,
             )
             db.save_conversation(conv_model.model_dump(exclude_none=True))
+
             if session_id:
                 sessions.touch_session_activity(elder_id, session_id)
         except (AttributeError, NotImplementedError):

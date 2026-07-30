@@ -204,65 +204,46 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 |---|---|---|---|
 | `elder_id`, `record_id`, `item_type` | String | 是 | `record_id=TURN#...`；`item_type=conversation` |
 | `conversation_id` | String | 是 | `cnv_<identifier>`；由 `elder_id + idempotency_key` 穩定產生 |
-| `conversation_time_key` | String | 是 | GSI 排序鍵 |
-| `idempotency_key` | String | 是 | 長者主動時等於 `client_request_id` |
-| `client_request_id` | String | 否 | `elder_initiated` 必填 |
-| `request_hash` | String | 是 | 正規化請求 hash |
-| `request_status` | String | 是 | `processing` \| `completed` \| `failed` |
-| `request_lease_owner`, `request_lease_until` | String | 否 | `/chat` request lease |
-| `session_id` | String | 是 | `ses_<ULID>` |
+| `conversation_time_key` | String | 是 | GSI 排序鍵 (`<created_at>#<conversation_id>`) |
+| `session_id` | String | 是 | `ses_<identifier>` |
 | `created_at` | String | 是 | 固定毫秒、`+08:00` |
-| `source` | String | 是 | `elder_initiated` \| `system_routine_inquiry` |
-| `user_status` | String | 是 | `replied` \| `no_response` |
-| `system_status` | String | 否 | 完成後為 `success` \| `failed` |
-| `error_http_status` | Number | 否 | `request_status=failed` 時必填 |
-| `error_code`, `error_message` | String | 否 | failed 時的穩定公開錯誤；不得含敏感資訊 |
-| `routine_id`, `routine_date` | String | 否 | 系統 routine 詢問時必填 |
 | `lang` | String | 是 | `zh-TW` \| `hak` |
-| `input_type` | String | 是 | `text` \| `audio` \| `none` |
-| `ai_prompt_text`, `elder_transcript`, `ai_respond_text` | String | 否 | 系統提示、長者內容、AI 回覆 |
-| `ai_prompt_audio_s3_key`, `elder_audio_s3_key`, `ai_respond_audio_s3_key` | String | 否 | 只存 object key |
-| `prompt_sent_at`, `elder_received_at`, `ai_responded_at` | String | 否 | 三階段時間戳 |
-| `routines_updated` | Boolean | 是 | 本 turn 是否成功改變 routine 定義或完成 occurrence |
-| `batch_extraction_status` | String | 是 | `not_applicable` \| `pending` \| `processing` \| `completed` \| `failed` |
+| `input_type` | String | 是 | `text` \| `audio` |
+| `elder_transcript`, `ai_respond_text` | String | 是 | 長者內容、AI 回覆內容 |
+| `ai_respond_audio_s3_key` | String | 否 | 只存 S3 object key (不存公開 URL) |
+| `elder_received_at`, `ai_responded_at` | String | 否 | 長者發話接收與 AI 回覆完成時間戳記 |
+| `routines_updated` | Boolean | 是 | 本 turn 是否觸發 routine 狀態更新 |
+| `batch_extraction_status` | String | 是 | `pending` \| `processing` \| `completed` \| `failed` |
 | `batch_chunk_id` | String | 否 | manifest 首次持久化後指向 core 所屬 chunk |
 | `batch_extractor_version` | String | 否 | 完成本 turn 的 batch extractor 版本 |
 | `batch_extracted_at` | String | 否 | batch 完成時間 |
 
-tool calling 副作用（routine create/update/deactivate/complete、safety event 寫入）由 Bedrock Agent 在 `InvokeAgent` 回應前同步完成，不寫入 turn 的 extraction 欄位。batch 只更新 `batch_extraction_status`、`batch_chunk_id`、`batch_extractor_version`、`batch_extracted_at`，並寫一般 events 或 enrich 既有 safety event。turn 對話內容在 `request_status=completed` 後不可修改。相同 idempotency key/hash 重送 completed 結果；failed 結果重播首次穩定錯誤，要重試須使用新 `client_request_id`。
-
-- `elder_initiated` turn 的 `idempotency_key=client_request_id`；`conversation_id` 由 `elder_id + idempotency_key` 穩定產生。request lease、`request_hash` 與 completed/failed 結果共同保證相同請求不重複寫入，payload 不同則視為 idempotency conflict。
-- active chat context 依 session metadata 的 `recent_conversation_ids` 回 Base table 強一致讀取，不以最終一致的 `conversations-by-time` GSI 組裝當輪 context。
-- 音訊欄位只存 S3 object key，不在 DynamoDB 保存公開 URL；API 每次回傳或重播結果時動態簽發 15 分鐘 presigned URL。
-- conversations 不設定 TTL；依 PII 政策保留／刪除，DynamoDB 啟用 AWS owned key 靜態加密與 Point-in-Time Recovery。
+所有對話皆為長者主動發話（長者先輸入文字或語音，AI 再合成語音回覆）。音訊欄位只存 S3 object key（`ai_respond_audio_s3_key`），不在 DynamoDB 保存公開 URL；API 每次回傳時動態簽發 15 分鐘 presigned URL。
 
 #### Session metadata 欄位
 
 | 欄位 | 型別 | 必填 | 說明 |
 |---|---|---|---|
 | `elder_id`, `record_id`, `item_type` | String | 是 | `record_id=SESSION#...`；`item_type=session` |
-| `session_id` | String | 是 | `ses_<ULID>` |
+| `session_id` | String | 是 | `ses_<identifier>` |
 | `state` | String | 是 | 只允許 `active` → `closing` → `closed` |
-| `started_at`, `last_activity_at` | String | 是 | 開始與最後有效活動時間 |
+| `created_at`, `last_activity_at` | String | 是 | 會話建立與最後有效活動時間 |
 | `closed_at` | String | 否 | snapshot 完成並進入 `closed` 的時間 |
-| `close_reason` | String | 否 | `idle` \| `client_requested` \| `max_turns` \| `max_input_bytes` |
+| `close_reason` | String | 否 | `idle` \| `client_requested` \| `max_turns` |
 | `turn_ids` | List[String] | 是 | 按接納順序保存的有界 completed turn ID 列表 |
-| `turn_count` | Number | 是 | `turn_ids` 數量 |
-| `inflight_turn_ids` | List[String] | 是 | 已 reserve、尚未 terminal commit 的有界 turn ID 列表 |
-| `inflight_turn_count` | Number | 是 | `inflight_turn_ids` 數量，必須與列表長度一致 |
-| `input_bytes` | Number | 是 | session 累計已提交的正規化輸入 bytes |
-| `recent_conversation_ids` | List[String] | 是 | active context 的近期 ID；可小於完整 `turn_ids` |
+| `turn_count` | Number | 是 | `turn_ids` 數量 (上限 50/100) |
 | `session_snapshot_hash` | String | 否 | frozen ordered turns 與內容版本的 stable hash |
-| `session_state_key`, `session_state_time_key` | String | 否 | sparse GSI 欄位；值依前述規則 |
+| `session_state_key`, `session_state_time_key` | String | 否 | sparse GSI 欄位 |
 | `batch_status` | String | 否 | closed 後為 `pending` \| `processing` \| `completed` \| `failed` |
 | `batch_attempts` | Number | 是 | 預設 `0` |
 | `batch_lease_owner`, `batch_lease_until` | String | 否 | at-least-once consumer lease |
-| `batch_error` | Map | 否 | 最近失敗的安全化 code/message/時間，不含敏感資訊 |
+| `batch_error` | Map | 否 | 最近失敗的安全化 code/message/時間 |
 | `chunk_manifest` | List[Map] | 否 | 首次成功規劃後條件式持久化的 compact static metadata |
 | `chunk_planner_version` | String | 否 | 首次 manifest 使用的 planner 版本 |
 | `batch_extractor_version` | String | 否 | 完成 session 的 extractor 版本 |
 | `batch_completed_at` | String | 否 | 全部 chunk 完成時間 |
 | `schema_version` | Number | 是 | 初始 `1` |
+
 
 `turn_ids` 最大 100，實際上限由 `SESSION_MAX_TURNS` 設定且不得高於 100；`inflight_turn_ids`／`inflight_turn_count` 另受 `SESSION_MAX_INFLIGHT_TURNS` 約束，接納 transaction 必須同時保證 completed + inflight 不超過 session 上限。`input_bytes` 另有 `SESSION_MAX_INPUT_BYTES`；接納下一 turn 會超限時，先以 `max_turns` 或 `max_input_bytes` 自動 close 原 session，再用新 session 接納，避免 session item 接近 DynamoDB 400 KB。`recent_conversation_ids` 只供 active 對話 context，不替代完整有序 `turn_ids`。
 
