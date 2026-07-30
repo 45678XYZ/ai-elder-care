@@ -41,6 +41,11 @@ terraform/build/
 data/segmenter_v2/
 backend/local_runner/
 
+# --- 建置產出 ---
+# scripts/build_kb_upload.py 產生的 KB 上傳版本（正文 + metadata sidecar）；
+# 由 data/knowledge/ 每次重新產生，不是原始資料
+build/
+
 # --- misc ---
 .DS_Store
 .env

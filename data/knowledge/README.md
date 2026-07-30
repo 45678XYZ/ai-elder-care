@@ -17,4 +17,6 @@ Bedrock Knowledge Base 的資料來源，部署時上傳至 S3（見 terraform/s
 
 正文段落之間固定空一行——切塊時靠這個訊號斷句，比各篇不一致的標題格式可靠。
 
-TODO: 上 Bedrock KB 後，來源引用要改用 S3 物件的 `.metadata.json` 附檔；目前開頭這兩行會被當成正文的一部分索引進去。
+這兩行**不會**被上傳到 S3。`scripts/sync_kb.sh` 會先跑 `scripts/build_kb_upload.py`，把它們剝成 Bedrock 的 metadata sidecar（`<檔名>.metadata.json`），只上傳乾淨正文——否則標題與 URL 會被當成正文一起切塊索引。標題設 `includeForEmbedding: true`（FIXED_SIZE 切塊下，第二塊之後就沒有主題線索了），來源設 false（URL 對語意比對是雜訊，但要留給 agent 引用）。
+
+TODO: metadata sidecar 的實際效果尚未在雲端驗證（需等環境開放後 `terraform apply` + `sync_kb.sh`），屆時要確認 `includeForEmbedding` 的欄位格式是否被目前的 Bedrock API 版本接受。
