@@ -99,6 +99,42 @@ class _EldersScreenState extends State<EldersScreen> {
             style: const TextStyle(color: AppColors.onDark)),
       ),
     );
+
+    if (draft.remind) await _ensureNotificationPermission();
+  }
+
+  /// 勾了「要提醒」才問通知權限。
+  ///
+  /// 原本只有長者的 `/setup` 會問（那裡是「剛設定完長輩資料，這時問要不要提醒吃藥
+  /// 是有情境的」），但照護者不走那條路——於是 Android 13+ 的照護者裝置從來沒被
+  /// 授權過，syncRoutines 照排、系統直接吞掉，什麼都不會跳。
+  ///
+  /// 放在「新增一筆要提醒的行程之後」而不是 App 啟動時，是同一套理由：使用者剛表達
+  /// 「這件事要提醒我」，這時候要權限最有情境，答應的機率也最高。
+  ///
+  /// 被拒絕要講出來。提醒排不上但畫面顯示「已新增」，照護者會以為它會響——那比
+  /// 一開始就沒有這個功能更糟。
+  Future<void> _ensureNotificationPermission() async {
+    bool granted;
+    try {
+      granted = await NotificationService.instance.requestPermission();
+    } catch (_) {
+      // 平台不支援（web 預覽）就當作沒這回事，不要跳一條看不懂的錯誤給使用者。
+      return;
+    }
+    if (granted || !mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.barDark,
+        duration: const Duration(seconds: 6),
+        content: Text('這台手機還沒開啟通知，提醒不會跳出來。可到系統設定開啟。',
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: AppColors.onDark)),
+      ),
+    );
   }
 
   /// 切換長輩的語音語言（`PATCH /elders/{id}` 的 `lang_preference`）。
