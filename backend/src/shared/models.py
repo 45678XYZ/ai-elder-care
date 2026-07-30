@@ -123,7 +123,9 @@ class ConversationCreate(BaseModel):
     conversation_time_key: str | None = Field(default=None, description="DynamoDB GSI Sort Key (<created_at>#<conversation_id>)")
     item_type: str = Field(default="conversation", description="DynamoDB 項目類型 (conversation)")
     elder_id: str = Field(..., description="對話歸屬之長者 ID（必填）")
+    session_id: str | None = Field(default=None, description="關聯 Session ID (前綴 ses_)")
     ts: str | None = Field(default=None, description="時間戳記")
+
     created_at: str | None = Field(default=None, description="建立時間")
 
     source: Literal["elder_initiated", "system_routine_inquiry"] = Field(

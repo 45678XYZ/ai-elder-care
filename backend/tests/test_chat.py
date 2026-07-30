@@ -127,11 +127,20 @@ def test_chat_success_text_path(monkeypatch):
     )
     monkeypatch.setattr(db, "save_conversation", lambda record: saved_records.append(record) or record)
     monkeypatch.setattr(chat.TTSFactory, "get_tts_engine", lambda lang: DummyTTS())
+
+    monkeypatch.setattr(
+        chat.sessions,
+        "resolve_session_for_chat",
+        lambda eid, sid=None: {"session_id": "ses_mock001", "elder_id": eid}
+    )
+    monkeypatch.setattr(chat.sessions, "touch_session_activity", lambda eid, sid: None)
+
     monkeypatch.setattr(
         chat,
         "upload_audio_to_s3",
         lambda audio_bytes, conv_id: f"https://s3.example.com/tts/{conv_id}.mp3"
     )
+
 
     resp = chat.handler(event, None)
     assert resp["statusCode"] == 200
@@ -142,11 +151,35 @@ def test_chat_success_text_path(monkeypatch):
     assert body["routines_updated"] is True
     assert body["reply_audio_url"].startswith("https://s3.example.com/")
     assert body["conversation_id"].startswith("cnv_")
+    assert body["session_id"].startswith("ses_")
 
-    # 驗證寫入 DB 的紀錄包含 downstream 模組所必須的 elder_transcript 與 ai_respond_text
+    # 驗證寫入 DB 的紀錄包含 downstream 模組所必須的 elder_transcript、ai_respond_text 與 session_id
     assert len(saved_records) == 1
     rec = saved_records[0]
     assert rec["elder_transcript"] == "小助手，我今天已經吃過血壓藥了"
     assert rec["ai_respond_text"] == "阿蘭嬤，太棒了！我已經幫您登記好血壓藥囉。"
+    assert rec["session_id"].startswith("ses_")
+
+
+def test_chat_session_routing_error_handling(monkeypatch):
+    """測試非法的 session_id 傳入時回傳 404 SESSION_NOT_FOUND。"""
+    event = _make_event({
+        "elder_id": "eld_001",
+        "session_id": "ses_non_existent",
+        "lang": "zh-TW",
+        "text": "測試對話"
+    })
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+    monkeypatch.setattr(
+        chat.sessions,
+        "resolve_session_for_chat",
+        lambda eid, sid: (_ for _ in ()).throw(chat.sessions.SessionNotFoundError("not found"))
+    )
+
+    resp = chat.handler(event, None)
+    assert resp["statusCode"] == 404
+    body = json.loads(resp["body"])
+    assert body["error"]["code"] == "SESSION_NOT_FOUND"
+
 
 

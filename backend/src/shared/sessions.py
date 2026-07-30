@@ -20,6 +20,8 @@ from typing import Any
 import hashlib
 import json
 import logging
+import uuid
+
 
 from botocore.exceptions import ClientError
 
@@ -687,3 +689,81 @@ def is_lease_expired(session: dict[str, Any], *, now: datetime | None = None) ->
     if not lease_until:
         return True
     return parse_ts(lease_until) < (now or _now())
+
+
+def create_session(elder_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """建立新的 active session 實體。"""
+    moment = now or _now()
+    session_id = f"ses_{uuid.uuid4().hex[:12]}"
+    created_at = format_ts(moment)
+    item = {
+        "elder_id": elder_id,
+        "record_id": session_record_id(session_id),
+        "session_id": session_id,
+        "item_type": "session",
+        "state": STATE_ACTIVE,
+        "session_state_key": STATE_KEY_ACTIVE,
+        "session_state_time_key": f"{created_at}#{elder_id}#{session_id}",
+        "created_at": created_at,
+        "last_activity_at": created_at,
+        "turn_count": 0,
+        "schema_version": 1,
+    }
+    return put_session(item)
+
+
+def resolve_session_for_chat(
+    elder_id: str,
+    requested_session_id: str | None = None,
+    *,
+    idle_minutes: int = 10,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """依 docs/api.md 選擇既有 active session 或建立新 session。"""
+    moment = now or _now()
+    if requested_session_id:
+        existing = get_session(elder_id, requested_session_id)
+        if existing is None:
+            raise SessionNotFoundError(f"session 不存在：{requested_session_id}")
+        if existing.get("elder_id") != elder_id:
+            raise SessionError("FORBIDDEN")
+
+        # 檢查是否能沿用：必須是 active 且未超過 idle 門檻
+        if existing.get("state") == STATE_ACTIVE:
+            last_act = existing.get("last_activity_at") or existing.get("created_at")
+            if last_act:
+                last_act_dt = parse_ts(last_act)
+                if (moment - last_act_dt) <= timedelta(minutes=idle_minutes):
+                    return existing
+
+    # 第一輪未帶 session_id，或既有 session 已 closed / idle 超時 ➔ 自動開立新 active session
+    return create_session(elder_id, now=moment)
+
+
+def touch_session_activity(elder_id: str, session_id: str, *, now: datetime | None = None) -> None:
+    """更新 session 之 last_activity_at 與 turn_count。"""
+    moment = now or _now()
+    ts_str = format_ts(moment)
+    table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
+    try:
+        table.update_item(
+            Key={"elder_id": elder_id, "record_id": session_record_id(session_id)},
+            UpdateExpression=(
+                "SET last_activity_at = :ts, "
+                "session_state_time_key = :state_time, "
+                "turn_count = if_not_exists(turn_count, :zero) + :one"
+            ),
+            ConditionExpression="attribute_exists(record_id) AND #state = :active",
+            ExpressionAttributeNames={"#state": "state"},
+            ExpressionAttributeValues={
+                ":ts": ts_str,
+                ":state_time": f"{ts_str}#{elder_id}#{session_id}",
+                ":active": STATE_ACTIVE,
+                ":zero": 0,
+                ":one": 1,
+            },
+        )
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            logger.warning("更新 session activity 失敗: %s", exc.response["Error"]["Message"])
+

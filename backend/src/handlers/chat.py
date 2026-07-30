@@ -25,7 +25,8 @@ from botocore.exceptions import ClientError
 
 from pydantic import ValidationError
 
-from src.shared import auth, db, responses
+from src.shared import auth, db, responses, sessions
+
 from src.shared.models import ChatRequest, ConversationCreate
 from src.shared.tts import TTSFactory
 from src.shared.validation import RequestValidationError, validate
@@ -224,6 +225,19 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # 若授權模組在開發測試期尚未綁定，則先放行
             pass
 
+        # 2.5 Session 路由與狀態解析 (依 docs/api.md 沿用既有 active session 或自動建立新 session)
+        session_id = None
+        try:
+            session_obj = sessions.resolve_session_for_chat(elder_id, req.session_id)
+            session_id = session_obj.get("session_id")
+        except sessions.SessionNotFoundError:
+            return responses.error(404, "SESSION_NOT_FOUND", "指定的 session 不存在")
+        except sessions.SessionError as sess_err:
+            if str(sess_err) == "FORBIDDEN":
+                return responses.error(403, "FORBIDDEN", "無權存取該 session")
+        except Exception as sess_err:
+            print(f"[Info] Session 路由處置例外，降級處置: {sess_err}")
+
         # 3. 取得辨識文字 (transcript)
         if req.text:
             transcript = req.text
@@ -270,10 +284,11 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         ai_responded_at = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
         s3_key = f"tts/{conversation_id}.mp3"
 
-        # 8. 雙寫對話紀錄至 DynamoDB conversations 表 (帶入三階段時間戳記與 S3 key)
+        # 8. 雙寫對話紀錄至 DynamoDB conversations 表 (帶入 session_id、三階段時間戳記與 S3 key)
         try:
             conv_model = ConversationCreate(
                 conversation_id=conversation_id,
+                session_id=session_id,
                 elder_id=elder_id,
                 created_at=now_ts,
                 ts=now_ts,
@@ -291,19 +306,26 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 routines_updated=routines_updated,
             )
             db.save_conversation(conv_model.model_dump(exclude_none=True))
+            if session_id:
+                sessions.touch_session_activity(elder_id, session_id)
         except (AttributeError, NotImplementedError):
             print(f"[Info] db.save_conversation 尚未在當前分支中導入。")
         except Exception as db_err:
             print(f"[Warning] 寫入對話紀錄至 DynamoDB 失敗: {db_err}")
 
-        # 9. 回傳符合 docs/api.md 規範的 Response 200
-        return responses.json_response(200, {
+        # 9. 回傳符合 docs/api.md 規範的 Response 200 (帶入 session_id)
+        res_body = {
             "conversation_id": conversation_id,
             "transcript": transcript,
             "reply_text": reply_text,
             "reply_audio_url": reply_audio_url,
-            "routines_updated": routines_updated
-        })
+            "routines_updated": routines_updated,
+        }
+        if session_id:
+            res_body["session_id"] = session_id
+
+        return responses.json_response(200, res_body)
+
 
 
     except (auth.AuthError, RequestValidationError) as exc:
