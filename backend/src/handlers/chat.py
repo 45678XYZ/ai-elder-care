@@ -23,8 +23,16 @@ from typing import Any, Dict, Tuple
 import boto3
 from botocore.exceptions import ClientError
 
+from pydantic import ValidationError
+
 from src.shared import auth, db, responses
+from src.shared.models import ChatRequest, ConversationCreate
 from src.shared.tts import TTSFactory
+from src.shared.validation import RequestValidationError, validate
+
+
+
+
 
 # 環境變數自訂名稱
 S3_BUCKET_NAME = os.environ.get("S3_AUDIO_BUCKET", "ai-elder-care-audio")
@@ -196,28 +204,18 @@ def upload_audio_to_s3(audio_bytes: bytes, conversation_id: str) -> str:
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """POST /chat 對話核心進入點。"""
     try:
-        # 1. 解析 Request Body
+        # 1. 解析與使用 Pydantic 統一校驗 Request Body
         try:
             body = parse_event_body(event)
         except ValueError:
             return responses.error(400, "INVALID_JSON", "請求內文不是有效的 JSON 格式")
 
-        elder_id = body.get("elder_id")
-        lang = body.get("lang")
-        text = body.get("text")
-        audio = body.get("audio")
+        req = validate(ChatRequest, body)
+        elder_id = req.elder_id
+        lang = req.lang
 
-        # 2. 驗證必要欄位 (依據 docs/api.md 契約)
-        if not elder_id:
-            return responses.error(400, "INVALID_PARAM", "缺少必填欄位 elder_id")
-        if not lang or lang not in ("zh-TW", "hak"):
-            return responses.error(400, "INVALID_PARAM", "lang 欄位必填且必須為 zh-TW 或 hak")
-        if not text and not audio:
-            return responses.error(400, "INVALID_PARAM", "text 與 audio 必須擇一填寫")
-        if text and audio:
-            return responses.error(400, "INVALID_PARAM", "text 與 audio 不能同時提供")
 
-        # 3. 身份與存取權限驗證
+        # 2. 身份與存取權限驗證
         try:
             auth.assert_can_access_elder(event, elder_id)
         except auth.AuthError as auth_err:
@@ -226,20 +224,20 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # 若授權模組在開發測試期尚未綁定，則先放行
             pass
 
-        # 4. 取得辨識文字 (transcript)
-        if text:
-            transcript = text
+        # 3. 取得辨識文字 (transcript)
+        if req.text:
+            transcript = req.text
         else:
             # 處理音檔辨識
-            audio_b64 = audio.get("data", "")
-            audio_fmt = audio.get("format", "m4a")
+            audio_b64 = req.audio.data if req.audio else ""
+            audio_fmt = req.audio.format if req.audio else "m4a"
             if not audio_b64:
-                return responses.error(400, "INVALID_PARAM", "audio.data 不可為空")
+                return responses.error(400, "INVALID_PARAMETER", "audio.data 不可為空")
 
             try:
                 audio_bytes = base64.b64decode(audio_b64)
             except Exception:
-                return responses.error(400, "INVALID_PARAM", "audio.data 解碼失敗，非有效 base64 字串")
+                return responses.error(400, "INVALID_PARAMETER", "audio.data 解碼失敗，非有效 base64 字串")
 
             try:
                 transcript = transcribe_audio(audio_bytes, audio_fmt, lang)
@@ -248,34 +246,40 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     return responses.error(400, "AUDIO_TOO_LONG", "單句語音長度超過 60 秒限制")
                 return responses.error(400, "TRANSCRIPTION_FAILED", "語音轉寫失敗")
 
-        # 5. 調用 Bedrock AgentCore 大腦
+        # 4. 調用 Bedrock AgentCore 大腦
         try:
             reply_text, routines_updated = invoke_agent_brain(elder_id, transcript)
         except Exception as e:
             return responses.error(500, "BEDROCK_ERROR", f"呼叫對話大腦失敗: {str(e)}")
 
-        # 6. 產生獨一無二的對話 ID
+        # 5. 產生獨一無二的對話 ID 與時間戳記
         conversation_id = f"cnv_{uuid.uuid4().hex[:12]}"
         now_ts = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
-        # 7. 雙寫對話紀錄至 DynamoDB conversations 表 (確保隊友摘要 API 的相容性)
+        # 6. 雙寫對話紀錄至 DynamoDB conversations 表 (確保隊友摘要與萃取 API 100% 相容)
         try:
-            conv_record = {
-                "conversation_id": conversation_id,
-                "elder_id": elder_id,
-                "ts": now_ts,
-                "lang": lang,
-                "transcript": transcript,
-                "reply_text": reply_text,
-                "routines_updated": routines_updated
-            }
-            db.save_conversation(conv_record)
+            conv_model = ConversationCreate(
+                conversation_id=conversation_id,
+                elder_id=elder_id,
+                created_at=now_ts,
+                ts=now_ts,
+                source="elder_initiated",
+                user_status="replied",
+                system_status="success",
+                lang=lang,
+                input_type="audio" if req.audio else "text",
+                elder_transcript=transcript,
+                ai_respond_text=reply_text,
+                routines_updated=routines_updated,
+            )
+            db.save_conversation(conv_model.model_dump(exclude_none=True))
         except (AttributeError, NotImplementedError):
             print(f"[Info] db.save_conversation 尚未在當前分支中導入。")
         except Exception as db_err:
             print(f"[Warning] 寫入對話紀錄至 DynamoDB 失敗: {db_err}")
 
-        # 8. 語音合成 (TTS Factory - 中文用 Polly，客語用 OmniVoice 帶 Fallback)
+
+        # 7. 語音合成 (TTS Factory - 中文用 Polly，客語用 OmniVoice 帶 Fallback)
         try:
             tts_engine = TTSFactory.get_tts_engine(lang)
             audio_bytes = tts_engine.synthesize(reply_text)
@@ -283,10 +287,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             print(f"[Error] TTS Synthesis failed: {tts_err}")
             return responses.error(500, "TTS_FAILED", f"語音合成失敗: {str(tts_err)}")
 
-        # 9. 上傳 MP3 至 S3 並取得預簽名 URL
+        # 8. 上傳 MP3 至 S3 並取得預簽名 URL
         reply_audio_url = upload_audio_to_s3(audio_bytes, conversation_id)
 
-        # 10. 回傳符合 docs/api.md 規範的 Response 200
+        # 9. 回傳符合 docs/api.md 規範的 Response 200
         return responses.json_response(200, {
             "conversation_id": conversation_id,
             "transcript": transcript,
@@ -295,6 +299,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "routines_updated": routines_updated
         })
 
+    except (auth.AuthError, RequestValidationError) as exc:
+        return exc.response
+
     except Exception as err:
         print(f"[Unhandled Error] {err}")
         return responses.error(500, "INTERNAL_ERROR", f"內部系統錯誤: {str(err)}")
+
