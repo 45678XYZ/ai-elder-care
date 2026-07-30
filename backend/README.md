@@ -31,3 +31,7 @@ python -m pytest
 ```
 
 依賴管理在 `pyproject.toml` 與 `requirements.txt`：`requirements.txt` 為 Lambda 執行期依賴（由 Terraform 社群模組 `terraform-aws-modules/lambda/aws` 的 `pip_requirements` 自動安裝打包），`[dev]` 為開發期工具，`[training]` 為離線訓練工作流所需（scikit-learn、numpy）。handlers 以 `from src.shared import ...` 匯入，editable install 後即可解析。
+
+## RAG PoC（衛教知識庫問答）
+
+已移至 [experiments/rag-poc/](../experiments/rag-poc/)——與此 Lambda 骨架分開維護（在本機用 Chroma 跑通檢索；生成層待接 Bedrock）。正式版由 `chat.py` 接 Bedrock Knowledge Base 實作。
