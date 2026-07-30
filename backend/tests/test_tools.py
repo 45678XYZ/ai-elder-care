@@ -140,14 +140,15 @@ def test_handle_get_elder_profile_success(monkeypatch):
             "nickname": "阿蘭嬤",
             "health_notes": ["高血壓歷史"],
             "family": [{"name": "小明", "relation": "兒子"}],
-            "preferences": {"tea": "高山烏龍茶"}
+            "habit_note": "喜歡喝高山烏龍茶、早起散步"
         }
     )
 
     res = tools.handle_get_elder_profile({"elder_id": "eld_001"})
     assert res["status"] == "success"
     assert res["data"]["name"] == "林阿蘭"
-    assert res["data"]["preferences"]["tea"] == "高山烏龍茶"
+    assert res["data"]["habit_note"] == "喜歡喝高山烏龍茶、早起散步"
+
 
 
 # =============================================================================
