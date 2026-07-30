@@ -131,12 +131,13 @@ resource "aws_api_gateway_method" "get_summaries" {
   authorizer_id = aws_api_gateway_authorizer.cognito.id
 
   request_parameters = {
-    "method.request.querystring.elder_id"   = true # TODO
+    "method.request.querystring.elder_id"   = false
     "method.request.querystring.from"       = false
     "method.request.querystring.to"         = false
     "method.request.querystring.limit"      = false
     "method.request.querystring.next_token" = false
   }
+
 }
 
 resource "aws_api_gateway_integration" "get_summaries" {
