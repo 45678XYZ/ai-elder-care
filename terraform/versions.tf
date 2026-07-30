@@ -3,8 +3,9 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+      source = "hashicorp/aws"
+      # >= 6.0：aws_s3vectors_* 與 Knowledge Base 的 S3_VECTORS storage type 只有 6.x 才有
+      version = "~> 6.0"
     }
 
     archive = {
