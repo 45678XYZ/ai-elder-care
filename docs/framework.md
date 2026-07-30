@@ -37,7 +37,8 @@ flowchart TB
         summaryschedule["EventBridge summary schedule"]
         summary["daily summary generator Lambda"]
         apis["資料 API Lambda<br/>elders / summaries / events<br/>routines / stats"]
-        asr["後端 ASR"]
+        asr["後端 ASR 模組<br/>Canonical Audio + 路由 + 備援鏈<br/>backend/src/shared/asr"]
+        asrmodels["ASR 推論端點<br/>CE 主力 / Formo 客語備援<br/>預設未啟用"]
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
         rules["deterministic safety rules"]
         polly["Polly TTS"]
@@ -54,6 +55,7 @@ flowchart TB
     periodic -->|idle sweep / batch recovery sweep| closer
     chat -->|audio| asr
     asr -->|transcript| chat
+    asr -.->|僅在模型通過核准後| asrmodels
     chat -->|structured output| model
     model -->|RAG retrieval| kb
     chat --> rules
@@ -80,6 +82,7 @@ flowchart TB
 
 - **語音對話迴圈**：裝置端辨識（zh-TW）→ `POST /chat` 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
+- **後端 ASR** 是可獨立整合的領域模組，可同時服務多個請求：每個推論 provider 有併發上限，飽和或故障時依設定的備援鏈換下一個 provider；音訊本身的問題與未核准的路由則直接終止，不靠備援繞過。模型上線需通過逐項人工核准，未核准時一律 fail closed。模組職責、閘門與遙測欄位見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
 - realtime rail 使用既有 chat 模型的一次 structured output，再套用 deterministic safety rules 產生 `rt_labels`；不為每個 turn 另呼叫一次完整 extraction LLM。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
 
@@ -448,10 +451,13 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 ai-elder-care/
 ├── .kiro/          # Kiro 設定與 specs
 ├── app/            # Flutter
+├── asr-lambda/     # ASR 模型規格文件與本機 conda 環境
 ├── backend/        # Python Lambda handlers
+│   ├── src/shared/asr/   # ASR 領域模組（見該目錄 README）
+│   └── asr_colab/        # 兩個模型的人工 Colab 驗證包
 ├── terraform/      # AWS IaC
 ├── data/           # 模擬 persona、腳本、知識文件
-├── docs/           # 架構、API、旅程、PII
+├── docs/           # 架構、API、旅程、PII、ADR
 └── README.md
 ```
 

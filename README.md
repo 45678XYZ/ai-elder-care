@@ -12,10 +12,11 @@
 ```
 ├── .kiro/          # Kiro 設定與 specs（視需要使用）
 ├── app/            # Flutter（elder/ caregiver/ 兩組頁面 + shared services）
-├── backend/        # Python Lambda handlers（chat, summary, apis）
-├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB
+├── asr-lambda/     # ASR 模型規格文件與本機 conda 環境
+├── backend/        # Python Lambda handlers（chat, summary, apis）＋ ASR 領域模組
+├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, SageMaker ASR
 ├── data/           # 模擬長者 persona、情境對話腳本、seed 腳本、knowledge/ 衛教文件
-├── docs/           # 框架、API 規格、使用者旅程、PII 說明、開發流程、開發慣例
+├── docs/           # 框架、API 規格、使用者旅程、PII 說明、開發流程、開發慣例、adr/ 決策紀錄
 └── skills/         # 供各 AI 工具開發使用的 skill（開發者需自行加入自己的工具）
 ```
 
