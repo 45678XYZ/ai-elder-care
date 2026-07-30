@@ -263,12 +263,12 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
             description = "要推播給照護者的詳細訊息內容（請包含事件的人事時地）"
             required    = true
           }
-          parameters {
-            map_block_key = "context_event_id"
-            type        = "string"
-            description = "選填。用於 mitigation 或 critical_escalation 時，傳入對應的原始緊急事件 event_id（由系統在 emergency 觸發時回傳），確保 Context Matching 精準更新同一事件，防止誤蓋其他事件記錄。"
-            required    = false
-          }
+            parameters {
+                map_block_key = "context_event_id"
+                type        = "string"
+                description = "選填。用於 mitigation 或 critical_escalation 時，傳入對應的 alert_id（由系統在 emergency 觸發時回傳），確保 Context Matching 精準收斂到同一筆 type=safety event。alert_id 格式為 alert_<hex>，例如 alert_a1b2c3d4e5f6。"
+                required    = false
+            }
           parameters {
             map_block_key = "rag_content"
             type        = "string"

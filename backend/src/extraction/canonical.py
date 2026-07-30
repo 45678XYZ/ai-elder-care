@@ -8,7 +8,7 @@
 - **三類事件 Canonical Key 分立**：
   1. 一般事件：`Date#Slot#Subject#Predicate`
   2. Routine 完成：`routine_completion#routine_id#routine_date`（刻意排除 `routine_version`，同日改版手動或對話完成均收斂至同一筆）
-  3. 高風險 Safety：`SAFETY#session_id#episode`（收斂 Realtime 與 Batch 事件）
+  3. 高風險 Safety：`SAFETY#alert_id`（收斂同一警報情節的 emergency → escalation → mitigation）
 - **穩定確定性 `event_id` 產出**：由 `elder_id + canonical_event_key` 進行 SHA-256 雜湊產生。該識別碼與 Chunk 拆分方式、模型版本完全無關，能保證 SQS 批次作業 Retry 或 DLQ Replay 時為具備冪等性的覆蓋/去重寫入。
 """
 
@@ -313,15 +313,19 @@ def routine_completion_key(routine_id: str, routine_date: str) -> str:
     return KEY_SEPARATOR.join((ROUTINE_KEY_PREFIX, routine_id, routine_date))
 
 
-def safety_episode_key(session_id: str, episode: str) -> str:
-    """組合高風險 Safety 事件的唯一身分鍵：`SAFETY#session_id#episode`。
+def safety_alert_key(alert_id: str) -> str:
+    """組合高風險 Safety 事件的唯一身分鍵：`SAFETY#alert_id`。
 
-    用於收斂同一對話輪次中 Realtime 即時告警與 Batch 批次萃取的重複事件。
+    `alert_id` 由 Bedrock Agent tool calling（`notify_caregiver`）在首次 `emergency` 時產生，
+    並回傳給 Agent 以便後續 `critical_escalation`／`mitigation` 帶入同一 `alert_id`，
+    讓同一警報情節的 emergency → escalation → mitigation 收斂到同一筆 event。
+    Batch 未來做 safety enrichment 時，可依 `evidence_conversation_ids` 或 `type=safety`
+    查詢既有事件，再以相同 canonical key 做 revision enrichment。
     """
-    if not session_id or not episode:
-        raise CanonicalError("safety event 需要 session_id 與 episode")
-    episode_text = normalize_text(episode)
-    return KEY_SEPARATOR.join((SAFETY_KEY_PREFIX, session_id, episode_text))
+    if not alert_id:
+        raise CanonicalError("safety event 需要 alert_id")
+    alert_text = normalize_text(alert_id)
+    return KEY_SEPARATOR.join((SAFETY_KEY_PREFIX, alert_text))
 
 
 def event_id_for(elder_id: str, canonical_key: str) -> str:
