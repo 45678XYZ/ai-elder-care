@@ -9,7 +9,8 @@ src/
 │   └── assets/   # 隨部署包發佈的資產：taxonomy/ 分類體系、retrieval/ 概念檢索 sub-chunks
 └── shared/       # auth（token 授權）、db（DynamoDB 六表）、models（Pydantic schema）、
                   # responses（統一回應格式）、routines（例行公事版本與 occurrence 推導）、
-                  # bedrock（模型呼叫）、sessions（session 生命週期）、metrics（觀測指標）
+                  # bedrock（模型呼叫）、sessions（session 生命週期）、
+                  # turns（turn 請求狀態機與冪等）、metrics（觀測指標）
 scripts/          # 離線工具（資產檢視、索引建置、模型導出、分塊模型工作流）
 training/         # 分塊模型 pairwise_v2 的離線訓練與評測（語料、特徵、指標）
 tests/            # pytest

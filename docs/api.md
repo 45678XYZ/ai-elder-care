@@ -111,7 +111,7 @@ response 前只執行：
 - 未帶 `session_id`：建立新的 `active` session。
 - session 存在、屬於該長者、仍 `active`、未超過 idle 門檻且未達 turn/input bytes 上限：沿用。
 - session 屬於該長者但已 idle、`closing`、`closed` 或達上限：該 turn 不寫入原 session；後端建立新的 active session並在 response 回新 `session_id`。idle／達上限的原 session 由 closer 收斂。
-- session 不存在：404 `SESSION_NOT_FOUND`；session 屬於其他長者：403 `FORBIDDEN`。
+- session 不存在或不屬於該長者：一律 404 `SESSION_NOT_FOUND`，與 close 一致不以 403 區分，避免洩漏 session 是否存在。
 
 後端只對查無 existing turn 的全新 ID，在 session 仍為 active 時以 transaction 建立 processing turn lease並 reserve inflight ID；turn 與 session inflight 均受上限約束。reserve 與 close 競爭時，reserve 先成功則 close 回 409 等待收斂；close 的 `active→closing` 先成功則本 turn 不得 append 原 session，必須建立新 active session後 reserve。final success 以單一 DynamoDB transaction 原子提交 completed 穩定結果、所有 realtime routine/event mutations、移除 inflight、按接納順序追加 turn/context IDs及更新 counts/activity；每 turn action 數受限，transaction 不超過 100 items。
 
@@ -138,7 +138,7 @@ response 前只執行：
 | `session_id` | 本 turn 首次接納時實際使用的 session；相同 `client_request_id` replay 一律回原 ID，即使該 session 後續已 closing/closed。只有全新 ID 在指定原 session idle、closing、closed 或達上限時才會取得新 ID |
 | `transcript` | audio 的 ASR 結果；text 則原樣回傳 |
 | `reply_text` | AI 回覆 |
-| `reply_audio_url` | 15 分鐘 S3 presigned URL |
+| `reply_audio_url` | 15 分鐘 S3 presigned URL；回覆語音無法儲存或簽發時為 `null` |
 | `routines_updated` | 本次 response 前已成功建立、修改、停用 routine 或完成 occurrence 時為 true，否則為 false |
 
 `routines_updated` 必須反映已提交的業務結果，不得只代表模型曾提出候選。App 收到 true 後可背景呼叫 `GET /routines` 更新定義與當日狀態。一般 events 尚未產生不影響 200 response；回覆失敗時沿用通用錯誤格式。

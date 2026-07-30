@@ -242,6 +242,14 @@ resource "aws_lambda_function" "chat" {
       TABLE_EVENTS               = aws_dynamodb_table.events.name
       TABLE_ROUTINES             = aws_dynamodb_table.routines.name
       CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+
+      # turn 狀態機：租約長度必須大於本函數的 timeout，否則同一個請求還在跑就會被判定為
+      # 「前一個 invocation 已死」而被接管，副作用會做第二次
+      REQUEST_LEASE_SECONDS      = tostring(var.request_lease_seconds)
+      SESSION_IDLE_MINUTES       = tostring(var.session_idle_minutes)
+      SESSION_MAX_TURNS          = tostring(var.session_max_turns)
+      SESSION_MAX_INFLIGHT_TURNS = tostring(var.session_max_inflight_turns)
+      SESSION_MAX_INPUT_BYTES    = tostring(var.session_max_input_bytes)
     }
   }
 }

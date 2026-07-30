@@ -9,6 +9,7 @@
 
 2. EventBridge 排程掃描（run_sweep 入口）：
    - 閒置收斂 (idle)：收斂超過 SESSION_IDLE_MINUTES 未關閉的 active session，避免未關閉 session 導致一般事件無法離線 materialize
+   - inflight 收斂：接管租約已到期的 processing turn（安全 terminal failure）並修復已終態 turn 殘留的 reservation
    - 漏投補發 (pending)：補投已 closed 但因網路/SQS 暫時異常未成功 SendMessage 的 BATCH#PENDING 訊息
    - Lease 過期重投 (processing)：重新派送租約過期的 BATCH#PROCESSING 訊息，交由 consumer 條件式接管
 """
@@ -21,14 +22,15 @@ import os
 import boto3
 
 from src.extraction.temporal import TZ_TAIPEI, format_ts, parse_ts
-from src.shared import auth, db, metrics, responses, sessions
+from src.shared import auth, db, metrics, responses, sessions, turns
 
 logger = logging.getLogger(__name__)
 
 BATCH_QUEUE_URL = os.environ.get("BATCH_QUEUE_URL", "")
 
-# 超過此門檻時間（分鐘）無互動的 active session 將由週期性掃描自動收斂
-SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30"))
+# 超過此門檻時間（分鐘）無互動的 active session 將由週期性掃描自動收斂。
+# 與 /chat 判斷「這個 session 還能不能接納新 turn」共用同一個門檻，兩處各讀一次 env 會漂移
+SESSION_IDLE_MINUTES = sessions.SESSION_IDLE_MINUTES
 
 # 單次 sweep 掃描與處理的 session 數量上限，避免 Lambda 執行超時
 SWEEP_LIMIT = int(os.environ.get("SESSION_SWEEP_LIMIT", "25"))
@@ -103,13 +105,27 @@ def _session_not_found() -> dict[str, Any]:
     return responses.error(404, "SESSION_NOT_FOUND", "找不到指定的 session")
 
 
-def close_session(elder_id: str, session_id: str, *, close_reason: str) -> dict[str, Any]:
+def close_session(
+    elder_id: str,
+    session_id: str,
+    *,
+    close_reason: str,
+    recover_inflight: bool = False,
+) -> dict[str, Any]:
     """執行 active/closing → closed 狀態轉換，包含快照驗證與凍結。
 
     驗證機制（_verify_snapshot）：若凍結之 turn_ids 無法完整讀回對應 turn，
     代表 snapshot 與實際資料不一致，此時若強制 closed 會凍結殘缺輸入，離線 batch 將永遠無法補齊。
+
+    `recover_inflight` 只給 EventBridge 收斂用：client close 遇到 inflight 一律回 409 由 App 重試，
+    接管別人的 turn 不是使用者按下「結束對話」該做的事（見 docs/api.md 的 close 規則）。
     """
-    session = sessions.begin_closing(elder_id, session_id, close_reason=close_reason)
+    try:
+        session = sessions.begin_closing(elder_id, session_id, close_reason=close_reason)
+    except sessions.SessionInflightError:
+        if not recover_inflight or not recover_inflight_turns(elder_id, session_id):
+            raise
+        session = sessions.begin_closing(elder_id, session_id, close_reason=close_reason)
     if session.get("state") == sessions.STATE_CLOSED:
         return session
 
@@ -132,14 +148,67 @@ def _verify_snapshot(session: dict[str, Any], frozen_turns: list[dict[str, Any]]
                 f"frozen turn 不屬於本 session：turn={turn.get('conversation_id')}"
             )
         status = turn.get("request_status")
-        if status is not None and status != "completed":
+        if status is not None and status != turns.STATUS_COMPLETED:
             # 只有 completed 狀態的 turn 允許進入 snapshot；processing 狀態表示仍有運算中對話
             raise sessions.SessionError(
                 f"frozen turn 非 terminal：turn={turn.get('conversation_id')} status={status}"
             )
-        for field in ("ai_prompt_text", "elder_transcript", "ai_respond_text"):
-            total_bytes += len((turn.get(field) or "").encode("utf-8"))
+        # 與 /chat commit 時累加的算法共用一份定義，否則兩邊的 input_bytes 永遠對不上
+        total_bytes += turns.input_bytes_of(turn)
     return total_bytes
+
+
+def recover_inflight_turns(elder_id: str, session_id: str) -> int:
+    """收斂 session 上未清空的 inflight reservation，回傳修復筆數。
+
+    inflight 不會自己消失：一旦 `/chat` 的 Lambda 中途被砍掉，那個 turn 會永遠停在
+    `processing`，session 就永遠關不起來、離線萃取也永遠不會跑。此處按 turn 的實際狀態處置：
+
+    - 已終態：reservation 是殘留，直接歸還名額
+    - `processing` 且租約到期：以安全的 terminal failure 收成 `failed` 並歸還名額
+    - `processing` 且租約仍有效：另一個 invocation 還在飛，本輪不動它
+    - 讀不到 turn：reserve 是 transaction，這種狀態代表資料異常。不自行清掉——清掉就會凍結
+      一份可能少了 turn 的 snapshot——只告警等待人工處理
+    """
+    session = sessions.get_session(elder_id, session_id) or {}
+    recovered = 0
+    for conversation_id in list(session.get("inflight_turn_ids") or []):
+        turn = turns.get_turn(elder_id, conversation_id)
+        if turn is None:
+            logger.error(
+                "inflight reservation 找不到對應 turn，保留待人工處理：session_id=%s turn=%s",
+                session_id,
+                conversation_id,
+            )
+            continue
+        status = turn.get("request_status")
+        if status in turns.TERMINAL_STATUSES:
+            recovered += int(turns.release_reservation(elder_id, session_id, conversation_id))
+            continue
+        if not turns.is_lease_expired(turn):
+            logger.info(
+                "inflight turn 租約仍有效，稍後再收斂：session_id=%s turn=%s",
+                session_id,
+                conversation_id,
+            )
+            continue
+        try:
+            turns.fail(
+                elder_id,
+                conversation_id,
+                session_id=session_id,
+                code="REQUEST_ABANDONED",
+                message="請求未在租約內完成，已由系統收斂為失敗",
+                http_status=500,
+            )
+        except turns.TurnError:
+            logger.exception("收斂 inflight turn 失敗：turn=%s", conversation_id)
+            continue
+        logger.warning(
+            "租約到期的 turn 已收斂為 failed：session_id=%s turn=%s", session_id, conversation_id
+        )
+        recovered += 1
+    return recovered
 
 
 def enqueue_batch(session: dict[str, Any], *, client=None) -> bool:
@@ -211,9 +280,11 @@ def sweep_idle_sessions(*, now, sqs_client=None) -> int:
     for candidate in candidates:
         elder_id, session_id = candidate["elder_id"], candidate["session_id"]
         try:
-            closed = close_session(elder_id, session_id, close_reason="idle")
+            closed = close_session(
+                elder_id, session_id, close_reason="idle", recover_inflight=True
+            )
         except sessions.SessionInflightError:
-            # 仍有飛途中 turn：本輪跳過，待下一輪租約過期或處理完成後再次收斂
+            # 仍有飛途中 turn（租約未到期或無法收斂）：本輪跳過，下一輪再試
             logger.info("session 仍有 inflight，稍後再收斂：session_id=%s", session_id)
             continue
         except sessions.SessionError:
