@@ -58,7 +58,7 @@ def test_handle_complete_routine_success(monkeypatch):
     """測試 complete_routine 工具處理函式。"""
     monkeypatch.setattr(
         db,
-        "complete_routine_occurrence",
+        "complete_routine_with_event",
         lambda **kwargs: {
             "routine_id": kwargs["routine_id"],
             "status": "done",
@@ -66,6 +66,7 @@ def test_handle_complete_routine_success(monkeypatch):
             "completed_by": kwargs.get("completed_by", "conversation")
         }
     )
+
 
 
     res = tools.handle_complete_routine({
