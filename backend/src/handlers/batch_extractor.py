@@ -184,17 +184,13 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         metrics.emit_batch_outcome("event_conflict", session_id=session_id)
         raise PermanentBatchError(f"事件內容互斥：{conflicts[:3]}")
 
-    sessions.mark_turns_batch_completed(
-        elder_id,
-        _chunk_by_turn(result),
-        extractor_version=config.batch_extractor_version,
-    )
     sessions.complete_batch(
         elder_id,
         session_id,
         owner=owner,
         extractor_version=config.batch_extractor_version,
     )
+
 
     logger.info(
         "batch 完成：session_id=%s events=%s metrics=%s",
@@ -312,11 +308,4 @@ def _write_events(result: Any) -> tuple[int, list[str]]:
     return written, conflicts
 
 
-def _chunk_by_turn(result: Any) -> dict[str, str]:
-    """建立 Turn ID 至初建 Chunk ID 之對照表；供更新 Turn 關聯狀態。"""
-    mapping: dict[str, str] = {}
-    for outcome in result.chunk_outcomes:
-        for event in outcome.events:
-            for turn_id in event.evidence_conversation_ids:
-                mapping.setdefault(turn_id, outcome.chunk_id)
-    return mapping
+

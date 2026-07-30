@@ -644,15 +644,7 @@ def _batch_get_all(keys: list[dict[str, str]]) -> list[dict[str, Any]]:
     return items
 
 
-def mark_turns_batch_completed(
-    elder_id: str,
-    chunk_by_turn: dict[str, str],
-    *,
-    extractor_version: str,
-    now: datetime | None = None,
-) -> int:
-    """標記 turn 萃取完成（極簡架構：所有狀態集中維護於 Session 的 `chunk_manifest`）。"""
-    return len(chunk_by_turn)
+
 
 
 

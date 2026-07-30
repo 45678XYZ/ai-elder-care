@@ -363,11 +363,7 @@ def test_missing_frozen_turn_raises(sessions):
         sessions.get_frozen_turns(ELDER, ["cnv_missing"])
 
 
-def test_mark_turns_batch_completed(sessions):
-    updated = sessions.mark_turns_batch_completed(
-        ELDER, {"cnv_001": "chk_a", "cnv_missing": "chk_a"}, extractor_version="v1"
-    )
-    assert updated == 2
+
 
 
 
