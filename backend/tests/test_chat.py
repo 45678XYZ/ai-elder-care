@@ -153,6 +153,15 @@ def test_chat_missing_client_request_id():
     assert body_of(resp)["error"]["code"] == "INVALID_PARAMETER"
 
 
+def test_chat_empty_client_request_id():
+    """空字串會讓同一長者的每次請求都塌到同一個 turn。"""
+    from src.handlers import chat
+
+    resp = chat.handler(_make_event(chat_body(client_request_id="")), None)
+    assert resp["statusCode"] == 400
+    assert body_of(resp)["error"]["code"] == "INVALID_PARAMETER"
+
+
 def test_chat_invalid_lang():
     from src.handlers import chat
 
