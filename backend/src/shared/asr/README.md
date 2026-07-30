@@ -251,6 +251,28 @@ operator 打錯的設定會被靜默忽略，實際生效的東西與他以為�
 也就是說**預設只有客語 mock 能出結果**。要開通任何實體模型，必須在
 `ASR_CONFIG_JSON` 明確填上 production gate 的五項核准。
 
+### 選擇要用哪個模型
+
+**在 CE 與 Formo 之間選、換主力／備援順序、調併發**：純設定，改 `ASR_CONFIG_JSON`
+即可，不用碰程式碼。真正決定「用哪個模型」的是 `routes[語言].provider_identifier`
+（主力）與 `fallback_chain`（備援，依序嘗試）。停用一個模型不需要改 route，只要
+不核准它的 production gate，router 會自動跳過落到下一棒。
+
+**加入一個全新的開源模型**：需要改程式，因為 `MODEL_PROVIDER_REGISTRY` 是
+`model_id → 建構方式` 的明確登記表，不是「設定檔指定任意類別路徑」——後者等於
+讓 JSON 可以載入任意程式碼，是安全風險。步驟：
+
+1. 在 `local_models.py`（或 `remote_endpoints.py`）寫一個 `ModelProviderBase`
+   子類別，實作 `_build_handle`／`_run_inference`／`_supports`。取號、逾時、
+   取消、錯誤正規化全部由骨架處理。
+2. 在 `composition.py` 的 `MODEL_PROVIDER_REGISTRY` 加一筆
+   `ModelProviderRegistration`。
+3. 在 `ASR_CONFIG_JSON` 的 `model_metadata` 填上這個模型並走完 production gate。
+
+router 的核准判定、備援鏈、併發控制、遙測都不需要修改。未登記的 `model_id`
+即使核准通過也不會建立實例——`build_provider_registry()` 會靜靜跳過它，這是刻意
+的 fail closed，不是遺漏。
+
 ### 雙重防線
 
 `build_provider_registry()` 只為「已核准」的模型建立實例；未核准的模型連物件都不
@@ -290,7 +312,7 @@ Formo 客語備援）與 target-tracking autoscaling，供 `ProviderKind.REMOTE_
 | `test_local_models.py` | 實體模型骨架：飽和不執行推論、取消／逾期優先於成功、例外不外洩、空白輸出、語言不符、拒絕非 Canonical Audio |
 | `test_failover.py` | 錯誤分類完整二分、`route_not_approved` 永不被繞過、飽和溢流、取號預算分配、舊介面 provider 包裝 |
 | `test_router_failover.py` | 核准後真的可上線、未核准不被呼叫、資格篩選（停用／無實例／無 metadata）、執行期轉移、公開讀取介面 |
-| `test_composition.py` | 預設設定 fail closed、未核准模型無實例、Formo 缺腔調不建立、設定打錯直接失敗、facade process 級快取只組一次、stdout sink 只輸出 allowlist 欄位 |
+| `test_composition.py` | 預設設定 fail closed、未核准模型無實例、Formo 缺腔調不建立、設定打錯直接失敗、facade process 級快取只組一次、stdout sink 只輸出 allowlist 欄位、註冊表恰為兩個已知模型、未登記 model_id 不建立實例、示範註冊第三個模型的最小改動 |
 | `test_remote_endpoints.py` | 送出欄位集合封閉（只有 canonical PCM 與允許欄位）、暫時性錯誤→unavailable、逾時→deadline_exceeded、非 JSON／缺 text→invalid_response、例外不外洩、飽和不外呼 |
 | `test_chat_asr_bridge.py` | 錯誤碼對映完整性、handler 不得自創 api.md 以外的錯誤碼、5xx 訊息不得內插例外文字、內部診斷只進日誌、60.000/60.001 秒邊界、text 路徑不受 ASR 設定影響、時間預算換算 |
 | 既有 `test_*.py` | 型別、canonical audio、router、mock、AWS adapter、facade、telemetry、evidence、ADR |
