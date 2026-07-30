@@ -456,3 +456,104 @@ def test_telemetry_reports_failover_and_served_provider() -> None:
     assert record.terminal_outcome == "success"
     assert record.queue_wait_ms >= 0
     assert set(record.to_dict()) <= TELEMETRY_ALLOWLIST_KEYS
+
+
+# ─────────────────────────────────────────────────────────────────
+# 模型 provider 註冊表
+# ─────────────────────────────────────────────────────────────────
+def test_registry_contains_exactly_the_two_known_models() -> None:
+    """
+    這個測試故意寫得很嚴格：新增或移除模型都必須動到這裡，
+
+    確保「支援哪些模型」永遠有一份可讀、可追溯的清單，不會被默默改掉。
+    """
+    from src.shared.asr.composition import MODEL_PROVIDER_REGISTRY
+    from src.shared.asr.config import CE_MODEL_METADATA, FORMO_MODEL_METADATA
+
+    assert set(MODEL_PROVIDER_REGISTRY) == {
+        CE_MODEL_METADATA.model_id,
+        FORMO_MODEL_METADATA.model_id,
+    }
+
+
+def test_unregistered_model_id_does_not_get_a_local_instance() -> None:
+    """
+    核准通過但程式不認得這個模型時，必須靜靜地不建立實例，
+
+    而不是報錯或猜一個實作——這是新增模型前的安全網。
+    """
+    from src.shared.asr.composition import build_provider_registry
+
+    config = default_config()
+    config.model_metadata["taiwan_tongues_ce"] = approve(
+        config.model_metadata["taiwan_tongues_ce"]
+    )
+    # 竄改成一個沒登記過的 model_id，模擬「設定填了新模型但程式還沒認得它」。
+    tampered = config.model_metadata["taiwan_tongues_ce"]
+    config.model_metadata["taiwan_tongues_ce"] = ModelMetadata(
+        model_id="someone/unregistered-model",
+        revision=tampered.revision,
+        license=tampered.license,
+        access_status=tampered.access_status,
+        usage_restriction=tampered.usage_restriction,
+        approval_state=tampered.approval_state,
+        production_gate=tampered.production_gate,
+    )
+
+    assert "ce_local" not in build_provider_registry(config)
+
+
+def test_third_model_can_be_added_by_registering_it_without_touching_router() -> None:
+    """
+    示範新增第三個開源模型的最小改動：只需一筆註冊，其餘管線不變。
+
+    這裡直接把假模型登記進 MODEL_PROVIDER_REGISTRY，證明 composition 之外
+    （router 的核准判定、備援鏈、併發控制）完全不需要修改。
+    """
+    from src.shared.asr.composition import (
+        MODEL_PROVIDER_REGISTRY,
+        ModelProviderRegistration,
+        build_provider_registry,
+    )
+
+    class ThirdPartyProvider:
+        provider_id = "third_party_local"
+
+        def transcribe(self, audio, language, deadline, cancellation, context):
+            return Transcript(text="第三方模型的假辨識結果")
+
+    def build_third_party(provider_id, spec, slot_pool, config):
+        return ThirdPartyProvider()
+
+    fake_model_id = "someone/third-party-asr"
+    MODEL_PROVIDER_REGISTRY[fake_model_id] = ModelProviderRegistration(
+        languages=frozenset({Language.ZH_TW}),
+        build_local=build_third_party,
+    )
+    try:
+        config = default_config()
+        config.model_metadata["third_party"] = approve(
+            ModelMetadata(
+                model_id=fake_model_id,
+                revision="v1",
+                license="apache-2.0",
+                access_status=AccessStatus.OPEN,
+                usage_restriction=UsageRestriction.COLAB_VALIDATION_ONLY,
+                approval_state=ApprovalState.NOT_APPROVED,
+            )
+        )
+        config.providers["third_party_local"] = type(
+            config.providers["ce_local"]
+        )(
+            identifier="third_party_local",
+            status=ProviderStatus.ENABLED,
+            metadata_ref="third_party",
+            kind=config.providers["ce_local"].kind,
+        )
+
+        registry = build_provider_registry(config)
+
+        assert isinstance(registry["third_party_local"], ThirdPartyProvider)
+    finally:
+        # 不污染其他測試：註冊表是模組級可變狀態。
+        del MODEL_PROVIDER_REGISTRY[fake_model_id]

@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Any, Callable
 
+from dataclasses import dataclass
+
 from .aws_zh_adapter import AwsZhAdapter
 from .concurrency import ModelSlotPool
 from .config import (
@@ -50,10 +52,109 @@ ENV_FORMO_PROMPT_ID = "ASR_FORMO_PROMPT_ID"
 # Lambda 執行環境本來就會提供 AWS_REGION；沒有時交給 boto3 自行解析。
 ENV_AWS_REGION = "AWS_REGION"
 
-# 實體模型 provider 的建構對照：model_id → 實作類別。
-# 不在表內的 model_id 一律不建立實例，等於該 provider 不可用（fail closed）。
-_CE_MODEL_ID = CE_MODEL_METADATA.model_id
-_FORMO_MODEL_ID = FORMO_MODEL_METADATA.model_id
+
+# ─────────────────────────────────────────────────────────────────
+# 模型 provider 註冊表
+#
+# 新增一個開源模型只需在這裡加一筆，不必修改 `_build_local_model_provider`／
+# `_build_remote_model_provider` 的判斷邏輯。刻意不做成「設定檔指定任意類別
+# 路徑」：那等於讓 JSON 設定可以載入任意程式碼，是安全風險。註冊表本身仍是
+# 程式碼變更，只是把「加模型」限縮成單一、可讀的登記動作。
+# ─────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class ModelProviderRegistration:
+    """
+    單一模型在本 process 內／遠端端點的建構方式。
+
+    `languages` 是這個模型實際支援的語言，供 `remote_endpoints.py` 決定要不要
+    收指定語言的音訊；本機 provider 的語言判斷則交給 provider 自己的
+    `_supports`，此欄位在本機路徑不使用。
+    """
+
+    languages: frozenset[Language]
+    build_local: Callable[[str, LocalModelSpec, ModelSlotPool, AsrConfig], object]
+    build_remote: Callable[[str, RemoteEndpointSpec, ModelSlotPool], object] | None = None
+
+
+def _build_ce_local(
+    provider_id: str,
+    spec: LocalModelSpec,
+    slot_pool: ModelSlotPool,
+    config: AsrConfig,
+) -> object:
+    policy = config.concurrency
+    return CeLocalProvider(
+        spec=spec,
+        slot_pool=slot_pool,
+        model_load_wait_seconds=policy.model_load_wait_seconds,
+        load_retry_cooldown_seconds=policy.load_retry_cooldown_seconds,
+        provider_id=provider_id,
+    )
+
+
+def _build_ce_remote(
+    provider_id: str, spec: RemoteEndpointSpec, slot_pool: ModelSlotPool
+) -> object:
+    return SageMakerAsrProvider(
+        provider_id=provider_id,
+        spec=spec,
+        slot_pool=slot_pool,
+        supported_languages=MODEL_PROVIDER_REGISTRY[CE_MODEL_METADATA.model_id].languages,
+    )
+
+
+def _build_formo_local(
+    provider_id: str,
+    spec: LocalModelSpec,
+    slot_pool: ModelSlotPool,
+    config: AsrConfig,
+) -> object | None:
+    prompt_id = os.environ.get(ENV_FORMO_PROMPT_ID)
+    if not prompt_id:
+        # 沒指定腔調就不建立：猜一個腔調會直接影響辨識結果。
+        return None
+    try:
+        validated = validate_formo_prompt_id(prompt_id)
+    except ValueError:
+        return None
+    policy = config.concurrency
+    return FormoLocalProvider(
+        spec=spec,
+        slot_pool=slot_pool,
+        model_load_wait_seconds=policy.model_load_wait_seconds,
+        prompt_id=validated,
+        load_retry_cooldown_seconds=policy.load_retry_cooldown_seconds,
+        provider_id=provider_id,
+    )
+
+
+def _build_formo_remote(
+    provider_id: str, spec: RemoteEndpointSpec, slot_pool: ModelSlotPool
+) -> object:
+    return SageMakerAsrProvider(
+        provider_id=provider_id,
+        spec=spec,
+        slot_pool=slot_pool,
+        supported_languages=MODEL_PROVIDER_REGISTRY[FORMO_MODEL_METADATA.model_id].languages,
+    )
+
+
+# model_id → 建構方式。要新增第三個開源模型：
+#   1. 在 local_models.py（或 remote_endpoints.py）寫一個 ModelProviderBase 子類別。
+#   2. 在下面加一筆 ModelProviderRegistration。
+# router 的核准判定、備援鏈、併發控制、遙測都不需要修改。
+MODEL_PROVIDER_REGISTRY: dict[str, ModelProviderRegistration] = {
+    CE_MODEL_METADATA.model_id: ModelProviderRegistration(
+        languages=frozenset({Language.ZH_TW, Language.HAK}),
+        build_local=_build_ce_local,
+        build_remote=_build_ce_remote,
+    ),
+    FORMO_MODEL_METADATA.model_id: ModelProviderRegistration(
+        languages=frozenset({Language.HAK}),
+        build_local=_build_formo_local,
+        build_remote=_build_formo_remote,
+    ),
+}
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -241,29 +342,21 @@ def _build_remote_model_provider(
     if metadata is None or not provider_config.endpoint_name:
         return None
 
-    # 語言支援依模型而定，不由設定自由填寫：填錯會讓客語音訊被送進只懂國語的
-    # 端點，而那種錯誤在辨識結果裡不容易看出來。
-    if metadata.model_id == _CE_MODEL_ID:
-        languages = frozenset({Language.ZH_TW, Language.HAK})
-    elif metadata.model_id == _FORMO_MODEL_ID:
-        languages = frozenset({Language.HAK})
-    else:
+    # 未登記的 model_id 不建立實例：即使核准通過，程式不認得它就不能跑。
+    registration = MODEL_PROVIDER_REGISTRY.get(metadata.model_id)
+    if registration is None or registration.build_remote is None:
         return None
 
-    return SageMakerAsrProvider(
-        provider_id=provider_id,
-        spec=RemoteEndpointSpec(
-            endpoint_name=provider_config.endpoint_name,
-            model_id=metadata.model_id,
-            revision=metadata.revision,
-            region_name=os.environ.get(ENV_AWS_REGION) or None,
-        ),
-        slot_pool=ModelSlotPool(
-            provider_id=provider_id, capacity=provider_config.max_concurrent
-        ),
-        supported_languages=languages,
-        load_retry_cooldown_seconds=config.concurrency.load_retry_cooldown_seconds,
+    spec = RemoteEndpointSpec(
+        endpoint_name=provider_config.endpoint_name,
+        model_id=metadata.model_id,
+        revision=metadata.revision,
+        region_name=os.environ.get(ENV_AWS_REGION) or None,
     )
+    slot_pool = ModelSlotPool(
+        provider_id=provider_id, capacity=provider_config.max_concurrent
+    )
+    return registration.build_remote(provider_id, spec, slot_pool)
 
 
 def _build_local_model_provider(
@@ -276,6 +369,11 @@ def _build_local_model_provider(
         # 未核准的模型不建立實例。
         return None
 
+    registration = MODEL_PROVIDER_REGISTRY.get(metadata.model_id)
+    if registration is None:
+        # 未登記的實體模型：不建立實例。
+        return None
+
     spec = LocalModelSpec(
         model_id=metadata.model_id,
         revision=metadata.revision,
@@ -285,37 +383,7 @@ def _build_local_model_provider(
     slot_pool = ModelSlotPool(
         provider_id=provider_id, capacity=provider_config.max_concurrent
     )
-    policy = config.concurrency
-
-    if metadata.model_id == _CE_MODEL_ID:
-        return CeLocalProvider(
-            spec=spec,
-            slot_pool=slot_pool,
-            model_load_wait_seconds=policy.model_load_wait_seconds,
-            load_retry_cooldown_seconds=policy.load_retry_cooldown_seconds,
-            provider_id=provider_id,
-        )
-
-    if metadata.model_id == _FORMO_MODEL_ID:
-        prompt_id = os.environ.get(ENV_FORMO_PROMPT_ID)
-        if not prompt_id:
-            # 沒指定腔調就不建立：猜一個腔調會直接影響辨識結果。
-            return None
-        try:
-            validated = validate_formo_prompt_id(prompt_id)
-        except ValueError:
-            return None
-        return FormoLocalProvider(
-            spec=spec,
-            slot_pool=slot_pool,
-            model_load_wait_seconds=policy.model_load_wait_seconds,
-            prompt_id=validated,
-            load_retry_cooldown_seconds=policy.load_retry_cooldown_seconds,
-            provider_id=provider_id,
-        )
-
-    # 未知的實體模型：不建立實例。
-    return None
+    return registration.build_local(provider_id, spec, slot_pool, config)
 
 
 # ─────────────────────────────────────────────────────────────────

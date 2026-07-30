@@ -65,6 +65,8 @@ from .failover import (
 )
 from .local_models import CeLocalProvider, FormoLocalProvider, LocalModelSpec
 from .composition import (
+    MODEL_PROVIDER_REGISTRY,
+    ModelProviderRegistration,
     StdoutTelemetrySink,
     build_facade,
     build_provider_registry,
@@ -168,6 +170,8 @@ __all__ = [
     "get_asr_facade",
     "reset_asr_facade",
     "StdoutTelemetrySink",
+    "MODEL_PROVIDER_REGISTRY",
+    "ModelProviderRegistration",
     # hak_mock.py
     "HakMockProvider",
     # aws_zh_adapter.py
