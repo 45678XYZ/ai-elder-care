@@ -23,17 +23,17 @@ terraform/build/
 *.tfvars
 !*.tfvars.example
 
-# --- AI tool configs ---
-.claude/
-.codex/
-.cursor/
-.windsurf/
-.continue/
-.aider*
-.gemini/
-.qwen/
-.roo/
-.agents/
+# --- AI tool configs (local, per-developer) ---
+.claude/        
+.codex/        
+.cursor/        
+.windsurf/     
+.continue/     
+.aider*        
+.gemini/        
+.qwen/         
+.roo/          
+.agents/       
 
 # --- 離線訓練工作流產出（語料、embedding 快取、標註檔、評測結果） ---
 # 內含第三方語料的衍生資料（DialSeg711／TIAGE／SeniorTalk），授權不允許再散布，一律不入庫
