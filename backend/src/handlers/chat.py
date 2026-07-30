@@ -5,7 +5,9 @@
 處理流程：
 1. 解析與驗證傳入欄位 (elder_id, lang, text/audio 擇一)。
 2. 進行 Cognito 授權驗證 (透過 shared/auth.py 的 assert_can_access_elder)。
-3. 若傳入音檔 (audio)，先調用 CE ASR 將音訊轉成文字 transcript (超過 60 秒長度限制回傳 400 AUDIO_TOO_LONG)。
+3. 若傳入音檔 (audio)，交由 ASR 領域套件 (shared/asr) 轉成文字 transcript。
+   音訊長度、格式與解碼判定全部由 Canonical Audio 邊界負責，本 handler 只做
+   base64 解碼與錯誤碼對映 (見 shared/asr_http.py)。
 4. 調用 AWS Bedrock AgentCore (Claude 5 Sonnet) 大腦進行推導，帶入 sessionId=elder_id 以載入/更新託管 Memory，並處理 Tool Calling 觸發。
 5. 產生唯一的 conversation_id，並將對話歷史雙寫至 DynamoDB conversations 表 (提供給隊友的 summary 模組使用)。
 6. 依據 lang (zh-TW 或 hak) 調用 TTSFactory 生成語音 (中文 Polly / 客語 OmniVoice 帶 Fallback 降級防護)。
@@ -24,6 +26,19 @@ import boto3
 from botocore.exceptions import ClientError
 
 from src.shared import auth, db, responses
+from src.shared.asr.composition import get_asr_facade
+from src.shared.asr.config import ConfigParseError
+from src.shared.asr.types import (
+    AsrErrorCategory,
+    CancellationSignal,
+    CorrelationContext,
+    Deadline,
+    InputFormat,
+    Language,
+    Transcript,
+    TypedAsrError,
+)
+from src.shared.asr_http import SERVER_SIDE_CATEGORIES, map_asr_error
 from src.shared.tts import TTSFactory
 
 # 環境變數自訂名稱
@@ -31,13 +46,16 @@ S3_BUCKET_NAME = os.environ.get("S3_AUDIO_BUCKET", "ai-elder-care-audio")
 BEDROCK_AGENT_ID = os.environ.get("BEDROCK_AGENT_ID", "")
 BEDROCK_AGENT_ALIAS_ID = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "TSTALIASID")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
-SAGEMAKER_CE_ENDPOINT_NAME = os.environ.get("SAGEMAKER_CE_ENDPOINT_NAME", "")
-CE_ASR_API_URL = os.environ.get("CE_ASR_API_URL", "https://api.ce-asr.example.com/v1/transcribe")
+
+# ASR 之後還要跑 Bedrock、TTS 與 S3 上傳，所以不能把 Lambda 剩餘時間全給 ASR。
+# 這個保留值是給後續步驟的餘裕；剩餘時間不足時 ASR 會自己回 deadline_exceeded。
+ASR_RESERVED_TAIL_SECONDS = float(os.environ.get("ASR_RESERVED_TAIL_SECONDS", "8"))
+# 本機或無 Lambda context 時的 ASR 預算上限。
+ASR_DEFAULT_BUDGET_SECONDS = float(os.environ.get("ASR_DEFAULT_BUDGET_SECONDS", "20"))
 
 # 全域 Boto3 Clients (Warm Start 重用連線)
 _s3_client = None
 _bedrock_agent_runtime = None
-_sagemaker_runtime = None
 
 
 def get_s3_client():
@@ -56,14 +74,6 @@ def get_bedrock_agent_runtime():
     return _bedrock_agent_runtime
 
 
-def get_sagemaker_runtime():
-    """取得 SageMaker Runtime Client 實例。"""
-    global _sagemaker_runtime
-    if _sagemaker_runtime is None:
-        _sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=AWS_REGION)
-    return _sagemaker_runtime
-
-
 def parse_event_body(event: Dict[str, Any]) -> Dict[str, Any]:
     """解析 API Gateway event 中的 body 內容。"""
     body = event.get("body")
@@ -77,36 +87,61 @@ def parse_event_body(event: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("INVALID_JSON")
 
 
-def transcribe_audio(audio_bytes: bytes, audio_format: str, lang: str) -> str:
-    """呼叫 SageMaker CE 模型 Endpoint 或 CE ASR API 將語音轉寫為文字。
-    
-    優先檢查 SAGEMAKER_CE_ENDPOINT_NAME，若有設定則透過 boto3 呼叫 SageMaker；
-    若未設定 Endpoint，則回傳 Mock 轉譯文字供測試。
+def resolve_asr_budget_seconds(context: Any) -> float:
     """
-    # 檢查長度是否超過約 60 秒（以 5MB 音檔大小為防禦邊界）
-    if len(audio_bytes) > 5 * 1024 * 1024:
-        raise ValueError("AUDIO_TOO_LONG")
+    算出這次 ASR 可用的時間預算。
 
-    # 1. 若配置了 SageMaker Endpoint，透過 boto3 原生呼叫 SageMaker 上的 CE 模型
-    if SAGEMAKER_CE_ENDPOINT_NAME:
+    以 Lambda 剩餘時間扣掉後續 Bedrock／TTS／S3 所需的餘裕；取不到 context
+    （本機、單元測試）時退回固定上限。
+    """
+    remaining_ms = None
+    getter = getattr(context, "get_remaining_time_in_millis", None)
+    if callable(getter):
         try:
-            sm_client = get_sagemaker_runtime()
-            response = sm_client.invoke_endpoint(
-                EndpointName=SAGEMAKER_CE_ENDPOINT_NAME,
-                ContentType=f"audio/{audio_format}",
-                Body=audio_bytes,
-                CustomAttributes=f"lang={lang}"
-            )
-            result = json.loads(response["Body"].read().decode("utf-8"))
-            return result.get("text", "")
-        except Exception as e:
-            print(f"[Error] SageMaker ASR invoke failed: {e}")
-            raise RuntimeError(f"SageMaker ASR error: {e}")
+            remaining_ms = getter()
+        except Exception:
+            remaining_ms = None
 
-    # 2. 未設定 Endpoint 時的保底 / Mock 文字（供開發測試期使用）
-    if lang == "hak":
-        return "阿頭仔，𠊎今晡日有食藥仔囉。"
-    return "小助手，我今天已經吃過血壓藥了。"
+    if not isinstance(remaining_ms, (int, float)):
+        return ASR_DEFAULT_BUDGET_SECONDS
+
+    budget = remaining_ms / 1000.0 - ASR_RESERVED_TAIL_SECONDS
+    return max(0.0, min(budget, ASR_DEFAULT_BUDGET_SECONDS))
+
+
+def transcribe_audio(
+    audio_bytes: bytes,
+    audio_format: str,
+    lang: str,
+    correlation_id: str,
+    budget_seconds: float,
+) -> Transcript | TypedAsrError:
+    """
+    以 ASR 領域套件 (shared/asr) 將語音轉寫為文字。
+
+    長度上限、格式驗證、解碼與備援全部由套件內部負責，本函式只做型別轉換。
+    回傳領域型別而非字串，讓呼叫端能依錯誤分類決定 HTTP 對映。
+    """
+    try:
+        input_format = InputFormat.from_str(audio_format)
+    except ValueError:
+        return TypedAsrError(
+            category=AsrErrorCategory.UNSUPPORTED_AUDIO_FORMAT,
+            message=f"Unsupported audio format: {audio_format!r}.",
+            retryable=False,
+        )
+
+    language = Language.from_str(lang)
+
+    facade = get_asr_facade()
+    return facade.recognize(
+        audio_bytes=audio_bytes,
+        input_format=input_format,
+        language=language,
+        deadline=Deadline.after(budget_seconds, time.monotonic),
+        cancellation=CancellationSignal(),
+        context=CorrelationContext(correlation_id=correlation_id),
+    )
 
 
 def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
@@ -191,22 +226,33 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         try:
             body = parse_event_body(event)
         except ValueError:
-            return responses.error(400, "INVALID_JSON", "請求內文不是有效的 JSON 格式")
+            # api.md 的錯誤碼表沒有 INVALID_JSON；格式錯誤歸在 INVALID_PARAMETER。
+            return responses.error(
+                400, "INVALID_PARAMETER", "請求內文不是有效的 JSON 格式"
+            )
 
         elder_id = body.get("elder_id")
         lang = body.get("lang")
         text = body.get("text")
         audio = body.get("audio")
+        client_request_id = body.get("client_request_id")
+        session_id = body.get("session_id")
 
         # 2. 驗證必要欄位 (依據 docs/api.md 契約)
         if not elder_id:
-            return responses.error(400, "INVALID_PARAM", "缺少必填欄位 elder_id")
+            return responses.error(400, "INVALID_PARAMETER", "缺少必填欄位 elder_id")
         if not lang or lang not in ("zh-TW", "hak"):
-            return responses.error(400, "INVALID_PARAM", "lang 欄位必填且必須為 zh-TW 或 hak")
+            return responses.error(
+                400, "INVALID_PARAMETER", "lang 欄位必填且必須為 zh-TW 或 hak"
+            )
         if not text and not audio:
-            return responses.error(400, "INVALID_PARAM", "text 與 audio 必須擇一填寫")
+            return responses.error(
+                400, "INVALID_PARAMETER", "text 與 audio 必須擇一填寫"
+            )
         if text and audio:
-            return responses.error(400, "INVALID_PARAM", "text 與 audio 不能同時提供")
+            return responses.error(
+                400, "INVALID_PARAMETER", "text 與 audio 不能同時提供"
+            )
 
         # 3. 身份與存取權限驗證
         try:
@@ -225,29 +271,68 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             audio_b64 = audio.get("data", "")
             audio_fmt = audio.get("format", "m4a")
             if not audio_b64:
-                return responses.error(400, "INVALID_PARAM", "audio.data 不可為空")
+                return responses.error(
+                    400, "INVALID_PARAMETER", "audio.data 不可為空"
+                )
 
             try:
                 audio_bytes = base64.b64decode(audio_b64)
             except Exception:
-                return responses.error(400, "INVALID_PARAM", "audio.data 解碼失敗，非有效 base64 字串")
+                return responses.error(
+                    400, "INVALID_PARAMETER", "audio.data 解碼失敗，非有效 base64 字串"
+                )
+
+            # correlation id 必須是不透明值：不可由 elder_id 或 session_id 推導，
+            # 否則遙測就等於帶上了長者識別資訊。
+            correlation_id = client_request_id or f"corr_{uuid.uuid4().hex}"
 
             try:
-                transcript = transcribe_audio(audio_bytes, audio_fmt, lang)
-            except ValueError as val_err:
-                if str(val_err) == "AUDIO_TOO_LONG":
-                    return responses.error(400, "AUDIO_TOO_LONG", "單句語音長度超過 60 秒限制")
-                return responses.error(400, "TRANSCRIPTION_FAILED", "語音轉寫失敗")
+                asr_result = transcribe_audio(
+                    audio_bytes=audio_bytes,
+                    audio_format=audio_fmt,
+                    lang=lang,
+                    correlation_id=correlation_id,
+                    budget_seconds=resolve_asr_budget_seconds(context),
+                )
+            except ConfigParseError as cfg_err:
+                # ASR 設定有問題只影響音訊路徑；text 路徑不受影響。
+                print(f"[Error] ASR configuration rejected: {cfg_err}")
+                return responses.error(
+                    500, "INTERNAL_ERROR", "語音辨識服務目前無法使用"
+                )
+
+            if isinstance(asr_result, TypedAsrError):
+                mapped = map_asr_error(asr_result.category)
+                # 內部診斷訊息只進日誌，不回給呼叫端。
+                if asr_result.category in SERVER_SIDE_CATEGORIES:
+                    print(
+                        f"[Error] ASR failed: category={asr_result.category.value} "
+                        f"correlation_id={correlation_id} detail={asr_result.message}"
+                    )
+                return responses.error(
+                    mapped.status_code, mapped.code, mapped.message
+                )
+
+            transcript = asr_result.text
 
         # 5. 調用 Bedrock AgentCore 大腦
         try:
             reply_text, routines_updated = invoke_agent_brain(elder_id, transcript)
         except Exception as e:
-            return responses.error(500, "BEDROCK_ERROR", f"呼叫對話大腦失敗: {str(e)}")
+            # 內部原因只進日誌：例外訊息可能含 model ID、ARN 等佈署細節。
+            print(f"[Error] Bedrock Agent invoke failed: {e}")
+            return responses.error(500, "INTERNAL_ERROR", "對話服務目前無法使用")
 
         # 6. 產生獨一無二的對話 ID
         conversation_id = f"cnv_{uuid.uuid4().hex[:12]}"
         now_ts = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+        # TODO: session 生命週期尚未實作。docs/api.md 要求後端依 idle 門檻、turn
+        # 上限與 closing/closed 狀態決定沿用或新建 session，並在 reserve/replay
+        # 之前先做 client_request_id 冪等判定。目前只回傳形狀正確的 session_id：
+        # 帶了就沿用、沒帶就新建，沒有狀態機、沒有冪等、沒有 inflight reserve。
+        if not session_id:
+            session_id = f"ses_{uuid.uuid4().hex[:12]}"
 
         # 7. 雙寫對話紀錄至 DynamoDB conversations 表 (確保隊友摘要 API 的相容性)
         try:
@@ -272,7 +357,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             audio_bytes = tts_engine.synthesize(reply_text)
         except Exception as tts_err:
             print(f"[Error] TTS Synthesis failed: {tts_err}")
-            return responses.error(500, "TTS_FAILED", f"語音合成失敗: {str(tts_err)}")
+            return responses.error(500, "INTERNAL_ERROR", "語音合成失敗")
 
         # 9. 上傳 MP3 至 S3 並取得預簽名 URL
         reply_audio_url = upload_audio_to_s3(audio_bytes, conversation_id)
@@ -280,6 +365,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # 10. 回傳符合 docs/api.md 規範的 Response 200
         return responses.json_response(200, {
             "conversation_id": conversation_id,
+            "session_id": session_id,
             "transcript": transcript,
             "reply_text": reply_text,
             "reply_audio_url": reply_audio_url,
@@ -288,4 +374,4 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     except Exception as err:
         print(f"[Unhandled Error] {err}")
-        return responses.error(500, "INTERNAL_ERROR", f"內部系統錯誤: {str(err)}")
+        return responses.error(500, "INTERNAL_ERROR", "內部系統錯誤")
