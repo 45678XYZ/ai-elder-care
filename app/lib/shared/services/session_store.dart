@@ -47,11 +47,19 @@ class AppSession {
   /// `AuthService` 的 `auth_pending_role_` 一致（身分也是同一個時序問題）。
   static const _kPendingSetupPrefix = 'setup_pending_';
 
-  static const _kName = 'elder_name';
-  static const _kNickname = 'elder_nickname';
-  static const _kLang = 'elder_lang';
-  static const _kSelectedElder = 'selected_elder_id';
-  static const _kLinkedCaregivers = 'linked_caregiver_ids';
+  // 全部綁 sub，與 [_setupDoneKey] 一致。
+  //
+  // 原本這幾個是裝置層級的全域 key，於是登出時只能連同「已完成設定」的旗標一起刪掉
+  // ——否則下一個登入的人會看到上一位長輩的稱呼。代價是**同一個人登出再登入也要
+  // 重走一次首次設定**，那是使用者實際踩到的問題。
+  //
+  // 綁 sub 之後兩件事同時成立：不同帳號天然隔離（各讀各的 key），同一個帳號重登
+  // 資料還在。登出因此不需要刪任何持久化資料，只要把記憶體欄位歸零。
+  static String _nameKey(String a) => 'elder_name_$a';
+  static String _nicknameKey(String a) => 'elder_nickname_$a';
+  static String _langKey(String a) => 'elder_lang_$a';
+  static String _selectedElderKey(String a) => 'selected_elder_id_$a';
+  static String _linkedCaregiversKey(String a) => 'linked_caregiver_ids_$a';
 
   String elderName = '';
   String elderNickname = '';
@@ -100,7 +108,17 @@ class AppSession {
   }
 
   /// 客語裝置端 ASR 不支援，走錄音送後端；華語走裝置端辨識。
-  bool get isHakka => (selectedElder?.langPreference ?? lang) == 'hak';
+  ///
+  /// 順序與 [displayName] 一致、理由也一樣：[lang] 只有這個帳號自己走過 /setup 時
+  /// 才有值，而 [selectedElder] 目前是 [DemoData] 無條件灌進來的假名冊（永遠非 null、
+  /// 永遠是 `zh-TW`）。原本的順序讓假名冊蓋過本人選的語言——長者選了客語也永遠判成華語。
+  ///
+  /// 目前還看不出後果：客語分流尚未實作（chat_screen 仍一律走華語迴圈），所以這是
+  /// 「等客語接上就會立刻踩到、屆時很難聯想到這裡」的那種問題，先修掉。
+  bool get isHakka {
+    if (lang == 'hak') return true;
+    return selectedElder?.langPreference == 'hak';
+  }
 
   /// 稱呼 fallback：這個帳號首次設定填的 → 選定長者的暱稱／姓名 → 通用占位。
   ///
@@ -142,14 +160,23 @@ class AppSession {
     // 上一個帳號的 ID 不能留：這一頁的用途就是把 ID 報給家人，顯示錯的比不顯示更糟。
     me = null;
     final p = await SharedPreferences.getInstance();
-    setupDone = accountId == null
-        ? false
-        : (p.getBool(_setupDoneKey(accountId)) ?? false);
-    elderName = p.getString(_kName) ?? '';
-    elderNickname = p.getString(_kNickname) ?? '';
-    lang = p.getString(_kLang) ?? 'zh-TW';
-    selectedElderId = p.getString(_kSelectedElder);
-    linkedCaregiverIds = p.getStringList(_kLinkedCaregivers) ?? const [];
+    if (accountId == null) {
+      // 未登入：沒有帳號可歸屬，一律回到預設值，不從別的帳號借資料。
+      setupDone = false;
+      elderName = '';
+      elderNickname = '';
+      lang = 'zh-TW';
+      selectedElderId = null;
+      linkedCaregiverIds = const [];
+      return;
+    }
+    setupDone = p.getBool(_setupDoneKey(accountId)) ?? false;
+    elderName = p.getString(_nameKey(accountId)) ?? '';
+    elderNickname = p.getString(_nicknameKey(accountId)) ?? '';
+    lang = p.getString(_langKey(accountId)) ?? 'zh-TW';
+    selectedElderId = p.getString(_selectedElderKey(accountId));
+    linkedCaregiverIds =
+        p.getStringList(_linkedCaregiversKey(accountId)) ?? const [];
   }
 
   /// 確保 [me] 已載入並回傳；未登入時回 null（沒有帳號可以問「我是誰」）。
@@ -171,8 +198,11 @@ class AppSession {
     final id = caregiverId.trim();
     if (id.isEmpty || linkedCaregiverIds.contains(id)) return false;
     linkedCaregiverIds = [...linkedCaregiverIds, id];
+    final account = _accountId;
+    // 未登入時只留在記憶體：沒有 sub 就沒有帳號可以掛（同 saveSetup 的理由）。
+    if (account == null) return true;
     final p = await SharedPreferences.getInstance();
-    await p.setStringList(_kLinkedCaregivers, linkedCaregiverIds);
+    await p.setStringList(_linkedCaregiversKey(account), linkedCaregiverIds);
     return true;
   }
 
@@ -201,8 +231,10 @@ class AppSession {
   /// 切換目前在看的長者，並記住到下次啟動。
   Future<void> selectElder(String elderId) async {
     selectedElderId = elderId;
+    final account = _accountId;
+    if (account == null) return;
     final p = await SharedPreferences.getInstance();
-    await p.setString(_kSelectedElder, elderId);
+    await p.setString(_selectedElderKey(account), elderId);
   }
 
   /// 首次設定完成：寫入長者資料並標記**這個帳號**已完成，之後登入不再進 /setup。
@@ -216,15 +248,16 @@ class AppSession {
     elderNickname = nickname;
     this.lang = lang;
     setupDone = true;
-    final p = await SharedPreferences.getInstance();
-    await p.setString(_kName, name);
-    await p.setString(_kNickname, nickname);
-    await p.setString(_kLang, lang);
-    // 未登入時只留在記憶體：沒有 sub 就沒有帳號可以掛，寫成裝置層級的旗標正是
+    // 未登入時只留在記憶體：沒有 sub 就沒有帳號可以掛，寫成裝置層級的資料正是
     // 先前修掉的問題。註冊流程裡的 /setup（尚未登入）不走這裡，走
     // [savePendingSetup]——那條路徑才有 email 可以當寄放的依據。
     final account = _accountId;
-    if (account != null) await p.setBool(_setupDoneKey(account), true);
+    if (account == null) return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_nameKey(account), name);
+    await p.setString(_nicknameKey(account), nickname);
+    await p.setString(_langKey(account), lang);
+    await p.setBool(_setupDoneKey(account), true);
   }
 
   /// 註冊流程中完成設定：把長輩資料暫存在 [email] 底下（見 [_kPendingSetupPrefix]）。
@@ -278,9 +311,10 @@ class AppSession {
     final name = data['name'];
     final nickname = data['nickname'];
     final lang = data['lang'];
-    await p.setString(_kName, name is String ? name : '');
-    await p.setString(_kNickname, nickname is String ? nickname : '');
-    await p.setString(_kLang, lang is String ? lang : 'zh-TW');
+    await p.setString(_nameKey(accountId), name is String ? name : '');
+    await p.setString(
+        _nicknameKey(accountId), nickname is String ? nickname : '');
+    await p.setString(_langKey(accountId), lang is String ? lang : 'zh-TW');
     await p.setBool(_setupDoneKey(accountId), true);
     await p.remove(key);
 
@@ -292,22 +326,17 @@ class AppSession {
   static String _pendingSetupKey(String email) =>
       '$_kPendingSetupPrefix${email.trim().toLowerCase()}';
 
-  /// 登出時清掉這個帳號在本機留下的狀態。
+  /// 登出時把記憶體裡的狀態歸零。
   ///
-  /// 為什麼連長者資料一起清：姓名／稱呼／語言／選定的長者目前都還存在本機（後端未接），
-  /// 而下一個登入的人可能是別人——同一支手機借用、demo 換帳號都會發生。留著只會讓他
-  /// 看到上一個人的稱呼。至於已完成設定的旗標，雖然綁了 sub 不會被誤用，一樣清掉：
-  /// 這台裝置已經不代表這個帳號了，留著沒有用處。
+  /// **不刪任何持久化資料**：所有 key 都綁 sub（見 [_nameKey] 等），不同帳號各讀
+  /// 各的，本來就不會互相看到。原本連同「已完成設定」的旗標一起刪，是因為姓名那幾個
+  /// 曾經是裝置層級的全域 key，不刪就會被下一個人繼承；代價卻是**同一個人登出再登入
+  /// 也要重走一次首次設定**。綁 sub 之後這個取捨消失了，兩邊都成立。
+  ///
+  /// [accountId] 保留在簽名上是為了呼叫端的可讀性（`signOut` 要表達「清掉這個帳號的
+  /// 狀態」），實作上已不需要它。
   Future<void> clearForAccount(String? accountId) async {
-    final p = await SharedPreferences.getInstance();
-    if (accountId != null) await p.remove(_setupDoneKey(accountId));
-    await p.remove(_kName);
-    await p.remove(_kNickname);
-    await p.remove(_kLang);
-    await p.remove(_kSelectedElder);
-    await p.remove(_kLinkedCaregivers);
-
-    // 記憶體欄位也要回到預設值：單例活得比登入狀態久，只清持久化的話，
+    // 記憶體欄位要回到預設值：單例活得比登入狀態久，不歸零的話，
     // 下一個人登入後在載入完成之前會先看到上一個人的資料。
     setupDone = false;
     elderName = '';
