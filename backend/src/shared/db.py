@@ -50,8 +50,15 @@ TABLE_ROUTINES = os.environ.get("TABLE_ROUTINES", "routines")
 # 事件時間軸索引；events 的 Base table SK 是 event_id，時間範圍查詢一律走此 GSI
 EVENTS_BY_TIME_INDEX = "events-by-time"
 
-# event_time_key 為 `<ts>#<event_id>`；查詢上界要蓋過同一毫秒的所有 event_id
-EVENT_TIME_KEY_UPPER_BOUND_SUFFIX = "#\uffff"
+# 對話時間軸索引；只含 turn，session metadata 沒有 conversation_time_key 因而不入索引
+CONVERSATIONS_BY_TIME_INDEX = "conversations-by-time"
+
+# 一次互動只算已完成的 turn：failed 沒有回覆、processing 還沒收斂（見 docs/framework.md）
+TURN_STATUS_COMPLETED = "completed"
+
+# 兩個時間排序鍵都是 `<時間>#<ID>`（event_time_key、conversation_time_key）；
+# 查詢上界要蓋過同一毫秒的所有 ID
+TIME_KEY_UPPER_BOUND_SUFFIX = "#\uffff"
 
 # 判斷「既有事件與這次寫入是否互斥」時比對的事實欄位。
 # 刻意不含 `ts`：canonical key 已經固定了日期與 Slot，同一件事在 Slot 內被再次提到、
@@ -344,6 +351,47 @@ def get_recent_conversations(
         raise DBError(f"查詢對話紀錄失敗: {e.response['Error']['Message']}")
 
 
+def list_turn_times(elder_id: str, from_date: str, to_date: str) -> list[str]:
+    """取期間內已完成 turn 的 `created_at`（遞增），供統計計算對話輪數。
+
+    走 GSI `conversations-by-time`：Base table 的 SK 是 `record_id`，時間範圍查詢在 Base
+    table 上無法成立，且該索引只含 turn，session metadata 不會被算成一次互動。
+
+    只投影時間戳：統計要的是「幾輪、最後一輪在何時」，把逐字稿讀進 Lambda 只是多搬一份
+    PII。統計必須涵蓋整個區間，因此分頁全部讀完，不像列表 API 只回一頁。
+    """
+    table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
+    query_kwargs: dict[str, Any] = {
+        "IndexName": CONVERSATIONS_BY_TIME_INDEX,
+        "KeyConditionExpression": (
+            "elder_id = :eid AND conversation_time_key BETWEEN :start_key AND :end_key"
+        ),
+        "FilterExpression": "request_status = :completed",
+        "ProjectionExpression": "created_at",
+        "ExpressionAttributeValues": {
+            ":eid": elder_id,
+            ":start_key": day_start(from_date),
+            ":end_key": day_end(to_date) + TIME_KEY_UPPER_BOUND_SUFFIX,
+            ":completed": TURN_STATUS_COMPLETED,
+        },
+        "ScanIndexForward": True,
+    }
+
+    times: list[str] = []
+    try:
+        while True:
+            resp = table.query(**query_kwargs)
+            times.extend(item["created_at"] for item in resp.get("Items", []))
+            last_key = resp.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            query_kwargs["ExclusiveStartKey"] = last_key
+    except ClientError as e:
+        raise DBError(f"查詢對話輪數失敗: {e.response['Error']['Message']}")
+
+    return times
+
+
 # -----------------------------------------------------------------------------
 # Events 表操作
 # -----------------------------------------------------------------------------
@@ -560,7 +608,7 @@ def list_events(
         )
         query_kwargs["ExpressionAttributeValues"][":start_key"] = day_start(from_date)
         query_kwargs["ExpressionAttributeValues"][":end_key"] = (
-            day_end(to_date) + EVENT_TIME_KEY_UPPER_BOUND_SUFFIX
+            day_end(to_date) + TIME_KEY_UPPER_BOUND_SUFFIX
         )
 
     if event_type:
