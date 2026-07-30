@@ -337,6 +337,8 @@ data "aws_iam_policy_document" "extraction_data" {
     effect = "Allow"
     actions = [
       "dynamodb:GetItem",
+      # completion event 由 canonical key 穩定推導，因此逐日 occurrence 一律批次取回
+      "dynamodb:BatchGetItem",
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
       "dynamodb:Query",
@@ -359,6 +361,16 @@ data "aws_iam_policy_document" "extraction_data" {
     resources = [
       aws_dynamodb_table.conversations.arn,
       "${aws_dynamodb_table.conversations.arn}/index/*",
+    ]
+  }
+  # 統計只讀 routine 定義：occurrence 狀態由 completion event 推導，統計不回寫 routines
+  statement {
+    sid     = "RoutinesRead"
+    effect  = "Allow"
+    actions = ["dynamodb:Query"]
+    resources = [
+      aws_dynamodb_table.routines.arn,
+      "${aws_dynamodb_table.routines.arn}/index/*",
     ]
   }
   statement {
@@ -503,5 +515,31 @@ module "api_events" {
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = local.extraction_env
+}
+
+module "api_stats" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
+  function_name = "${var.project_name}-api-stats"
+  description   = "照護者端互動與行程統計 API"
+  handler       = "src.handlers.stats.handler"
+  runtime       = "python3.11"
+  # 統計即時彙總最多一個月的 occurrence 與 completion event，比單頁列表查詢多幾次讀取
+  timeout     = 30
+  memory_size = 512
+
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  # ROUTINE_GRACE_MINUTES 讓 routines、摘要與統計共用同一套 missed 判定門檻
+  environment_variables = merge(local.extraction_env, {
+    ROUTINE_GRACE_MINUTES = tostring(var.routine_grace_minutes)
+  })
 }
 
