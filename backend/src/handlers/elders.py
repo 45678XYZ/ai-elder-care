@@ -6,7 +6,37 @@
 import json
 from typing import Any, Dict
 
+from pydantic import ValidationError
+
 from src.shared import auth, db, responses
+from src.shared.models import ElderCreate, ElderResponse, ElderUpdate
+
+
+class _RequestError(Exception):
+    """請求不合法，attach 對應的 HTTP 回應；handler 捕捉後直接回傳 self.response。"""
+
+    def __init__(self, response: Dict[str, Any]):
+        super().__init__(response["body"])
+        self.response = response
+
+
+def _bad_request(message: str) -> _RequestError:
+    return _RequestError(responses.error(400, "INVALID_PARAMETER", message))
+
+
+def _validation_message(exc: ValidationError) -> str:
+    """取第一個欄位錯誤組人讀訊息；前端分支請依 error.code，不依 message。"""
+    first = exc.errors()[0]
+    location = ".".join(str(part) for part in first["loc"]) or "body"
+    return f"{location}: {first['msg']}"
+
+
+def _validate(model: type, body: Dict[str, Any]) -> Any:
+    """驗證 request body；只有 client 送來的內容不合規才回 400。"""
+    try:
+        return model.model_validate(body)
+    except ValidationError as e:
+        raise _bad_request(_validation_message(e))
 
 
 def parse_body(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -19,7 +49,7 @@ def parse_body(event: Dict[str, Any]) -> Dict[str, Any]:
     try:
         return json.loads(body)
     except Exception:
-        raise ValueError("INVALID_JSON")
+        raise _RequestError(responses.error(400, "INVALID_JSON", "請求內文不是有效的 JSON 格式"))
 
 
 def get_http_method(event: Dict[str, Any]) -> str:
@@ -34,6 +64,11 @@ def get_path_elder_id(event: Dict[str, Any]) -> str | None:
     """從 pathParameters 提取 elder_id。"""
     path_params = event.get("pathParameters") or {}
     return path_params.get("elder_id") or path_params.get("id")
+
+
+def _serialize_elder(elder_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """使用 ElderResponse 過濾洗滌要回傳給前端的長者資料。"""
+    return ElderResponse.model_validate(elder_dict).model_dump(exclude_none=True)
 
 
 def handle_get_elders(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -56,18 +91,19 @@ def handle_get_elders(event: Dict[str, Any]) -> Dict[str, Any]:
         elder = db.get_elder(target_elder_id)
         if not elder:
             return responses.error(404, "ELDER_NOT_FOUND", "找不到該位長者資料")
-        return responses.json_response(200, elder)
+        return responses.json_response(200, _serialize_elder(elder))
 
     # 3. 列表查詢：GET /elders
     if caller.role == auth.ROLE_ELDER:
         # 長者帳號：僅能取得對應自己的那一筆
         elder = db.get_elder(caller.elder_id)
-        items = [elder] if elder else []
+        items = [_serialize_elder(elder)] if elder else []
         return responses.json_response(200, {"items": items})
 
     elif caller.role == auth.ROLE_CAREGIVER:
         # 照護者帳號：取得 caregiver_ids 包含該 caregiver sub 的長者列表
-        items = db.list_elders(caregiver_id=caller.user_id)
+        raw_items = db.list_elders(caregiver_id=caller.user_id)
+        items = [_serialize_elder(item) for item in raw_items]
         return responses.json_response(200, {"items": items})
 
     return responses.error(403, "FORBIDDEN", "權限不足")
@@ -83,10 +119,7 @@ def handle_post_elder(event: Dict[str, Any]) -> Dict[str, Any]:
     if caller.role != auth.ROLE_CAREGIVER:
         return responses.error(403, "FORBIDDEN", "只有照護者帳號可建立長者資料")
 
-    try:
-        body = parse_body(event)
-    except ValueError:
-        return responses.error(400, "INVALID_JSON", "請求內文不是有效的 JSON 格式")
+    body = parse_body(event)
 
     # 防護：禁止帶入由 Server 託管的唯讀欄位
     server_owned_fields = ("elder_id", "caregiver_ids", "created_at", "updated_at")
@@ -94,26 +127,15 @@ def handle_post_elder(event: Dict[str, Any]) -> Dict[str, Any]:
         if f in body:
             return responses.error(400, "INVALID_PARAMETER", f"不得直接提供系統託管欄位 {f}")
 
-    name = body.get("name")
-    if not name:
-        return responses.error(400, "INVALID_PARAMETER", "缺少必填欄位 name")
-
-    gender = body.get("gender")
-    if gender and gender not in ("male", "female", "other"):
-        return responses.error(400, "INVALID_PARAMETER", "gender 必須為 male, female 或 other")
-
-    lang_pref = body.get("lang_preference", "zh-TW")
-    if lang_pref not in ("zh-TW", "hak"):
-        return responses.error(400, "INVALID_PARAMETER", "lang_preference 必須為 zh-TW 或 hak")
-
-    elder_data = dict(body)
-    elder_data["lang_preference"] = lang_pref
+    # 使用 Pydantic 進行完整請求驗證
+    payload = _validate(ElderCreate, body)
+    elder_data = payload.model_dump(exclude_none=True)
     # 自動將建立者的 sub 綁定至 caregiver_ids
     elder_data["caregiver_ids"] = [caller.user_id]
 
     try:
         created_elder = db.create_elder(elder_data)
-        return responses.json_response(201, created_elder)
+        return responses.json_response(201, _serialize_elder(created_elder))
     except Exception as e:
         return responses.error(500, "INTERNAL_ERROR", f"建立長者資料失敗: {str(e)}")
 
@@ -133,10 +155,7 @@ def handle_patch_elder(event: Dict[str, Any]) -> Dict[str, Any]:
     if caller.role != auth.ROLE_CAREGIVER:
         return responses.error(403, "FORBIDDEN", "只有照護者帳號可修改長者資料")
 
-    try:
-        body = parse_body(event)
-    except ValueError:
-        return responses.error(400, "INVALID_JSON", "請求內文不是有效的 JSON 格式")
+    body = parse_body(event)
 
     # 防護：禁止傳入唯讀欄位
     server_owned_fields = ("elder_id", "caregiver_ids", "created_at", "updated_at")
@@ -144,17 +163,15 @@ def handle_patch_elder(event: Dict[str, Any]) -> Dict[str, Any]:
         if f in body:
             return responses.error(400, "INVALID_PARAMETER", f"不得修改系統託管欄位 {f}")
 
-    gender = body.get("gender")
-    if gender and gender not in ("male", "female", "other"):
-        return responses.error(400, "INVALID_PARAMETER", "gender 必須為 male, female 或 other")
-
-    lang_pref = body.get("lang_preference")
-    if lang_pref and lang_pref not in ("zh-TW", "hak"):
-        return responses.error(400, "INVALID_PARAMETER", "lang_preference 必須為 zh-TW 或 hak")
+    # 使用 Pydantic 驗證部分更新欄位
+    payload = _validate(ElderUpdate, body)
+    patch_data = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if not patch_data:
+        return responses.error(400, "INVALID_PARAMETER", "未提供可更新的欄位")
 
     try:
-        updated_elder = db.update_elder(target_elder_id, body)
-        return responses.json_response(200, updated_elder)
+        updated_elder = db.update_elder(target_elder_id, patch_data)
+        return responses.json_response(200, _serialize_elder(updated_elder))
     except Exception as e:
         return responses.error(500, "INTERNAL_ERROR", f"更新長者資料失敗: {str(e)}")
 
@@ -172,6 +189,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             return handle_patch_elder(event)
         else:
             return responses.error(405, "METHOD_NOT_ALLOWED", f"不支援的 HTTP 方法: {method}")
+    except (auth.AuthError, _RequestError) as exc:
+        return exc.response
     except Exception as e:
         print(f"[Error] elders handler unhandled exception: {e}")
         return responses.error(500, "INTERNAL_ERROR", f"內部系統錯誤: {str(e)}")
+
