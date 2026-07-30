@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Block destructive git commands",
+      "trigger": "PreToolUse",
+      "description": "Blocks destructive git commands (force push, reset --hard, clean -f, branch -D, rebase) to prevent irreversible history changes.",
+      "matcher": "execute_pwsh",
+      "action": {
+        "type": "command",
+        "command": "pwsh -NoProfile -Command \"$input | ConvertFrom-Json | ForEach-Object { $cmd = $_.toolInput.command; if ($cmd -match '(?i)(push\\s+--force|reset\\s+--hard|clean\\s+-f|branch\\s+-D|rebase|force-push)') { [Console]::Error.WriteLine(\\\"BLOCKED: Destructive git command detected: '$cmd'. Use non-destructive alternatives or get explicit user confirmation first.\\\"); exit 2 } else { exit 0 } }\""
+      }
+    }
+  ]
+}

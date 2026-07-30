@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Block high-risk shell commands",
+      "trigger": "PreToolUse",
+      "description": "Blocks high-risk shell commands (terraform apply/destroy, recursive deletion of important directories) to prevent irreversible infrastructure or codebase damage.",
+      "matcher": "execute_pwsh",
+      "action": {
+        "type": "command",
+        "command": "pwsh -NoProfile -Command \"$input | ConvertFrom-Json | ForEach-Object { $cmd = $_.toolInput.command; if ($cmd -match '(?i)(terraform\\s+apply|terraform\\s+destroy|rm\\s+-rf\\s+/|Remove-Item.*-Recurse.*-Force.*(\\/|\\\\\\\\)(src|docs|terraform|app|backend)(\\b|\\/|\\\\\\\\))') { [Console]::Error.WriteLine(\\\"BLOCKED: High-risk command detected: '$cmd'. This could cause irreversible damage. Get explicit user confirmation.\\\"); exit 2 } else { exit 0 } }\""
+      }
+    }
+  ]
+}
