@@ -1,0 +1,293 @@
+# ASR 實體模型推論端點（SageMaker real-time）
+#
+# 兩個端點構成後端 ASR 備援鏈的實體：
+#   - CE  (Taiwan-Tongues-ASR-CE)：支援 zh 與 hak，是兩種語言的主力
+#   - Formo (FormoSpeech Whisper-v3)：只做客語，是 hak 的備援
+#
+# 對應的程式側規則見 backend/src/shared/asr/README.md：
+#   - 「為了錯誤而備援」由 failover.py 的錯誤分類決定要不要換下一棒
+#   - 「根據流量而備援」由下方的 target tracking autoscaling 與程式側 slot pool
+#     的飽和溢流共同處理
+#
+# 本檔預設不建立任何資源（var.asr_enable_endpoints = false）。這是刻意的：
+# 模型還沒通過 Colab 人工驗證，程式層的 model production gate 也還關著，
+# 基礎設施層沒有理由先產生 GPU 費用。
+
+locals {
+  asr_endpoints_enabled = var.asr_enable_endpoints ? 1 : 0
+
+  # 兩個端點共用的名稱前綴，供程式側以環境變數對應。
+  asr_ce_endpoint_name    = "${var.project_name}-asr-ce"
+  asr_formo_endpoint_name = "${var.project_name}-asr-formo"
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 1. SageMaker 執行角色
+# ─────────────────────────────────────────────────────────────────
+resource "aws_iam_role" "asr_inference" {
+  count = local.asr_endpoints_enabled
+
+  name = "${var.project_name}-asr-inference"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "sagemaker.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# 刻意不掛 AmazonSageMakerFullAccess：推論容器只需要拉 image 與寫 log，
+# 端點管理權限屬於部署者而非執行角色。
+resource "aws_iam_role_policy" "asr_inference_runtime" {
+  count = local.asr_endpoints_enabled
+
+  name = "asr-inference-runtime"
+  role = aws_iam_role.asr_inference[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+        ]
+        Resource = "*" # ECR 認證 token 本身不支援資源層級限定
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "cloudwatch:PutMetricData",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+# 模型 artifact 只讀單一 bucket，不開放整個帳號的 S3。
+resource "aws_iam_role_policy" "asr_inference_artifacts" {
+  count = var.asr_enable_endpoints && var.asr_model_artifact_bucket != "" ? 1 : 0
+
+  name = "read-asr-model-artifacts"
+  role = aws_iam_role.asr_inference[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["s3:GetObject", "s3:ListBucket"]
+      Resource = [
+        "arn:aws:s3:::${var.asr_model_artifact_bucket}",
+        "arn:aws:s3:::${var.asr_model_artifact_bucket}/*",
+      ]
+    }]
+  })
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 2. 主力：Taiwan-Tongues-ASR-CE
+# ─────────────────────────────────────────────────────────────────
+resource "aws_sagemaker_model" "asr_ce" {
+  count = local.asr_endpoints_enabled
+
+  name               = "${var.project_name}-asr-ce"
+  execution_role_arn = aws_iam_role.asr_inference[0].arn
+
+  primary_container {
+    image          = var.asr_ce_image_uri
+    model_data_url = var.asr_ce_model_data_url
+
+    environment = {
+      # 模型識別與語言碼記在容器環境，讓端點自我描述、便於排查。
+      ASR_MODEL_ID       = "adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0"
+      ASR_MODEL_REVISION = "v2.0"
+      ASR_LANGUAGES      = "zh,hak"
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.asr_ce_image_uri != "" && var.asr_ce_model_data_url != ""
+      error_message = "啟用 ASR 端點時必須提供 asr_ce_image_uri 與 asr_ce_model_data_url。"
+    }
+  }
+}
+
+resource "aws_sagemaker_endpoint_configuration" "asr_ce" {
+  count = local.asr_endpoints_enabled
+
+  name = "${var.project_name}-asr-ce"
+
+  production_variants {
+    # variant 名稱固定為 primary：autoscaling 的 resource_id 要引用它。
+    variant_name           = "primary"
+    model_name             = aws_sagemaker_model.asr_ce[0].name
+    initial_instance_count = var.asr_ce_min_instances
+    instance_type          = var.asr_ce_instance_type
+  }
+}
+
+resource "aws_sagemaker_endpoint" "asr_ce" {
+  count = local.asr_endpoints_enabled
+
+  name                 = local.asr_ce_endpoint_name
+  endpoint_config_name = aws_sagemaker_endpoint_configuration.asr_ce[0].name
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 3. 備援：FormoSpeech Whisper-v3（僅客語）
+#
+# 授權為 CC BY-NC 4.0（限非商業）。本專案若轉為商業服務，這個端點就不得啟用；
+# 對應的程式側閘門是 ModelProductionGate.license_cleared。
+# ─────────────────────────────────────────────────────────────────
+resource "aws_sagemaker_model" "asr_formo" {
+  count = local.asr_endpoints_enabled
+
+  name               = "${var.project_name}-asr-formo"
+  execution_role_arn = aws_iam_role.asr_inference[0].arn
+
+  primary_container {
+    image          = var.asr_formo_image_uri
+    model_data_url = var.asr_formo_model_data_url
+
+    environment = {
+      ASR_MODEL_ID       = "formospeech/whisper-large-v3-taiwanese-hakka"
+      ASR_MODEL_REVISION = "main"
+      ASR_LANGUAGES      = "hak"
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.asr_formo_image_uri != "" && var.asr_formo_model_data_url != ""
+      error_message = "啟用 ASR 端點時必須提供 asr_formo_image_uri 與 asr_formo_model_data_url。"
+    }
+  }
+}
+
+resource "aws_sagemaker_endpoint_configuration" "asr_formo" {
+  count = local.asr_endpoints_enabled
+
+  name = "${var.project_name}-asr-formo"
+
+  production_variants {
+    variant_name           = "primary"
+    model_name             = aws_sagemaker_model.asr_formo[0].name
+    initial_instance_count = var.asr_formo_min_instances
+    instance_type          = var.asr_formo_instance_type
+  }
+}
+
+resource "aws_sagemaker_endpoint" "asr_formo" {
+  count = local.asr_endpoints_enabled
+
+  name                 = local.asr_formo_endpoint_name
+  endpoint_config_name = aws_sagemaker_endpoint_configuration.asr_formo[0].name
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 4. 依流量自動伸縮
+#
+# 以「每實例每分鐘呼叫數」做 target tracking：長者對話是突發性流量，
+# 用呼叫數比用 CPU/GPU 使用率更貼近實際排隊狀況。
+# scale-out 冷卻時間短、scale-in 長，避免對話高峰中反覆抖動。
+# ─────────────────────────────────────────────────────────────────
+resource "aws_appautoscaling_target" "asr_ce" {
+  count = local.asr_endpoints_enabled
+
+  service_namespace  = "sagemaker"
+  resource_id        = "endpoint/${aws_sagemaker_endpoint.asr_ce[0].name}/variant/primary"
+  scalable_dimension = "sagemaker:variant:DesiredInstanceCount"
+  min_capacity       = var.asr_ce_min_instances
+  max_capacity       = var.asr_ce_max_instances
+}
+
+resource "aws_appautoscaling_policy" "asr_ce_invocations" {
+  count = local.asr_endpoints_enabled
+
+  name               = "${var.project_name}-asr-ce-invocations"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.asr_ce[0].service_namespace
+  resource_id        = aws_appautoscaling_target.asr_ce[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.asr_ce[0].scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.asr_target_invocations_per_instance
+
+    predefined_metric_specification {
+      predefined_metric_type = "SageMakerVariantInvocationsPerInstance"
+    }
+
+    scale_out_cooldown = 60
+    scale_in_cooldown  = 300
+  }
+}
+
+resource "aws_appautoscaling_target" "asr_formo" {
+  count = local.asr_endpoints_enabled
+
+  service_namespace  = "sagemaker"
+  resource_id        = "endpoint/${aws_sagemaker_endpoint.asr_formo[0].name}/variant/primary"
+  scalable_dimension = "sagemaker:variant:DesiredInstanceCount"
+  min_capacity       = var.asr_formo_min_instances
+  max_capacity       = var.asr_formo_max_instances
+}
+
+resource "aws_appautoscaling_policy" "asr_formo_invocations" {
+  count = local.asr_endpoints_enabled
+
+  name               = "${var.project_name}-asr-formo-invocations"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.asr_formo[0].service_namespace
+  resource_id        = aws_appautoscaling_target.asr_formo[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.asr_formo[0].scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.asr_target_invocations_per_instance
+
+    predefined_metric_specification {
+      predefined_metric_type = "SageMakerVariantInvocationsPerInstance"
+    }
+
+    scale_out_cooldown = 60
+    scale_in_cooldown  = 300
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 5. 呼叫端授權
+#
+# 供 chat Lambda 呼叫兩個端點。權限限定在這兩個 endpoint ARN，不開放
+# sagemaker:InvokeEndpoint 到 "*"。
+#
+# TODO: chat Lambda 的 role 尚未建立（lambda.tf 目前只有 pre-token trigger），
+# 建立後需 attach 這個 policy 並注入 ASR_*_ENDPOINT 環境變數。
+# ─────────────────────────────────────────────────────────────────
+resource "aws_iam_policy" "invoke_asr_endpoints" {
+  count = local.asr_endpoints_enabled
+
+  name        = "${var.project_name}-invoke-asr-endpoints"
+  description = "允許後端呼叫 ASR 主力與備援推論端點"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "sagemaker:InvokeEndpoint"
+      Resource = [
+        aws_sagemaker_endpoint.asr_ce[0].arn,
+        aws_sagemaker_endpoint.asr_formo[0].arn,
+      ]
+    }]
+  })
+}
