@@ -79,12 +79,43 @@ class ElderResponse(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# Conversations 表模型
+# Conversations 表與 Chat API 模型
 # -----------------------------------------------------------------------------
+
+class ChatAudio(BaseModel):
+    """POST /chat 音訊輸入模型。"""
+    data: str = Field(..., description="base64 音訊資料")
+    format: Literal["m4a", "wav"] = Field(default="m4a", description="音訊格式")
+
+
+class ChatRequest(BaseModel):
+    """POST /chat Request Body 模型。"""
+    client_request_id: str | None = Field(default=None, description="冪等 UUID")
+    session_id: str | None = Field(default=None, description="Session ID")
+    elder_id: str = Field(..., description="長者 ID")
+    lang: Literal["zh-TW", "hak"] = Field(..., description="對話語言 (zh-TW | hak)")
+    text: str | None = Field(default=None, description="文字輸入")
+    audio: ChatAudio | None = Field(default=None, description="語音輸入")
+
+    @model_validator(mode="after")
+    def _validate_input_choice(self) -> "ChatRequest":
+        if not self.text and not self.audio:
+            raise ValueError("text 與 audio 必須擇一填寫")
+        if self.text and self.audio:
+            raise ValueError("text 與 audio 不能同時提供")
+        return self
+
 
 class ConversationCreate(BaseModel):
     """新增/紀錄對話。"""
+    conversation_id: str | None = Field(default=None, description="對話 ID (前綴 cnv_)")
+    record_id: str | None = Field(default=None, description="DynamoDB Sort Key (TURN#cnv_...)")
+    conversation_time_key: str | None = Field(default=None, description="DynamoDB GSI Sort Key (<created_at>#<conversation_id>)")
+    item_type: str = Field(default="conversation", description="DynamoDB 項目類型 (conversation)")
     elder_id: str = Field(..., description="對話歸屬之長者 ID（必填）")
+    ts: str | None = Field(default=None, description="時間戳記")
+    created_at: str | None = Field(default=None, description="建立時間")
+
     source: Literal["elder_initiated", "system_routine_inquiry"] = Field(
         default="elder_initiated", description="對話發起來源（長者主動 / 系統例行公事詢問）"
     )
@@ -111,6 +142,7 @@ class ConversationCreate(BaseModel):
     elder_received_at: str | None = Field(default=None, description="接收到長者輸入之時間戳記 (長者反應時間分析)")
     ai_responded_at: str | None = Field(default=None, description="AI 推理完成送出回應之時間戳記 (後端 Latency 分析)")
     routines_updated: bool = Field(default=False, description="本輪對話是否觸發例行公事狀態更新")
+
 
 
 class ConversationResponse(BaseModel):
@@ -184,6 +216,20 @@ class EventResponse(BaseModel):
 # Daily Summaries 表模型
 # -----------------------------------------------------------------------------
 
+class DailySummaryCreate(BaseModel):
+    """每日摘要寫入 Schema。"""
+    elder_id: str = Field(..., description="長者 ID")
+    date: str = Field(..., description="日期 (YYYY-MM-DD)")
+    overview: str = Field(default="", description="當日總覽")
+    sections: dict[str, str | None] = Field(default_factory=dict, description="固定分類區塊，key 與 EventType 對應")
+    routines: dict[str, Any] = Field(default_factory=dict, description="例行公事統計 (completed, missed, items)")
+    alerts: list[str] = Field(default_factory=list, description="警訊清單")
+    interaction_count: int = Field(default=0, description="當日對話輪數")
+    data_status: Literal["complete", "partial"] = Field(default="complete", description="資料完整度")
+    pending_session_count: int = Field(default=0, description="待處理 Session 數")
+    generated_at: str | None = Field(default=None, description="生成時間")
+
+
 class DailySummaryResponse(BaseModel):
     """每日摘要 Response 物件 (GET /summaries)。"""
     elder_id: str = Field(..., description="長者 ID")
@@ -196,6 +242,7 @@ class DailySummaryResponse(BaseModel):
     data_status: Literal["complete", "partial"] = Field(default="complete", description="資料完整度")
     pending_session_count: int = Field(default=0, description="待處理 Session 數")
     generated_at: str = Field(..., description="生成時間")
+
 
 
 # -----------------------------------------------------------------------------
