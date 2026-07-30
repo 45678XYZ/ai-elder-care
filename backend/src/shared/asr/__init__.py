@@ -25,19 +25,54 @@ from .config import (
     AsrConfig,
     AwsCapabilityGate,
     CE_MODEL_METADATA,
+    COLAB_CANDIDATE_MODEL_IDS,
+    ConcurrencyPolicy,
     ConfigParseError,
     FORMO_MODEL_METADATA,
     ModelMetadata,
+    ModelProductionGate,
     ProviderConfig,
+    ProviderKind,
     ProviderStatus,
     RouteConfig,
     UsageRestriction,
+    make_provider_failure_error,
+    make_provider_invalid_response_error,
+    make_provider_unavailable_error,
     make_route_not_approved_error,
     make_unsupported_language_error,
     parse_asr_config,
     validate_formo_prompt_id,
 )
-from .providers import AsrProvider, TransportRequest
+from .concurrency import (
+    LazyModelHandle,
+    ModelLoadUnavailable,
+    ModelSlotPool,
+    SlotLease,
+    SlotPoolStats,
+)
+from .providers import (
+    AsrProvider,
+    AttemptRecord,
+    ConcurrentAsrProvider,
+    TransportRequest,
+)
+from .failover import (
+    DEFAULT_FAILOVER_CATEGORIES,
+    NON_FAILOVER_CATEGORIES,
+    ChainOutcome,
+    FailoverChain,
+)
+from .local_models import CeLocalProvider, FormoLocalProvider, LocalModelSpec
+from .composition import (
+    StdoutTelemetrySink,
+    build_facade,
+    build_provider_registry,
+    default_config,
+    get_asr_facade,
+    load_config,
+    reset_asr_facade,
+)
 from .hak_mock import HakMockProvider
 from .aws_zh_adapter import (
     AwsZhAdapter,
@@ -89,18 +124,50 @@ __all__ = [
     "ModelMetadata",
     "CE_MODEL_METADATA",
     "FORMO_MODEL_METADATA",
+    "ModelProductionGate",
+    "COLAB_CANDIDATE_MODEL_IDS",
     "ProviderConfig",
+    "ProviderKind",
     "RouteConfig",
     "AwsCapabilityGate",
+    "ConcurrencyPolicy",
     "AsrConfig",
     "ConfigParseError",
     "parse_asr_config",
     "validate_formo_prompt_id",
     "make_route_not_approved_error",
     "make_unsupported_language_error",
+    "make_provider_unavailable_error",
+    "make_provider_failure_error",
+    "make_provider_invalid_response_error",
+    # concurrency.py
+    "ModelSlotPool",
+    "SlotLease",
+    "SlotPoolStats",
+    "LazyModelHandle",
+    "ModelLoadUnavailable",
     # providers.py
     "AsrProvider",
+    "AttemptRecord",
+    "ConcurrentAsrProvider",
     "TransportRequest",
+    # failover.py
+    "FailoverChain",
+    "ChainOutcome",
+    "DEFAULT_FAILOVER_CATEGORIES",
+    "NON_FAILOVER_CATEGORIES",
+    # local_models.py
+    "LocalModelSpec",
+    "CeLocalProvider",
+    "FormoLocalProvider",
+    # composition.py
+    "default_config",
+    "load_config",
+    "build_provider_registry",
+    "build_facade",
+    "get_asr_facade",
+    "reset_asr_facade",
+    "StdoutTelemetrySink",
     # hak_mock.py
     "HakMockProvider",
     # aws_zh_adapter.py

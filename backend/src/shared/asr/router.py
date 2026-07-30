@@ -1,22 +1,37 @@
 """
-ASR Router — 固定 precedence 路由決策。
+ASR Router — 固定 precedence 的路由決策與備援鏈建構。
 
-判定順序：language validity → route/CE-Formo production prohibition →
-capability gate → cancellation → deadline → provider。
+判定順序（不可調換）：
+
+    1. language validity        未知語言 → unsupported_language
+    2. route 存在且啟用          缺失／停用 → route_not_approved
+    3. provider 核准資格         沒有任何合格 provider → route_not_approved
+    4. cancellation             已取消 → cancelled
+    5. deadline                 已逾期 → deadline_exceeded
+    6. 備援鏈依序執行
+
+第 3 步排在取消與逾期之前是刻意的：核准是管理決策，operator 在排查一條被關閉的
+路由時，永遠應該看到 route_not_approved，而不是被當下的取消或逾期蓋掉。
+
+provider 由外部注入（composition root 負責建立），router 不自行建構任何需要
+模型、網路或雲端資源的物件。
 
 禁止依賴：handlers、HTTP、DB、AWS SDK。
 """
 from __future__ import annotations
 
+from typing import Mapping
+
+from .aws_zh_adapter import AwsZhAdapter
 from .config import (
     AsrConfig,
-    AwsCapabilityGate,
-    CE_MODEL_METADATA,
-    FORMO_MODEL_METADATA,
-    UsageRestriction,
+    ProviderKind,
+    ProviderStatus,
+    RouteConfig,
     make_route_not_approved_error,
     make_unsupported_language_error,
 )
+from .failover import ChainOutcome, FailoverChain
 from .hak_mock import HakMockProvider
 from .types import (
     AsrErrorCategory,
@@ -26,29 +41,55 @@ from .types import (
     CorrelationContext,
     Deadline,
     Language,
-    Transcript,
     TypedAsrError,
 )
+
+# 未路由時 telemetry 使用的固定 sentinel，與 telemetry.py 一致。
+NOT_ROUTED_SENTINEL = "__not_routed__"
 
 
 class AsrRouter:
     """
-    ASR 路由器。
+    設定驅動的 ASR 路由器。
 
-    依固定 precedence 決定路由結果：
-    1. language validity — 未知 language 回 unsupported_language
-    2. route/CE-Formo production prohibition — hak route 缺失/停用/非 mock 或
-       CE/Formo production route 回 route_not_approved
-    3. capability gate — zh-TW AWS gate 不完整回 route_not_approved
-    4. cancellation — preflight cancellation 已觸發回 cancelled
-    5. deadline — deadline 已到期回 deadline_exceeded
-    6. provider — 呼叫對應 provider
+    可被多執行緒同時呼叫：本身只讀設定與 provider registry，不持有 per-request
+    狀態。併發上限由各 provider 自己的 slot pool 把關。
     """
 
-    def __init__(self, config: AsrConfig) -> None:
+    def __init__(
+        self,
+        config: AsrConfig,
+        providers: Mapping[str, object] | None = None,
+    ) -> None:
+        """
+        Args:
+            config: 後端受控設定。
+            providers: provider registry（identifier → provider 實例）。
+                未提供的項目會以安全預設補上：`hak_mock` 與 `aws_zh` 都不會
+                建立模型、網路或雲端呼叫，因此可安全地內建。實體模型 provider
+                一律由 composition root 注入，router 不自行建構。
+        """
         self._config = config
-        self._hak_mock_provider = HakMockProvider()
+        registry: dict[str, object] = {
+            "hak_mock": HakMockProvider(),
+            "aws_zh": AwsZhAdapter(config.aws_capability_gate, transport=None),
+        }
+        if providers:
+            registry.update(providers)
+        self._providers = registry
 
+    # ── 公開讀取介面（供 facade 取得 telemetry 需要的路由資訊）──────────
+    @property
+    def config(self) -> AsrConfig:
+        return self._config
+
+    def route_config_for(self, language: Language) -> RouteConfig | None:
+        """取得語言對應的 route 設定；未設定回 None。"""
+        if not isinstance(language, Language):
+            return None
+        return self._config.routes.get(language.value)
+
+    # ── 路由 ────────────────────────────────────────────────────────
     def route(
         self,
         audio: CanonicalAudio,
@@ -57,130 +98,151 @@ class AsrRouter:
         cancellation: CancellationSignal,
         context: CorrelationContext,
     ) -> AsrTerminalResult:
-        """
-        根據固定 precedence 決策路由。
+        """回傳終態結果。需要嘗試明細時用 `route_detailed`。"""
+        return self.route_detailed(
+            audio, language, deadline, cancellation, context
+        ).result
 
-        Returns:
-            Transcript（成功）或 TypedAsrError（拒絕/錯誤）。
-        """
+    def route_detailed(
+        self,
+        audio: CanonicalAudio,
+        language: Language,
+        deadline: Deadline,
+        cancellation: CancellationSignal,
+        context: CorrelationContext,
+    ) -> ChainOutcome:
+        """回傳含每次 provider 嘗試明細的 ChainOutcome。"""
         # ─── Step 1: Language validity ───
         if not isinstance(language, Language):
-            return make_unsupported_language_error(str(language))
-
-        # ─── Step 2: Route / CE-Formo production prohibition ───
-        route_result = self._check_route(language)
-        if route_result is not None:
-            return route_result
-
-        # ─── hak path — 已通過 route check，直接呼叫 HakMockProvider ───
-        if language == Language.HAK:
-            return self._hak_mock_provider.transcribe(
-                audio, language, deadline, cancellation, context
+            return _terminal(
+                make_unsupported_language_error(str(language))
             )
 
-        # ─── zh-TW path ───
-        # Step 3: Capability gate
-        if not self._config.aws_capability_gate.is_complete:
-            return make_route_not_approved_error(
-                "AWS capability gate incomplete for zh-TW route."
+        # ─── Step 2: Route 存在且啟用 ───
+        route_config = self._config.routes.get(language.value)
+        if route_config is None:
+            return _terminal(
+                make_route_not_approved_error(
+                    f"No route configured for {language.value!r}."
+                )
+            )
+        if not route_config.enabled:
+            return _terminal(
+                make_route_not_approved_error(
+                    f"Route for {language.value!r} is disabled."
+                )
             )
 
-        # Step 4: Cancellation
+        # ─── Step 3: Provider 核准資格 ───
+        eligible, rejection = self._eligible_providers(route_config)
+        if not eligible:
+            return _terminal(
+                make_route_not_approved_error(
+                    rejection
+                    or f"No approved provider for {language.value!r}."
+                )
+            )
+
+        # ─── Step 4: Cancellation ───
         if cancellation.is_triggered:
-            return TypedAsrError(
-                category=AsrErrorCategory.CANCELLED,
-                message="Cancelled before provider invocation.",
-                retryable=False,
+            return _terminal(
+                TypedAsrError(
+                    category=AsrErrorCategory.CANCELLED,
+                    message="Cancelled before provider invocation.",
+                    retryable=False,
+                ),
+                served_provider_id=route_config.provider_identifier,
             )
 
-        # Step 5: Deadline
+        # ─── Step 5: Deadline ───
         if deadline.is_expired():
-            return TypedAsrError(
-                category=AsrErrorCategory.DEADLINE_EXCEEDED,
-                message="Deadline exceeded before provider invocation.",
-                retryable=True,
+            return _terminal(
+                TypedAsrError(
+                    category=AsrErrorCategory.DEADLINE_EXCEEDED,
+                    message="Deadline exceeded before provider invocation.",
+                    retryable=True,
+                ),
+                served_provider_id=route_config.provider_identifier,
             )
 
-        # Step 6: Provider — zh-TW 需要 injected transport（本期不實作真實 transport）
-        # 在完整實作中，這裡會呼叫 AWS adapter；目前回 route_not_approved
-        # 因為本期沒有可用的 production transport。
-        return make_route_not_approved_error(
-            "zh-TW provider transport not available in current configuration."
+        # ─── Step 6: 備援鏈 ───
+        chain = FailoverChain(
+            providers=eligible,
+            spill_wait_seconds=self._config.concurrency.spill_wait_seconds,
         )
+        return chain.run(audio, language, deadline, cancellation, context)
 
-    def _check_route(self, language: Language) -> TypedAsrError | None:
+    # ── 資格判定 ─────────────────────────────────────────────────────
+    def _eligible_providers(
+        self, route_config: RouteConfig
+    ) -> tuple[list[object], str | None]:
         """
-        檢查 route 與 CE/Formo production prohibition。
+        依 provider_order 篩出可用的 provider 實例。
 
         Returns:
-            None 表示通過；TypedAsrError 表示被拒絕。
+            (合格 provider 實例清單, 全部不合格時的安全原因說明)
         """
-        lang_key = language.value
+        eligible: list[object] = []
+        reasons: list[str] = []
 
-        # 檢查是否有對應 route config
-        route_config = self._config.routes.get(lang_key)
+        for provider_id in route_config.provider_order:
+            reason = self._ineligibility_reason(provider_id)
+            if reason is None:
+                eligible.append(self._providers[provider_id])
+            else:
+                reasons.append(f"{provider_id}: {reason}")
 
-        if language == Language.HAK:
-            # hak route 必須存在、啟用、且 provider 為 hak_mock
-            if route_config is None:
-                return make_route_not_approved_error(
-                    "No route configured for hak."
-                )
-            if not route_config.enabled:
-                return make_route_not_approved_error(
-                    "hak route is disabled."
-                )
-            if route_config.provider_identifier != "hak_mock":
-                return make_route_not_approved_error(
-                    "hak route provider is not hak_mock."
-                )
-            # 確認 provider config 存在且 hak_mock
-            provider_config = self._config.providers.get(
-                route_config.provider_identifier
-            )
-            if provider_config is None:
-                return make_route_not_approved_error(
-                    "hak_mock provider not found in configuration."
-                )
-            return None  # hak route 通過
+        if eligible:
+            return eligible, None
+        return [], "; ".join(reasons) if reasons else None
 
-        if language == Language.ZH_TW:
-            # 檢查 CE/Formo production prohibition
-            # 任何 route 關聯到 CE/Formo 且 metadata 為 production 都拒絕
-            # （實際上 CE/Formo metadata 永遠是 colab_validation_only，
-            #   但設計要求明確禁止 production invocation route）
-            if route_config is not None:
-                provider_id = route_config.provider_identifier
-                provider_config = self._config.providers.get(provider_id)
-                if provider_config is not None and provider_config.metadata_ref:
-                    metadata = self._config.model_metadata.get(
-                        provider_config.metadata_ref
-                    )
-                    if metadata is not None:
-                        # CE 或 Formo 模型 — 無論 usage_restriction 為何都禁止 production
-                        if metadata.model_id in (
-                            CE_MODEL_METADATA.model_id,
-                            FORMO_MODEL_METADATA.model_id,
-                        ):
-                            if metadata.usage_restriction != UsageRestriction.COLAB_VALIDATION_ONLY:
-                                return make_route_not_approved_error(
-                                    f"Production invocation of {metadata.model_id} is prohibited."
-                                )
-                            # colab_validation_only 也不允許 production route
-                            return make_route_not_approved_error(
-                                f"Route uses {metadata.model_id} which is restricted "
-                                f"to colab validation only."
-                            )
+    def _ineligibility_reason(self, provider_id: str) -> str | None:
+        """回傳不合格原因；合格回 None。訊息不含敏感內容。"""
+        provider_config = self._config.providers.get(provider_id)
+        if provider_config is None:
+            return "not declared in provider configuration"
+        if provider_config.status is not ProviderStatus.ENABLED:
+            return f"status is {provider_config.status.value}"
+        if provider_id not in self._providers:
+            return "no provider instance registered"
 
-            if route_config is None:
-                return make_route_not_approved_error(
-                    "No route configured for zh-TW."
-                )
-            if not route_config.enabled:
-                return make_route_not_approved_error(
-                    "zh-TW route is disabled."
-                )
-            return None  # zh-TW route 通過基本檢查
+        kind = provider_config.kind
 
-        # 不應到達這裡（Language enum 只有 ZH_TW 和 HAK）
-        return make_unsupported_language_error(lang_key)
+        if kind is ProviderKind.AWS_MANAGED:
+            gate = self._config.aws_capability_gate
+            if not gate.is_complete:
+                return "AWS capability gate incomplete"
+
+        if kind.requires_model_approval and not provider_config.metadata_ref:
+            return f"{kind.value} provider has no model metadata reference"
+
+        if kind is ProviderKind.REMOTE_MODEL and not provider_config.endpoint_name:
+            return "remote model provider has no endpoint name"
+
+        if provider_config.metadata_ref:
+            metadata = self._config.model_metadata.get(provider_config.metadata_ref)
+            if metadata is None:
+                return "referenced model metadata is missing"
+            if not metadata.is_production_allowed:
+                missing = list(metadata.production_gate.missing_items)
+                return (
+                    "model production gate not approved "
+                    f"(usage={metadata.usage_restriction.value}, "
+                    f"approval={metadata.approval_state.value}, "
+                    f"missing={missing})"
+                )
+
+        return None
+
+
+def _terminal(
+    error: TypedAsrError,
+    served_provider_id: str = NOT_ROUTED_SENTINEL,
+) -> ChainOutcome:
+    """把 router 層的終態包成沒有任何 provider 嘗試的 ChainOutcome。"""
+    return ChainOutcome(
+        result=error,
+        attempts=(),
+        served_provider_id=served_provider_id,
+        total_queue_wait_ms=0,
+    )

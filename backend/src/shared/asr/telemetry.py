@@ -44,6 +44,12 @@ TELEMETRY_ALLOWLIST_KEYS: frozenset[str] = frozenset(
         "error_category",
         "elapsed_ms",
         "retryable",
+        # 併發與備援觀測欄位。全部是聚合數值或布林，不含任何內容資料——
+        # 沒有它們就無法分辨「主力壞了但備援救回來」與「一次就成功」，
+        # 也看不出流量是否已經在排隊。
+        "attempt_count",
+        "queue_wait_ms",
+        "failover_occurred",
     }
 )
 
@@ -99,11 +105,18 @@ class SafeTelemetryRecord:
     error_category: str | None
     elapsed_ms: int
     retryable: bool
+    attempt_count: int = 0
+    queue_wait_ms: int = 0
+    failover_occurred: bool = False
 
     def __post_init__(self) -> None:
         # 驗證 elapsed_ms 非負
         if self.elapsed_ms < 0:
             raise ValueError("elapsed_ms must be non-negative.")
+        if self.attempt_count < 0:
+            raise ValueError("attempt_count must be non-negative.")
+        if self.queue_wait_ms < 0:
+            raise ValueError("queue_wait_ms must be non-negative.")
         # 驗證 terminal_outcome 與 deadline_outcome 值
         valid_terminal = {v.value for v in TerminalOutcome}
         if self.terminal_outcome not in valid_terminal:
@@ -174,6 +187,9 @@ class TerminalTelemetryEmitter:
         "_route",
         "_provider_id",
         "_canonical_audio",
+        "_attempt_count",
+        "_queue_wait_ms",
+        "_failover_occurred",
     )
 
     def __init__(
@@ -194,6 +210,9 @@ class TerminalTelemetryEmitter:
         self._route: str = _ROUTE_NOT_ROUTED
         self._provider_id: str = _PROVIDER_NOT_ROUTED
         self._canonical_audio: CanonicalAudio | None = None
+        self._attempt_count: int = 0
+        self._queue_wait_ms: int = 0
+        self._failover_occurred: bool = False
 
     @property
     def has_emitted(self) -> bool:
@@ -219,6 +238,21 @@ class TerminalTelemetryEmitter:
     def set_canonical_audio(self, audio: CanonicalAudio) -> None:
         """設定 canonical audio metadata（僅 sample_rate、channels、duration）。"""
         self._canonical_audio = audio
+
+    def set_chain_metrics(
+        self,
+        attempt_count: int,
+        queue_wait_ms: int,
+        failover_occurred: bool,
+    ) -> None:
+        """
+        設定備援鏈與併發的聚合觀測值。
+
+        只接受數值與布林；provider 的原始回應、錯誤內容一律不進 telemetry。
+        """
+        self._attempt_count = max(0, int(attempt_count))
+        self._queue_wait_ms = max(0, int(queue_wait_ms))
+        self._failover_occurred = bool(failover_occurred)
 
     def emit(self, result: Transcript | TypedAsrError) -> None:
         """
@@ -278,6 +312,9 @@ class TerminalTelemetryEmitter:
             error_category=error_category,
             elapsed_ms=elapsed_ms,
             retryable=retryable,
+            attempt_count=self._attempt_count,
+            queue_wait_ms=self._queue_wait_ms,
+            failover_occurred=self._failover_occurred,
         )
 
         self._sink.emit(record)

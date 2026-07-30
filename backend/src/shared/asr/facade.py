@@ -38,11 +38,15 @@ class AsrFacade:
     接收 6 個輸入：audio_bytes、input_format、language、deadline、
     cancellation、context。
 
-    依序協調：input gate → canonicalizer → router（含 provider）。
+    依序協調：input gate → canonicalizer → router（含備援鏈與 provider）。
     回傳 Transcript 或 TypedAsrError。
 
     每個 recognize 呼叫產生恰一筆 terminal telemetry，不理解 HTTP、資料庫
     或對話工作流。
+
+    **可被多執行緒同時呼叫**：facade 只持有 router、telemetry sink 與 clock
+    三個唯讀依賴，每次呼叫自建 emitter；實體模型的併發上限由各 provider
+    自己的 slot pool 把關。
     """
 
     def __init__(
@@ -120,14 +124,14 @@ class AsrFacade:
         emitter.set_canonical_audio(canonical_audio)
 
         # ─── Route → Provider ───
-        # 從 router config 取得 route 資訊以設定 telemetry
-        lang_key = language.value
-        route_config = self._router._config.routes.get(lang_key)
+        # 先以設定的 route 名稱填 telemetry，實際服務的 provider 在鏈跑完後覆寫，
+        # 因為備援可能讓最終處理者不是設定中的主 provider。
+        route_config = self._router.route_config_for(language)
         if route_config is not None:
             emitter.set_route(route_config.route)
             emitter.set_provider_id(route_config.provider_identifier)
 
-        terminal_result = self._router.route(
+        outcome = self._router.route_detailed(
             audio=canonical_audio,
             language=language,
             deadline=deadline,
@@ -135,8 +139,16 @@ class AsrFacade:
             context=context,
         )
 
-        emitter.emit(terminal_result)
-        return terminal_result
+        if outcome.attempts:
+            emitter.set_provider_id(outcome.served_provider_id)
+        emitter.set_chain_metrics(
+            attempt_count=outcome.attempt_count,
+            queue_wait_ms=outcome.total_queue_wait_ms,
+            failover_occurred=outcome.failover_occurred,
+        )
+
+        emitter.emit(outcome.result)
+        return outcome.result
 
     @staticmethod
     def _input_gate(
