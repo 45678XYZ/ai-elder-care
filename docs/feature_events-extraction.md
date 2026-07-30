@@ -76,7 +76,11 @@
 
 ### 關鍵接縫：細粒度分裂 vs canonical 合併
 
-hackathon 方向是盡量分裂（保住「血壓 135/85」這種細節），framework 方向是依 slot 合併（保冪等）。兩者不矛盾，可串接：先分裂保細節、再依 canonical key 合併保冪等；`detail` 與 `structured_detail` 取最完整的一次，`evidence_conversation_ids` 取聯集。
+hackathon 方向是盡量分裂（保住「血壓 135/85」與「體重 62kg」這種細節），framework 方向是依 slot 合併（保冪等）。兩者串接機制如下：
+
+1. **LLM Single-Pass 前置分裂**：Single-Pass Extractor 在 Prompt 指引下將實體（血壓 vs 體重）與時間語境（現在頭痛 vs 昨天頭痛）拆分為獨立事件與原生 Predicate。
+2. **開放世界向量語義歸一化 (Embedding-based Fuzzy Match)**：使用 `bge-small-zh-v1.5` 計算餘弦相似度，若 $\ge 0.75$ 平滑對齊至受控詞彙；未登錄開放世界謂語保留為獨立事件並標記 `is_novel_predicate=True`。
+3. **Layer 1 Exact Key Dedup**：相異實體生成不同 Canonical Key（如 `2026-07-29#SLOT_0800#長者#量血壓` vs `2026-07-29#SLOT_0800#長者#量體重`），後端去重只對完全相同 Key 進行跨 Chunk 合併，`detail` 與 `structured_detail` 取最完整的一次，`evidence_conversation_ids` 取聯集。
 
 ```mermaid
 flowchart LR
@@ -87,8 +91,8 @@ flowchart LR
     prune --> compose["動態 schema 組裝"]
     compose --> ext["single-pass 萃取<br/>events[] + subject/predicate"]
     ext --> temp["temporal：+08:00 / 毫秒<br/>ref = turn.created_at"]
-    temp --> canon["canonical key<br/>Date + Slot + Subject + Predicate"]
-    canon --> dedup["記憶體內 slot 去重"]
+    temp --> canon["canonical key (向量語義模糊歸一化)<br/>Date + Slot + Subject + Predicate"]
+    canon --> dedup["記憶體內 Exact Key 去重"]
     dedup --> put["conditional Put → events"]
 ```
 

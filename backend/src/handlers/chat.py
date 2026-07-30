@@ -32,10 +32,13 @@ from typing import Any, Dict, Tuple
 import boto3
 from botocore.exceptions import ClientError
 
-from src.shared import auth, responses, sessions, turns
-from src.shared.models import ChatRequest
+from pydantic import ValidationError
+
+from src.shared import auth, db, responses, sessions, turns
+from src.shared.models import ChatRequest, ConversationCreate
 from src.shared.tts import TTSFactory
 from src.shared.validation import RequestValidationError, validate
+
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +298,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     "ai_respond_text": reply_text,
                     "ai_respond_audio_s3_key": audio_key,
                     "routines_updated": routines_updated,
-                    "rt_labels": ["routine"] if routines_updated else ["none"],
                 },
             )
         except turns.TurnError:
@@ -313,6 +315,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # 例外訊息只進 log：回給 App 的內容是穩定的公開錯誤，不夾帶內部細節
         logger.exception("未預期的錯誤")
         return responses.error(500, "INTERNAL_ERROR", "內部系統錯誤")
+
 
 
 def lease_owner(context: Any) -> str:

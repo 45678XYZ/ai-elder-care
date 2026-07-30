@@ -26,6 +26,8 @@ def tools_handler(monkeypatch):
     monkeypatch.setenv("TABLE_CONVERSATIONS", CONVERSATIONS_TABLE)
 
     with mock_aws():
+        # 建表時必須包含 GSI conversations-by-time，get_recent_conversations 走此索引
+        # （Base table SK 是 record_id，字串排序不等於時間排序）
         boto3.resource("dynamodb").create_table(
             TableName=CONVERSATIONS_TABLE,
             KeySchema=[
@@ -35,6 +37,17 @@ def tools_handler(monkeypatch):
             AttributeDefinitions=[
                 {"AttributeName": "elder_id", "AttributeType": "S"},
                 {"AttributeName": "record_id", "AttributeType": "S"},
+                {"AttributeName": "conversation_time_key", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "conversations-by-time",
+                    "KeySchema": [
+                        {"AttributeName": "elder_id", "KeyType": "HASH"},
+                        {"AttributeName": "conversation_time_key", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -95,6 +108,7 @@ def seed_conversations(n=3):
     ids = [seed_turn(index) for index in range(n)]
     seed_session(ids)
     return ids
+
 
 
 # ---------------------------------------------------------------------------

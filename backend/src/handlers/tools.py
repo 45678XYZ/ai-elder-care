@@ -11,8 +11,8 @@ AWS 會包裝一個 JSON payload 傳給本 Lambda。
 並回傳 Bedrock 要求的標準格式 JSON。
 
 緊急通知安全機制（醫療級）：
-- category="emergency"         : 初次緊急警報，5 分鐘冷卻，寫入 DB 事件紀錄
-- category="critical_escalation": 狀況急遽惡化，強制繞過冷卻，立即發信
+- category="emergency"         : 初次緊急警報，5 分鐘冷卻，寫入 type=safety event
+- category="critical_escalation": 狀況急遽惡化，強制繞過冷卻，立即發信，收斂同一 event
 - category="mitigation"        : 長者自述緩解，狀態改為「⚠️ 待家屬確認」，不代表解除
 - category="routine"/"summary" : 日常通知，無冷卻限制
 """
@@ -24,11 +24,13 @@ import uuid
 from typing import Any, Dict, Optional
 
 from src.shared import db, sessions
+from src.extraction.canonical import safety_alert_key, event_id_for
+
 
 
 # -----------------------------------------------------------------------------
 # Lambda Warm Start In-Memory 緊急狀態鎖
-# 結構: { elder_id: { "event_id": str, "ts": float, "notify_ts": float,
+# 結構: { elder_id: { "alert_id": str, "event_id": str, "notify_ts": float,
 #                     "status": "urgent" | "unverified_mitigation" } }
 # 注意：Cold Start 後清空為安全降級（不發誤報優於誤解除警報）
 # -----------------------------------------------------------------------------
@@ -90,7 +92,7 @@ def _build_mitigation_email(elder_id: str, message_content: str) -> str:
 ------------------------------------------------------------
 請登入 App 確認長者狀況後，點選「確認平安並結案」按鈕。
 在家屬確認之前，本次警報狀態維持「⚠️ 待家屬確認」。
-============================================================"""
+============================================================="""
 
 
 def _build_escalation_email(elder_id: str, message_content: str) -> str:
@@ -110,7 +112,7 @@ def _build_escalation_email(elder_id: str, message_content: str) -> str:
 ------------------------------------------------------------
 此警報已繞過冷卻期強制發出，代表長者狀況出現新的嚴重症狀。
 請立即採取行動！
-============================================================"""
+============================================================="""
 
 
 # -----------------------------------------------------------------------------
@@ -147,19 +149,18 @@ def handle_complete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
     if not elder_id or not routine_id:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
 
-    event_id = f"evt_{uuid.uuid4().hex[:12]}"
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
     try:
         result = db.complete_routine_with_event(
             elder_id=elder_id,
             routine_id=routine_id,
-            date_str=date_str,
-            event_id=event_id,
+            routine_date=date_str,
             ts=now_iso,
-            source=completed_by,
+            completed_by=completed_by,
             detail=f"對話中確認完成行程 (ID: {routine_id})",
-            event_type="routine_completion"
+            event_type="routine_completion",
+            extraction_track="realtime",
         )
         return {"status": "success", "data": result}
     except Exception as e:
@@ -252,12 +253,16 @@ def handle_get_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             "elder_id": elder_info.get("elder_id"),
             "name": elder_info.get("name"),
             "nickname": elder_info.get("nickname"),
+            "gender": elder_info.get("gender"),
+            "birth_year": elder_info.get("birth_year"),
             "lang_preference": elder_info.get("lang_preference"),
+            "address_region": elder_info.get("address_region"),
             "health_notes": elder_info.get("health_notes", []),
             "family": elder_info.get("family", []),
-            "habit_note": elder_info.get("habit_note", {})
+            "habit_note": elder_info.get("habit_note", ""),
         }
         return {"status": "success", "data": profile}
+
     except Exception as e:
         print(f"[Error] handle_get_elder_profile 失敗: {e}")
         return {"status": "error", "message": f"查詢長者檔案失敗: {str(e)}"}
@@ -294,19 +299,48 @@ def handle_remind_pending_routines(params: Dict[str, Any]) -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 # 工具七：發送 AWS SNS 即時緊急警報/日常摘要/行程完成通知至照護者
 # 醫療級安全機制：
-#   - "emergency"          : 5 分鐘冷卻；寫入 DB events (🚨 緊急)；鎖定 event_id
-#   - "critical_escalation": 強制繞過冷卻；立即發信 (🚨🚨 惡化)；更新 DB events
-#   - "mitigation"         : 長者自述緩解；DB 更新為 ⚠️ 待家屬確認；不轉綠燈
+#   - "emergency"          : 5 分鐘冷卻；寫入 type=safety event；產生 alert_id 回傳給 Agent
+#   - "critical_escalation": 強制繞過冷卻；收斂同一 alert_id 的 event
+#   - "mitigation"         : 長者自述緩解；收斂同一 alert_id 的 event；改為 ⚠️ 待家屬確認
 #   - "routine"/"summary"  : 日常通知，無冷卻，不寫 DB 安全事件
+#
+# canonical key 格式：SAFETY#{alert_id}（由 safety_alert_key 產生）
+# alert_id 由 emergency 首次產生，回傳給 Agent，後續 escalation/mitigation 帶入同一 alert_id
+# 確保同一警報情節的 emergency → escalation → mitigation 收斂到同一筆 event
 # -----------------------------------------------------------------------------
+
+def _resolve_alert_id(state: dict, context_event_id: str | None) -> str | None:
+    """解析 current alert_id：優先取 Agent 傳入的 context_event_id，否則取 state 的 alert_id。"""
+    if context_event_id:
+        return context_event_id
+    return state.get("alert_id")
+
+
+def _write_safety_event(elder_id: str, alert_id: str, detail: str) -> dict[str, Any]:
+    """以 canonical key 寫入 type=safety event，冪等收斂。"""
+    canonical_key = safety_alert_key(alert_id)
+    event_id = event_id_for(elder_id, canonical_key)
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    event, is_new = db.put_event_if_absent({
+        "elder_id": elder_id,
+        "canonical_event_key": canonical_key,
+        "event_id": event_id,
+        "ts": now_iso,
+        "type": "safety",
+        "detail": detail,
+        "source": "conversation",
+        "extraction_track": "realtime",
+    })
+    return event
+
 
 def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
     """工具七：發送 AWS SNS 即時緊急警報/日常摘要/行程完成通知至照護者。"""
     elder_id = params.get("elder_id")
     category = params.get("category", "emergency")
     message_content = params.get("message", "")
-    rag_content = params.get("rag_content", "")        # RAG 衛教檢索結果（選填）
-    context_event_id: Optional[str] = params.get("context_event_id")  # 供 mitigation/escalation 使用
+    rag_content = params.get("rag_content", "")
+    context_event_id: Optional[str] = params.get("context_event_id")
 
     if not elder_id or not message_content:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 message"}
@@ -333,123 +367,89 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
                     "status": "throttled",
                     "elder_id": elder_id,
                     "message": f"冷卻期內攔截（剩餘 {remaining} 秒），避免重複通知洗版",
-                    "active_event_id": state.get("event_id")
+                    "active_event_id": state.get("event_id"),
+                    "alert_id": state.get("alert_id"),
                 }
 
-            # ② 寫入 DB events 表 (🚨 緊急事件)
-            new_event_id = f"evt_{uuid.uuid4().hex[:12]}"
+            # ② 產生 alert_id 並寫入 type=safety event
+            alert_id = f"alert_{uuid.uuid4().hex[:12]}"
             event_detail = f"🚨【緊急警報已通報照護者】{message_content}"
-            try:
-                db.create_event({
-                    "event_id": new_event_id,
-                    "elder_id": elder_id,
-                    "ts": now_iso,
-                    "type": "wellbeing",
-                    "detail": event_detail,
-                    "source": "conversation"
-                })
-            except Exception as db_err:
-                print(f"[Warning] 寫入緊急事件至 DB 失敗: {db_err}")
+            event = _write_safety_event(elder_id, alert_id, event_detail)
 
-            # ③ 更新 In-Memory 狀態鎖
+            # ③ 更新 In-Memory 狀態鎖（含 alert_id）
             _emergency_state[elder_id] = {
-                "event_id": new_event_id,
+                "alert_id": alert_id,
+                "event_id": event["event_id"],
                 "notify_ts": now_ts,
-                "status": "urgent"
+                "status": "urgent",
             }
 
             subject = "🚨【智慧長照緊急警報】長者可能需要即時關懷與協助"
             email_body = _build_emergency_email(elder_id, message_content, rag_content)
             message_id = _publish_sns(topic_arn, subject, email_body)
-            print(f"[Emergency] elder={elder_id} 緊急警報發送成功，event_id={new_event_id}")
+            print(f"[Emergency] elder={elder_id} alert_id={alert_id} event_id={event['event_id']}")
 
         elif category == "critical_escalation":
-            # ① 強制繞過冷卻，立即發信
+            # ① 解析 alert_id（優先取 Agent 傳入的 context_event_id）
             state = _emergency_state.get(elder_id, {})
-            active_event_id = context_event_id or state.get("event_id")
+            alert_id = _resolve_alert_id(state, context_event_id)
 
-            # ② 更新 DB events 的同一筆紀錄 detail（Context Matching：優先使用 LLM 傳入的 context_event_id）
-            escalation_detail = f"🚨🚨【狀況急遽惡化 - 已通報照護者】{message_content}"
-            if active_event_id:
-                try:
-                    # 更新同一 event_id 的 detail，保留最完整的事件紀錄
-                    db.create_event({
-                        "event_id": active_event_id,
-                        "elder_id": elder_id,
-                        "ts": now_iso,
-                        "type": "wellbeing",
-                        "detail": escalation_detail,
-                        "source": "conversation"
-                    })
-                except Exception as db_err:
-                    print(f"[Warning] 更新惡化事件至 DB 失敗: {db_err}")
+            if alert_id:
+                # ② 寫入同一 canonical key，收斂到同一 type=safety event
+                escalation_detail = f"🚨🚨【狀況急遽惡化 - 已通報照護者】{message_content}"
+                event = _write_safety_event(elder_id, alert_id, escalation_detail)
+                active_event_id = event["event_id"]
             else:
-                # 若無 active event_id，建立新的惡化事件
-                new_event_id = f"evt_{uuid.uuid4().hex[:12]}"
-                try:
-                    db.create_event({
-                        "event_id": new_event_id,
-                        "elder_id": elder_id,
-                        "ts": now_iso,
-                        "type": "wellbeing",
-                        "detail": escalation_detail,
-                        "source": "conversation"
-                    })
-                    active_event_id = new_event_id
-                except Exception as db_err:
-                    print(f"[Warning] 建立惡化事件至 DB 失敗: {db_err}")
+                # ③ 若無任何 alert_id，建立新 episode（安全降級：寧可多發一次警報）
+                alert_id = f"alert_{uuid.uuid4().hex[:12]}"
+                escalation_detail = f"🚨🚨【狀況急遽惡化 - 已通報照護者】{message_content}"
+                event = _write_safety_event(elder_id, alert_id, escalation_detail)
+                active_event_id = event["event_id"]
 
-            # ③ 更新狀態鎖（保留惡化時間與 event_id）
+            # ④ 更新狀態鎖
             _emergency_state[elder_id] = {
+                "alert_id": alert_id,
                 "event_id": active_event_id,
-                "notify_ts": now_ts,  # 重置冷卻時間起點（惡化後重新開始計算）
-                "status": "urgent"
+                "notify_ts": now_ts,
+                "status": "urgent",
             }
 
             subject = "🚨🚨【智慧長照緊急警報】長者狀況急遽惡化，請立即處置"
             email_body = _build_escalation_email(elder_id, message_content)
             message_id = _publish_sns(topic_arn, subject, email_body)
-            print(f"[Escalation] elder={elder_id} 惡化警報已強制繞過冷卻發送，event_id={active_event_id}")
+            print(f"[Escalation] elder={elder_id} alert_id={alert_id} event_id={active_event_id}")
 
         elif category == "mitigation":
             # ① Context Matching：確認確實有一個未結案的緊急事件
             state = _emergency_state.get(elder_id, {})
-            active_event_id = context_event_id or state.get("event_id")
+            alert_id = _resolve_alert_id(state, context_event_id)
             active_status = state.get("status")
 
-            if not active_event_id or active_status not in ("urgent",):
-                # 無未結案警報，不發送平安信（防止誤報）
+            if not alert_id or active_status not in ("urgent",):
                 print(f"[Mitigation Ignored] elder={elder_id} 無未結案緊急警報，忽略 mitigation 請求")
                 return {
                     "status": "ignored",
                     "elder_id": elder_id,
-                    "message": "目前無未結案緊急警報，無需發送緩解通知"
+                    "message": "目前無未結案緊急警報，無需發送緩解通知",
                 }
 
-            # ② 更新 DB events 為「⚠️ 待家屬確認」（注意：不轉為綠燈）
-            mitigation_detail = (
-                f"⚠️【長者自述緩解 - 待家屬確認】{message_content} "
-                f"(原通報紀錄：event_id={active_event_id})"
-            )
-            try:
-                db.create_event({
-                    "event_id": active_event_id,
-                    "elder_id": elder_id,
-                    "ts": now_iso,
-                    "type": "wellbeing",
-                    "detail": mitigation_detail,
-                    "source": "conversation"
-                })
-            except Exception as db_err:
-                print(f"[Warning] 更新緩解事件至 DB 失敗: {db_err}")
+            # ② 寫入同一 canonical key，收斂到同一 type=safety event
+            mitigation_detail = (f"⚠️【長者自述緩解 - 待家屬確認】{message_content} "
+                                 f"(alert_id={alert_id})")
+            event = _write_safety_event(elder_id, alert_id, mitigation_detail)
 
-            # ③ 更新 In-Memory 狀態為 unverified_mitigation（長者自述，仍需家屬確認）
-            _emergency_state[elder_id]["status"] = "unverified_mitigation"
+            # ③ 更新 In-Memory 狀態為 unverified_mitigation
+            _emergency_state[elder_id] = {
+                "alert_id": alert_id,
+                "event_id": event["event_id"],
+                "notify_ts": now_ts,
+                "status": "unverified_mitigation",
+            }
 
             subject = "⚠️【智慧長照通知】長者自述緩解 - 請家屬仍需親自確認"
             email_body = _build_mitigation_email(elder_id, message_content)
             message_id = _publish_sns(topic_arn, subject, email_body)
-            print(f"[Mitigation] elder={elder_id} ⚠️ 緩解通知（待確認）發送，event_id={active_event_id}")
+            print(f"[Mitigation] elder={elder_id} alert_id={alert_id} event_id={event['event_id']}")
 
         elif category in ("routine", "summary"):
             # 日常通知，無冷卻限制，不寫 DB 安全事件
@@ -474,7 +474,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
             "elder_id": elder_id,
             "category": category,
             "message_id": message_id,
-            "detail": f"已成功發送 {category} 通知給照護者"
+            "detail": f"已成功發送 {category} 通知給照護者",
         }
 
     except Exception as e:
@@ -525,7 +525,8 @@ def handle_get_daily_summaries(params: Dict[str, Any]) -> Dict[str, Any]:
         to_date = today.strftime("%Y-%m-%d")
         from_date = (today - timedelta(days=days - 1)).strftime("%Y-%m-%d")
 
-        summaries = db.get_daily_summaries(elder_id, from_date, to_date)
+        summaries, _ = db.list_daily_summaries(elder_id, from_date, to_date)
+
 
         # 整理為大腦易讀的精簡格式
         formatted = []

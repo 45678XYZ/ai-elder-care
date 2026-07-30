@@ -67,6 +67,10 @@ def build_elder_context(elder: Mapping[str, Any] | None) -> str:
     nickname = elder.get("nickname") or elder.get("name")
     if nickname:
         lines.append(f"- 稱謂：{nickname}")
+    gender = elder.get("gender")
+    if gender:
+        gender_label = {"male": "男性", "female": "女性"}.get(gender, gender)
+        lines.append(f"- 性別：{gender_label}")
     birth_year = elder.get("birth_year")
     if birth_year:
         lines.append(f"- 出生年份：{birth_year}")
@@ -77,6 +81,7 @@ def build_elder_context(elder: Mapping[str, Any] | None) -> str:
     if habit_note:
         lines.append(f"- 生活習慣：{habit_note}")
     return "\n".join(lines) if lines else "（無長者背景資料）"
+
 
 
 def build_extraction_prompt(
@@ -231,12 +236,23 @@ def _validate_events(
     """
     accepted: list[dict[str, Any]] = []
     failures: list[tuple[dict[str, Any], str]] = []
+    model_fields = set(composed.event_model.model_fields.keys())
+
     for raw in raw_events:
         if not isinstance(raw, dict):
             failures.append(({}, "事件不是物件"))
             continue
+        cleaned = dict(raw)
+
+        # 1. 自動補齊 confidence_score，若模型漏填或誤填成 confidence
+        if cleaned.get("confidence_score") is None:
+            cleaned["confidence_score"] = float(cleaned.get("confidence") or 1.0)
+
+        # 2. 剔除模型隨機吐出的非模型欄位 (如 quantity)，防止 extra='forbid' 誤丟事件
+        sanitized = {k: v for k, v in cleaned.items() if k in model_fields}
+
         try:
-            validated = composed.event_model.model_validate(raw)
+            validated = composed.event_model.model_validate(sanitized)
         except ValidationError as exc:
             failures.append((raw, _summarize_validation_error(exc)))
             continue

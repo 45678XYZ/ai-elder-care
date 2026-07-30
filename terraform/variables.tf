@@ -1,4 +1,4 @@
-﻿variable "project_name" {
+variable "project_name" {
   description = "資源命名前綴"
   type        = string
   default     = "ai-elder-care"
@@ -130,7 +130,7 @@ variable "batch_lambda_timeout" {
 variable "session_idle_minutes" {
   description = "active session 閒置多久後由週期性 closer 收斂"
   type        = number
-  default     = 30
+  default     = 10
 }
 
 variable "session_sweep_minutes" {
@@ -181,3 +181,82 @@ variable "metrics_namespace" {
   default     = "AiElderCare/Extraction"
 }
 
+# --- 每日摘要（Module B，見 docs/feature_daily-summarization.md）---
+
+variable "summary_generator_version" {
+  description = "寫入 daily_summaries.generator_version 的版本戳記"
+  type        = string
+  default     = "summary-generator-1"
+}
+
+variable "bedrock_summary_model_id" {
+  description = "摘要生成階段的模型；留空沿用 bedrock_model_id"
+  type        = string
+  default     = ""
+}
+
+variable "summary_alert_lookback_days" {
+  description = "alerts 判斷跨日趨勢時回看的天數（含當日）；設 1 等於停用跨日線索"
+  type        = number
+  default     = 7
+}
+
+variable "summary_max_events" {
+  description = "進 prompt 的當日事件數上限；防萃取異常時 prompt 無上限成長"
+  type        = number
+  default     = 120
+}
+
+variable "summary_wait_minutes" {
+  description = <<-EOT
+    partial 摘要的重算等待窗口（分鐘）。超過就停止重算：batch 卡在 failed 是 DLQ
+    reconciler 與告警的責任，不該讓摘要無限重算燒模型費用。
+  EOT
+  type        = number
+  default     = 180
+}
+
+variable "summary_nightly_cron" {
+  description = <<-EOT
+    每晚生成當日摘要的排程。EventBridge cron 一律 UTC，因此台灣時間要自己減 8 小時：
+    預設 15:50 UTC = 23:50+08:00，排在日界前讓照護者當晚就看得到當天摘要。
+  EOT
+  type        = string
+  default     = "cron(50 15 * * ? *)"
+}
+
+variable "summary_backfill_days" {
+  description = "backfill sweep 回看幾天的摘要（含當日）"
+  type        = number
+  default     = 2
+}
+
+variable "summary_backfill_minutes" {
+  description = "backfill sweep 的執行間隔（分鐘）；必須短於 summary_wait_minutes"
+  type        = number
+  default     = 30
+}
+
+variable "summary_sweep_limit" {
+  description = "單次 sweep 處理的長者數上限，避免 Lambda 超時"
+  type        = number
+  default     = 50
+}
+
+variable "summary_lambda_timeout" {
+  description = "api_summaries 的 timeout（秒）；POST /summaries/generate 會同步呼叫模型"
+  type        = number
+  default     = 60
+}
+
+variable "summary_generator_timeout" {
+  description = "排程 summary_generator 的 timeout（秒）；一次跑多位長者"
+  type        = number
+  default     = 600
+}
+
+variable "summary_partial_alarm_threshold" {
+  description = "每小時 partial 摘要數超過此值且連續三小時即告警（batch 可能卡住）"
+  type        = number
+  default     = 10
+}
