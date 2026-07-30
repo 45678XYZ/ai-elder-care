@@ -113,7 +113,7 @@ flowchart LR
 
 ### Task 6: 文件化 SageMaker inference container contract
 
-**目標：** 新增 `asr-lambda/docs/sagemaker-inference-contract.md`。
+**目標：** 新增 `docs/asr/sagemaker-inference-contract.md`。
 
 - 記錄 health/invocation entrypoint、輸入音訊、metadata、成功與錯誤 JSON、逾時與 PII 日誌限制。
 - 規定 Formo prompt 必須由 container/deployment 固定，Lambda 不可知道或傳送 prompt ID。
@@ -140,15 +140,61 @@ flowchart LR
 - **測試：** Terraform validation 與 Python config contract test。
 - **Demo：** 可檢查 Lambda environment 與 IAM policy 的最小權限邊界。
 
-### Task 9: 同步 ASR 架構與安全文件
+### Task 9: 建立 ASR 文件體系並同步架構文件
 
-**目標：** 將專案文件統一為 backend remote ASR 的唯一架構。
+**目標：** 建立 `docs/asr/` 完整文件體系，並將專案文件統一為 backend remote ASR 的唯一架構。
 
-- 更新 `docs/framework.md`、ASR README、`docs/pii.md`、根目錄與 backend README 導覽、模型文件與 Conda 說明。
+#### 新增 ASR 子系統文件
+
+- **`docs/asr/framework.md`**（ASR 架構入口）：
+  - 文件導覽（各份 ASR 文件的職責與閱讀順序）
+  - 設計原則與禁則（remote-only、fail-closed、唯一設定來源、Formo prompt 邊界）
+  - 元件邊界圖（Flutter → Chat Lambda → ASR Router → SageMaker Endpoints，標示責任切分）
+  - 語言路由與 fallback 策略（路由表結構、轉移與終止條件、預設安全狀態）
+  - 設定策略概覽（ASR_CONFIG_JSON 的角色與 Terraform 組裝方式，指向 config-schema.md）
+  - SageMaker 契約摘要（精簡版，指向 sagemaker-inference-contract.md）
+  - 安全與 PII 邊界摘要（精簡禁則，指向 security-and-pii.md）
+  - 基礎設施概覽（Terraform 資源清單、asr_enable_endpoints 開關、啟用前置條件）
+  - 與系統其他部分的關係（與 docs/framework.md、chat handler、docs/api.md 的邊界）
+
+- **`docs/asr/config-schema.md`**（ASR 設定規格）：
+  - `ASR_CONFIG_JSON` 的完整 JSON schema
+  - 每個欄位的語意、合法值域、預設行為
+  - 設定錯誤時的 fail-closed 處理
+  - Terraform 如何組裝此 JSON 的對應關係
+  - 合法與非法設定範例
+
+- **`docs/asr/security-and-pii.md`**（ASR 安全邊界）：
+  - 不可記錄的資料（音訊 bytes、逐字稿、HF token、長者個資、原始 provider 回應）
+  - 遙測 allowlist 規則（只允許 16 個去識別化欄位）
+  - 音訊生命週期（只在記憶體中存在，不落地到 Lambda /tmp 或 DynamoDB）
+  - SageMaker endpoint container 的日誌限制
+  - 與 `docs/pii.md` 的關係（ASR 特有規則在此，通用 PII 政策見 pii.md）
+
+#### 同步既有文件
+
+- 更新 `docs/framework.md` 中的 ASR 段落，移除裝置端 ASR 描述，指向 `docs/asr/framework.md`。
+- 更新 `backend/src/shared/asr/README.md`，在頂部加入指向 `docs/asr/framework.md` 的導覽。
+- 更新 `docs/pii.md`，指向 `docs/asr/security-and-pii.md` 的 ASR 特有規則。
+- 更新根目錄 README 與 backend README 導覽。
+- 更新 `asr-lambda/README.md`，Conda 環境定位為容器開發用途。
 - 新增 `docs/adr/asr-remote-only.md`，記錄 remote-only、fail-closed、移除 AWS placeholder、Formo prompt 固定於部署端的理由。
-- `docs/api.md` 保持不變，並在 ADR/README 說明原因。
-- **測試：** 檢查跨文件連結與路徑。
-- **Demo：** 維護者可從 README、framework、ADR、contract 追溯完整背景。
+- `docs/api.md` 保持不變，並在 ADR 與 framework 說明原因。
+
+#### 文件間不重複原則
+
+| 文件 | 職責邊界 |
+|---|---|
+| `docs/asr/framework.md` | 架構層：設計原則、元件邊界、策略概覽 |
+| `docs/asr/config-schema.md` | 設定規格：JSON schema、欄位語意、範例 |
+| `docs/asr/security-and-pii.md` | 安全規範：禁則、allowlist、日誌限制 |
+| `docs/asr/sagemaker-inference-contract.md` | 容器契約：I/O 格式、health check、錯誤處理 |
+| `backend/src/shared/asr/README.md` | 程式碼層：檔案職責、併發實作、測試對應 |
+| `docs/adr/asr-remote-only.md` | 決策紀錄：為什麼做這些選擇 |
+| `.kiro/skills/.../SKILL.md` | AI agent 護欄：精簡指引指向上述文件 |
+
+- **測試：** 檢查跨文件連結與路徑；每份文件的「指向」目標都存在。
+- **Demo：** 維護者從 `docs/asr/framework.md` 出發，可循導覽地圖到達任何 ASR 相關文件，不遺漏也不重複。
 
 ### Task 10: 建立 ASR 專用 Kiro skill
 
@@ -190,6 +236,31 @@ terraform validate
 
 ## 文件分類決定
 
-- 本遷移計畫與未來 ASR 專用操作文件放在 `docs/asr/`。
-- `docs/adr/` 保持為整個專案的架構決策紀錄目錄，不移入 `docs/asr/`。
-- 本計畫實作後產生的架構決策文件預定為 [`docs/adr/asr-remote-only.md`](../adr/asr-remote-only.md)。
+### `docs/asr/` 目錄結構
+
+```text
+docs/asr/
+├── framework.md                      ← ASR 子系統架構入口（設計原則、元件邊界、路由策略、基礎設施概覽、文件導覽）
+├── config-schema.md                  ← ASR_CONFIG_JSON 完整 schema 與語意規格
+├── security-and-pii.md               ← ASR 安全邊界、PII 禁則、日誌限制
+├── sagemaker-inference-contract.md   ← SageMaker inference container 的 Lambda-facing 契約
+└── remote-only-migration-plan.md     ← 本遷移計畫（完成後標記歸檔）
+```
+
+### 各文件職責與讀者
+
+| 文件 | 職責 | 主要讀者 |
+|---|---|---|
+| `docs/asr/framework.md` | 修改 ASR 之前的第一站：設計原則、禁則、元件邊界、路由策略、設定概覽、安全摘要、基礎設施概覽、文件導覽 | 任何 ASR 修改者 |
+| `docs/asr/config-schema.md` | `ASR_CONFIG_JSON` 的完整 JSON schema、欄位語意、合法值、錯誤處理、Terraform 對應 | 設定 ASR 的人、Terraform 修改者 |
+| `docs/asr/security-and-pii.md` | 不可 log/傳/存的資料清單、遙測 allowlist、音訊生命週期、container 日誌限制 | 碰到音訊或回應的人 |
+| `docs/asr/sagemaker-inference-contract.md` | Container I/O 契約、health check、錯誤格式、timeout、Formo prompt 邊界 | Container 實作者 |
+| `docs/asr/remote-only-migration-plan.md` | 一次性遷移任務追蹤 | 完成後標記歸檔 |
+
+### 與其他位置的分工
+
+- `backend/src/shared/asr/README.md`：程式碼模組的現況紀錄（檔案職責、併發實作、測試對應）。打開程式碼目錄時的指引，不重複架構層內容，頂部指向 `docs/asr/framework.md`。
+- `docs/adr/asr-remote-only.md`：架構決策紀錄（為什麼選擇 remote-only），放在專案級 `docs/adr/`，不移入 `docs/asr/`。
+- `docs/adr/asr-model-validation-template.md`：模型驗證 ADR 模板，維持在 `docs/adr/`。
+- `.kiro/skills/developing-ai-elder-care-asr/SKILL.md`：AI agent 的精簡護欄，指向上述人類文件，不重複內容。
+- `asr-lambda/docs/`：模型卡（CE、Formo），定位為容器開發參考資料。
