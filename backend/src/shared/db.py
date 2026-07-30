@@ -889,32 +889,6 @@ def get_daily_summaries(elder_id: str, from_date: str, to_date: str) -> list[dic
     except ClientError as e:
         raise DBError(f"查詢每日摘要失敗: {e.response['Error']['Message']}")
 
-# -----------------------------------------------------------------------------
-# Memories 表操作
-# -----------------------------------------------------------------------------
-
-def get_memories(elder_id: str) -> list[dict[str, Any]]:
-    """查詢長者長期記憶。"""
-    table = get_dynamodb_resource().Table(TABLE_MEMORIES)
-    try:
-        resp = table.query(
-            KeyConditionExpression="elder_id = :eid",
-            ExpressionAttributeValues={":eid": elder_id},
-        )
-        return convert_decimals(resp.get("Items", []))
-    except ClientError as e:
-        raise DBError(f"查詢長期記憶失敗: {e.response['Error']['Message']}")
-
-
-def save_memory(memory_data: dict[str, Any]) -> dict[str, Any]:
-    """寫入/更新長期記憶。"""
-    table = get_dynamodb_resource().Table(TABLE_MEMORIES)
-    try:
-        table.put_item(Item=memory_data)
-        return convert_decimals(memory_data)
-    except ClientError as e:
-        raise DBError(f"儲存長期記憶失敗: {e.response['Error']['Message']}")
-
 
 # -----------------------------------------------------------------------------
 # Routine 高階便利函式（供 tools handler 與 daily_digest 呼叫）
