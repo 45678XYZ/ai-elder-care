@@ -125,6 +125,12 @@ class ConversationCreate(BaseModel):
     system_status: Literal["success", "failed"] = Field(
         default="success", description="系統技術處理狀態（成功 / 處理失敗）"
     )
+    # 統計、每日摘要與 session close 的 snapshot 驗證都以此判斷 turn 是否為一次有效互動。
+    # 目前 /chat 只有「做完才寫入」一條路徑，寫下的 turn 必然已是終態，因此預設完成；
+    # 待 request lease 與冪等流程接上後，這個 default 必須移除，改由流程明確指定三態。
+    request_status: Literal["processing", "completed", "failed"] = Field(
+        default="completed", description="turn 處理狀態；統計與摘要只計 completed"
+    )
     error_message: str | None = Field(default=None, description="系統失敗時之錯誤訊息說明")
     routine_id: str | None = Field(default=None, description="若為系統 Routine 詢問，關聯之例行公事 ID")
     lang: Literal["zh-TW", "hak"] = Field(default="zh-TW", description="對話語言")
