@@ -146,7 +146,8 @@ def test_pending_before_grace_expires(routines):
     put_version(routines, "rtn_001", 1, effective_from="2026-07-01T10:00:00.000+08:00", title="吃血壓藥", schedule=DAILY_9AM)
     items = routines.list_occurrences(ELDER, DATE, cutoff="2026-07-26T09:30:00+08:00", grace=120)
     assert [(item["routine_id"], item["status"]) for item in items] == [("rtn_001", "pending")]
-    assert items[0]["scheduled_at"] == "2026-07-26T09:00:00.000+08:00"
+    assert items[0]["scheduled_at"] == "2026-07-26T09:00:00+08:00"
+
     assert "completed_at" not in items[0]
 
 
@@ -188,7 +189,8 @@ def test_same_day_revision_supersedes_without_second_occurrence(routines):
     items = routines.list_occurrences(ELDER, DATE, cutoff=CUTOFF_EVENING, grace=120)
     assert len(items) == 1
     assert items[0]["title"] == "吃血壓藥（改晚上）"
-    assert items[0]["scheduled_at"] == "2026-07-26T19:00:00.000+08:00"
+    assert items[0]["scheduled_at"] == "2026-07-26T19:00:00+08:00"
+
     # 19:00 + 120 分 > 20:00 cutoff
     assert items[0]["status"] == "pending"
 
@@ -228,7 +230,8 @@ def test_completion_wins_and_uses_recorded_version(routines):
     assert items[0]["status"] == "done"
     # 顯示定義取完成當下的版本，不受後續改版影響
     assert items[0]["title"] == "吃血壓藥"
-    assert items[0]["scheduled_at"] == "2026-07-26T09:00:00.000+08:00"
+    assert items[0]["scheduled_at"] == "2026-07-26T09:00:00+08:00"
+
     assert items[0]["completed_at"] == "2026-07-26T09:05:00.000+08:00"
     assert items[0]["completed_by"] == "conversation"
 

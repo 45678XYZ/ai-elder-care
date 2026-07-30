@@ -525,7 +525,8 @@ def handle_get_daily_summaries(params: Dict[str, Any]) -> Dict[str, Any]:
         to_date = today.strftime("%Y-%m-%d")
         from_date = (today - timedelta(days=days - 1)).strftime("%Y-%m-%d")
 
-        summaries = db.get_daily_summaries(elder_id, from_date, to_date)
+        summaries, _ = db.list_daily_summaries(elder_id, from_date, to_date)
+
 
         # 整理為大腦易讀的精簡格式
         formatted = []

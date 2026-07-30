@@ -14,10 +14,13 @@ import os
 from typing import Any
 
 from src.extraction.canonical import routine_completion_key
+from src.shared import db
 from src.shared.db import TZ_TAIPEI
 
-# 未完成 occurrence 超過 scheduled_at 加此寬限期才算 missed；routines、摘要與統計共用
-GRACE_MINUTES = int(os.environ.get("ROUTINE_GRACE_MINUTES", "120"))
+
+DEFAULT_GRACE_MINUTES = 120
+GRACE_MINUTES = DEFAULT_GRACE_MINUTES
+
 
 # 不同組合雜湊出相同字串會造成身分碰撞，因此以不可能出現在 ID 中的控制字元分隔
 _ID_SEPARATOR = "\x1f"
@@ -49,6 +52,25 @@ def today(current: datetime | None = None) -> str:
     return (current or now()).astimezone(TZ_TAIPEI).strftime("%Y-%m-%d")
 
 
+DEFAULT_GRACE_MINUTES = 120
+
+
+def grace_minutes() -> int:
+    val = os.environ.get("ROUTINE_GRACE_MINUTES")
+    if not val:
+        return DEFAULT_GRACE_MINUTES
+    try:
+        return int(val)
+    except ValueError:
+        return DEFAULT_GRACE_MINUTES
+
+
+def format_ts(dt: datetime | str) -> str:
+    if isinstance(dt, str):
+        return dt
+    return dt.astimezone(TZ_TAIPEI).isoformat(timespec="milliseconds")
+
+
 def is_valid_date(date_str: str) -> bool:
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
@@ -57,10 +79,15 @@ def is_valid_date(date_str: str) -> bool:
         return False
 
 
-def occurrence_cutoff(date_str: str, current: datetime) -> datetime:
+def occurrence_cutoff(date_str: str, current: datetime | str) -> datetime:
     """`min(查詢時間, 該日台灣日界結束)`；歷史日期越過日界後即封頂於該日。"""
+    if isinstance(current, str):
+        current_dt = datetime.fromisoformat(current)
+    else:
+        current_dt = current
     day_end = datetime.fromisoformat(f"{date_str}T23:59:59.999+08:00")
-    return min(current, day_end)
+    return min(current_dt, day_end)
+
 
 
 # -----------------------------------------------------------------------------
@@ -135,6 +162,10 @@ def scheduled_at(date_str: str, schedule: dict[str, Any]) -> str | None:
         matched = False
 
     return f"{date_str}T{time_str}:00+08:00" if matched else None
+
+
+
+
 
 
 def resolve_occurrence(
@@ -223,3 +254,66 @@ def _find_version(versions: list[dict[str, Any]], version_no: Any) -> dict[str, 
 def _isoweekday(date_str: str) -> int:
     """週一為 1、週日為 7，與 schedule.weekday 同一套定義。"""
     return datetime.strptime(date_str, "%Y-%m-%d").isoweekday()
+
+
+def summary_snapshot(occurrences: list[dict[str, Any]]) -> dict[str, Any]:
+    """計算摘要中的例行公事快照 (completed, missed, items)。"""
+    completed = sum(1 for item in occurrences if item.get("status") == "done")
+    missed = sum(1 for item in occurrences if item.get("status") == "missed")
+    items = [
+        {
+            "routine_id": item["routine_id"],
+            "title": item.get("title", ""),
+            "status": item.get("status", "pending"),
+        }
+        for item in occurrences
+    ]
+    return {
+        "completed": completed,
+        "missed": missed,
+        "items": items,
+    }
+
+
+
+def list_occurrences(
+    elder_id: str,
+    date_str: str,
+    *,
+    cutoff: str | datetime | None = None,
+    grace: int | None = None,
+) -> list[dict[str, Any]]:
+    """列出長者在指定日期的所有 occurrence。
+
+    結合 db 查詢 routines 版本與 completion events，並透過 resolve_occurrences 推導狀態。
+    """
+    from src.shared import db
+
+    if cutoff is None:
+        current = now()
+    elif isinstance(cutoff, str):
+        current = datetime.fromisoformat(cutoff)
+    else:
+        current = cutoff
+
+    effective_cutoff = occurrence_cutoff(date_str, current)
+    upper_bound = versions_upper_bound(effective_cutoff)
+
+    versions = db.list_routine_versions_by_elder(elder_id, upper_bound)
+
+    completion_event_ids = list(dict.fromkeys(
+        db.event_id_for(elder_id, completion_event_key(v["routine_id"], date_str))
+        for v in versions
+    ))
+
+
+    completion_map: dict[str, dict[str, Any]] = {}
+    if completion_event_ids:
+        events_batch = db.get_events(elder_id, completion_event_ids)
+        for evt in events_batch.values():
+            rid = evt.get("routine_id")
+            if rid:
+                completion_map[rid] = evt
+
+    return resolve_occurrences(versions, completion_map, date_str, current, grace_minutes=grace)
+

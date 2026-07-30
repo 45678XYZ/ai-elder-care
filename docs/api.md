@@ -10,7 +10,7 @@
 - **時間**：ISO 8601 含時區，如 `2026-07-14T09:05:00+08:00`；日期為 `YYYY-MM-DD`；日界以台灣時間（+08:00）為準。
 - **ID 格式／前綴**：長者 ID 為 `eld_` 後接 12 個小寫十六進位字元；其餘前綴為 `rtn_`（例行公事）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）。batch chunk ID 僅供後端追蹤，不由 API 回傳。
 - **分頁**：列表支援 `?limit=`（預設 50）與 `?next_token=`。資料超過一頁時 response 最外層帶 `next_token`；下一次請求必須原樣帶回。它是後端由資料庫游標編碼的不透明字串，前端不得解析；沒有此欄位表示已無下一頁。
-- **Hybrid 處理**：`POST /chat` 僅等待 realtime routine/safety rail，不等待 session batch。App 應在互動結束時呼叫 close；未呼叫者由 periodic idle closer 收斂。
+- **Hybrid 處理**：`POST /chat` 僅等待 realtime routine/safety rail，不等待 session batch。Session 關閉採雙管道：App 可主動呼叫 close endpoint 即時關閉，EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。
 
 ### 共用 enum
 
@@ -146,6 +146,8 @@ response 前只執行：
 ### POST /chat/sessions/{session_id}/close — 明確關閉
 
 App 在停止免手持互動、離開對話畫面或切換長者前呼叫。此 endpoint 表示停止向該 session 追加 turn、freeze immutable snapshot，並啟動離線 normal events materialization；不保證 response 時 batch 已完成。
+
+> Session 關閉採雙管道設計：前端可主動呼叫此 endpoint 即時關閉（適用於即時展示等需要快速收斂的場景），EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。兩者邏輯與條件式寫入完全一致。
 
 只有 token 對應的長者本人可呼叫。request body 可省略；傳送時必須是空 object：
 
@@ -494,7 +496,7 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 | 方法與路徑 | 用途 | 使用者 |
 |---|---|---|
 | `POST /chat` | realtime 對話（text/audio） | 長者 |
-| `POST /chat/sessions/{session_id}/close` | 冪等關閉 session、啟動離線 materialization | 長者本人 |
+| `POST /chat/sessions/{session_id}/close` | 明確關閉 session（雙管道：API 即時 + EventBridge 收斂） | 長者本人 |
 | `GET /elders` | 長者列表 | 兩端 |
 | `GET /elders/{id}` | 長者單筆 | 兩端 |
 | `POST /elders` | 建立長者 | 照護者 |

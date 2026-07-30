@@ -255,8 +255,22 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # 5. 產生獨一無二的對話 ID 與時間戳記
         conversation_id = f"cnv_{uuid.uuid4().hex[:12]}"
         now_ts = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+        elder_received_at = now_ts
 
-        # 6. 雙寫對話紀錄至 DynamoDB conversations 表 (確保隊友摘要與萃取 API 100% 相容)
+        # 6. 語音合成 (TTS Factory - 中文用 Polly，客語用 OmniVoice 帶 Fallback)
+        try:
+            tts_engine = TTSFactory.get_tts_engine(lang)
+            audio_bytes = tts_engine.synthesize(reply_text)
+        except Exception as tts_err:
+            print(f"[Error] TTS Synthesis failed: {tts_err}")
+            return responses.error(500, "TTS_FAILED", f"語音合成失敗: {str(tts_err)}")
+
+        # 7. 上傳 MP3 至 S3 並取得預簽名 URL
+        reply_audio_url = upload_audio_to_s3(audio_bytes, conversation_id)
+        ai_responded_at = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+        s3_key = f"tts/{conversation_id}.mp3"
+
+        # 8. 雙寫對話紀錄至 DynamoDB conversations 表 (帶入三階段時間戳記與 S3 key)
         try:
             conv_model = ConversationCreate(
                 conversation_id=conversation_id,
@@ -270,6 +284,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 input_type="audio" if req.audio else "text",
                 elder_transcript=transcript,
                 ai_respond_text=reply_text,
+                ai_respond_audio_s3_key=s3_key,
+                ai_respond_audio_url=reply_audio_url,
+                elder_received_at=elder_received_at,
+                ai_responded_at=ai_responded_at,
                 routines_updated=routines_updated,
             )
             db.save_conversation(conv_model.model_dump(exclude_none=True))
@@ -277,18 +295,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             print(f"[Info] db.save_conversation 尚未在當前分支中導入。")
         except Exception as db_err:
             print(f"[Warning] 寫入對話紀錄至 DynamoDB 失敗: {db_err}")
-
-
-        # 7. 語音合成 (TTS Factory - 中文用 Polly，客語用 OmniVoice 帶 Fallback)
-        try:
-            tts_engine = TTSFactory.get_tts_engine(lang)
-            audio_bytes = tts_engine.synthesize(reply_text)
-        except Exception as tts_err:
-            print(f"[Error] TTS Synthesis failed: {tts_err}")
-            return responses.error(500, "TTS_FAILED", f"語音合成失敗: {str(tts_err)}")
-
-        # 8. 上傳 MP3 至 S3 並取得預簽名 URL
-        reply_audio_url = upload_audio_to_s3(audio_bytes, conversation_id)
 
         # 9. 回傳符合 docs/api.md 規範的 Response 200
         return responses.json_response(200, {
@@ -298,6 +304,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "reply_audio_url": reply_audio_url,
             "routines_updated": routines_updated
         })
+
 
     except (auth.AuthError, RequestValidationError) as exc:
         return exc.response

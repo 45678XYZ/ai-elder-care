@@ -3,6 +3,12 @@
 包含 elders, conversations, events, daily_summaries, routines。
 此模組為全系統資料 Schema 之單一真理來源 (Single Source of Truth)，
 供 API Handlers (Request/Response DTO Validation) 與 shared/db.py 共同引用。
+
+模型分類標示：
+- 【API Request】：對外接收的請求體驗證模型，用於 handler 入口校驗
+- 【API Response】：對外回應的投影模型，用於 handler 出口洗滌（隱藏內部欄位）
+- 【DB Schema】：資料層寫入驗證模型，用於 shared/db.py 寫入前校驗與預設值補充
+- 【子模型】：被上述模型引用的共用結構，不單獨對外
 """
 
 import re
@@ -22,19 +28,23 @@ EventType = Literal["diet", "activity", "sleep", "medication", "wellbeing", "saf
 SUMMARY_SECTION_KEYS: tuple[str, ...] = get_args(EventType)
 
 
+# =============================================================================
+# API Request Models — 對外請求體驗證
+# =============================================================================
+
 # -----------------------------------------------------------------------------
-# Elders 表模型
+# Elders — POST /elders、PATCH /elders/{elder_id}
 # -----------------------------------------------------------------------------
 
 class FamilyMember(BaseModel):
-    """親友背景與備註。"""
+    """【子模型】親友背景與備註；被 ElderCreate / ElderUpdate / ElderResponse 引用。"""
     relation: str = Field(..., description="親友稱謂與關係，例如：兒子、孫子")
     name: str = Field(..., description="親友姓名或暱稱，例如：陳志明、小明")
     note: str | None = Field(default=None, description="動態背景備註，例如：在台北工作，每週三來訪")
 
 
 class ElderCreate(BaseModel):
-    """建立長者 Request Body。"""
+    """【API Request】POST /elders Request Body。"""
     name: str = Field(..., description="長者真實姓名（必填）")
     nickname: str | None = Field(default=None, description="長者暱稱或慣稱，例如：阿蘭嬤")
     birth_year: int | None = Field(default=None, description="出生年份，例如：1948")
@@ -48,7 +58,7 @@ class ElderCreate(BaseModel):
 
 
 class ElderUpdate(BaseModel):
-    """更新長者 (PATCH) Request Body（所有欄位皆可選）。"""
+    """【API Request】PATCH /elders/{elder_id} Request Body（所有欄位皆可選）。"""
     name: str | None = Field(default=None, description="長者真實姓名")
     nickname: str | None = Field(default=None, description="長者暱稱")
     birth_year: int | None = Field(default=None, description="出生年份")
@@ -62,7 +72,7 @@ class ElderUpdate(BaseModel):
 
 
 class ElderResponse(BaseModel):
-    """長者資料完整 Response 物件。"""
+    """【API Response】GET /elders、GET /elders/{elder_id}、POST /elders、PATCH /elders/{elder_id} 回應物件。"""
     elder_id: str = Field(..., description="長者唯一識別碼（前綴 eld_）")
     name: str = Field(..., description="長者姓名")
     nickname: str | None = Field(default=None, description="長者暱稱")
@@ -83,13 +93,13 @@ class ElderResponse(BaseModel):
 # -----------------------------------------------------------------------------
 
 class ChatAudio(BaseModel):
-    """POST /chat 音訊輸入模型。"""
+    """【子模型】POST /chat 音訊輸入；被 ChatRequest 引用。"""
     data: str = Field(..., description="base64 音訊資料")
     format: Literal["m4a", "wav"] = Field(default="m4a", description="音訊格式")
 
 
 class ChatRequest(BaseModel):
-    """POST /chat Request Body 模型。"""
+    """【API Request】POST /chat Request Body。"""
     client_request_id: str | None = Field(default=None, description="冪等 UUID")
     session_id: str | None = Field(default=None, description="Session ID")
     elder_id: str = Field(..., description="長者 ID")
@@ -107,7 +117,7 @@ class ChatRequest(BaseModel):
 
 
 class ConversationCreate(BaseModel):
-    """新增/紀錄對話。"""
+    """【DB Schema】conversations 表寫入驗證；由 shared/db.py 與 chat handler 共同引用。"""
     conversation_id: str | None = Field(default=None, description="對話 ID (前綴 cnv_)")
     record_id: str | None = Field(default=None, description="DynamoDB Sort Key (TURN#cnv_...)")
     conversation_time_key: str | None = Field(default=None, description="DynamoDB GSI Sort Key (<created_at>#<conversation_id>)")
@@ -133,10 +143,8 @@ class ConversationCreate(BaseModel):
     elder_transcript: str | None = Field(default=None, description="長者說的話 / 語音轉寫文字 (Elder)；逾時無回應時為 None")
     ai_respond_text: str | None = Field(default=None, description="AI 最終回應/確認內文 (AI 2)")
     ai_prompt_audio_s3_key: str | None = Field(default=None, description="系統提醒語音 S3 物件路徑 (AI 1)")
-    elder_audio_s3_key: str | None = Field(default=None, description="長者原始錄音 S3 物件路徑 (Elder)")
     ai_respond_audio_s3_key: str | None = Field(default=None, description="AI 最終回應語音 S3 物件路徑 (AI 2)")
     ai_prompt_audio_url: str | None = Field(default=None, description="系統提醒語音 URL (AI 1)")
-    elder_audio_url: str | None = Field(default=None, description="長者原始錄音 URL (Elder)")
     ai_respond_audio_url: str | None = Field(default=None, description="AI 最終回應語音 URL (AI 2)")
     prompt_sent_at: str | None = Field(default=None, description="系統送出提醒發問之時間戳記")
     elder_received_at: str | None = Field(default=None, description="接收到長者輸入之時間戳記 (長者反應時間分析)")
@@ -145,31 +153,10 @@ class ConversationCreate(BaseModel):
 
 
 
-class ConversationResponse(BaseModel):
-    """對話紀錄完整 Response 物件。"""
-    conversation_id: str = Field(..., description="對話唯一識別碼 (前綴 cnv_)")
-    elder_id: str = Field(..., description="長者唯一識別碼 (PK)")
-    created_at: str = Field(..., description="建立時間 (SK, ISO 8601, 台灣時間 +08:00)")
-    source: str = Field(default="elder_initiated", description="對話發起來源")
-    user_status: str = Field(default="replied", description="長者行為狀態")
-    system_status: str = Field(default="success", description="系統處理狀態")
-    error_message: str | None = Field(default=None, description="系統失敗訊息")
-    routine_id: str | None = Field(default=None, description="關聯例行公事 ID")
-    lang: str = Field(default="zh-TW", description="對話語言")
-    input_type: str = Field(default="text", description="輸入類型")
-    ai_prompt_text: str | None = Field(default=None, description="系統發起提醒之提示內文 (AI 1)")
-    elder_transcript: str | None = Field(default=None, description="長者說的話 / 語音轉寫文字 (Elder)")
-    ai_respond_text: str | None = Field(default=None, description="AI 最終回應/確認內文 (AI 2)")
-    ai_prompt_audio_s3_key: str | None = Field(default=None, description="系統提醒語音 S3 路徑 (AI 1)")
-    elder_audio_s3_key: str | None = Field(default=None, description="長者錄音 S3 路徑 (Elder)")
-    ai_respond_audio_s3_key: str | None = Field(default=None, description="AI 回應語音 S3 路徑 (AI 2)")
-    ai_prompt_audio_url: str | None = Field(default=None, description="動態簽發 15 分鐘有效 S3 Presigned URL (AI 1)")
-    elder_audio_url: str | None = Field(default=None, description="動態簽發 15 分鐘有效 S3 Presigned URL (Elder)")
-    ai_respond_audio_url: str | None = Field(default=None, description="動態簽發 15 分鐘有效 S3 Presigned URL (AI 2)")
-    prompt_sent_at: str | None = Field(default=None, description="系統送出提醒時間")
-    elder_received_at: str | None = Field(default=None, description="接收長者輸入時間")
-    ai_responded_at: str | None = Field(default=None, description="AI 完成回應時間")
-    routines_updated: bool = Field(default=False, description="是否觸發行程更新")
+
+
+
+
 
 
 # -----------------------------------------------------------------------------
@@ -177,7 +164,7 @@ class ConversationResponse(BaseModel):
 # -----------------------------------------------------------------------------
 
 class EventCreate(BaseModel):
-    """建立生活事件 Request Body。"""
+    """【DB Schema】events 表寫入驗證；由 shared/db.py 引用，非對外 API 請求體。"""
     elder_id: str = Field(..., description="長者 ID")
     ts: str = Field(..., description="事件發生的 ISO 8601 時間戳記")
     type: EventType = Field(..., description="高階事件分類")
@@ -201,7 +188,7 @@ class EventCreate(BaseModel):
 
 
 class EventResponse(BaseModel):
-    """生活事件 Response 物件 (GET /events)。"""
+    """【API Response】GET /events 回應物件；隱藏萃取內部欄位（concept_id、taxonomy_version 等）。"""
     event_id: str = Field(..., description="事件唯一識別碼 (前綴 evt_)")
     elder_id: str = Field(..., description="長者 ID")
     ts: str = Field(..., description="事件發生時間 (ISO 8601)")
@@ -217,7 +204,11 @@ class EventResponse(BaseModel):
 # -----------------------------------------------------------------------------
 
 class DailySummaryCreate(BaseModel):
-    """每日摘要寫入 Schema。"""
+    """【DB Schema】daily_summaries 表寫入驗證；由 shared/db.py 寫入前校驗。
+
+    input_through_at 為覆寫優先序依據（docs/api.md），必填；completeness_rank 由 db.py 依
+    data_status 自動推導（complete=1、partial=0），不在此暴露。
+    """
     elder_id: str = Field(..., description="長者 ID")
     date: str = Field(..., description="日期 (YYYY-MM-DD)")
     overview: str = Field(default="", description="當日總覽")
@@ -225,13 +216,14 @@ class DailySummaryCreate(BaseModel):
     routines: dict[str, Any] = Field(default_factory=dict, description="例行公事統計 (completed, missed, items)")
     alerts: list[str] = Field(default_factory=list, description="警訊清單")
     interaction_count: int = Field(default=0, description="當日對話輪數")
-    data_status: Literal["complete", "partial"] = Field(default="complete", description="資料完整度")
+    data_status: Literal["complete", "partial"] = Field(..., description="資料完整度；覆寫優先序依據，必填")
     pending_session_count: int = Field(default=0, description="待處理 Session 數")
-    generated_at: str | None = Field(default=None, description="生成時間")
+    input_through_at: str = Field(..., description="本摘要承諾納入的資料時間上限 (ISO 8601)；覆寫優先序依據")
+    generated_at: str = Field(..., description="生成時間 (ISO 8601)")
 
 
 class DailySummaryResponse(BaseModel):
-    """每日摘要 Response 物件 (GET /summaries)。"""
+    """【API Response】GET /summaries、POST /summaries/generate 回應物件；隱藏 input_through_at 等內部欄位。"""
     elder_id: str = Field(..., description="長者 ID")
     date: str = Field(..., description="日期 (YYYY-MM-DD)")
     overview: str = Field(..., description="當日總覽")
@@ -254,7 +246,7 @@ DATE_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
 
 
 class RoutineSchedule(BaseModel):
-    """例行公事排程設定；freq 為 discriminator，只接受該頻率適用的欄位。"""
+    """【子模型】例行公事排程設定；freq 為 discriminator，只接受該頻率適用的欄位。被 RoutineCreate / RoutineUpdate 引用。"""
     model_config = ConfigDict(extra="forbid")
 
     freq: Literal["daily", "weekly", "once"] = Field(..., description="頻率 (每日/每週/單次)")
@@ -291,7 +283,7 @@ class RoutineSchedule(BaseModel):
 
 
 class RoutineCreate(BaseModel):
-    """建立例行公事 Request Body (POST /routines)。server-owned 或未知欄位一律拒絕。"""
+    """【API Request】POST /routines Request Body。server-owned 或未知欄位一律拒絕。"""
     model_config = ConfigDict(extra="forbid")
 
     client_request_id: str = Field(..., description="冪等識別 UUID")
@@ -303,7 +295,7 @@ class RoutineCreate(BaseModel):
 
 
 class RoutineUpdate(BaseModel):
-    """更新/停用例行公事 Request Body (PATCH /routines/{id})。只開放白名單欄位。"""
+    """【API Request】PATCH /routines/{routine_id} Request Body。只開放白名單欄位。"""
     model_config = ConfigDict(extra="forbid")
 
     client_request_id: str = Field(..., description="冪等識別 UUID")
@@ -315,7 +307,7 @@ class RoutineUpdate(BaseModel):
 
 
 class RoutineComplete(BaseModel):
-    """手動確認完成 Request Body (POST /routines/{id}/complete)。"""
+    """【API Request】POST /routines/{routine_id}/complete Request Body。"""
     model_config = ConfigDict(extra="forbid")
 
     date: str | None = Field(default=None, description="完成的日期 (YYYY-MM-DD)，預設今天")
@@ -329,7 +321,7 @@ class RoutineComplete(BaseModel):
 
 
 class RoutineDefinition(BaseModel):
-    """例行公事定義 Response 物件；版本、冪等鍵等內部欄位不外露。"""
+    """【API Response】GET /routines 定義列表回應物件；版本、冪等鍵等內部欄位不外露。"""
     routine_id: str = Field(..., description="例行公事 ID (前綴 rtn_)")
     elder_id: str = Field(..., description="長者 ID")
     title: str = Field(..., description="行程標題")
@@ -342,7 +334,7 @@ class RoutineDefinition(BaseModel):
 
 
 class RoutineOccurrence(BaseModel):
-    """指定日期的 occurrence Response 物件；狀態於查詢當下推導，不落地保存。"""
+    """【API Response】GET /routines?date= 當日行程與 POST /routines/{id}/complete 回應物件；狀態於查詢當下推導，不落地保存。"""
     routine_id: str = Field(..., description="例行公事 ID")
     title: str = Field(..., description="行程標題")
     type: str = Field(default="other", description="分類")

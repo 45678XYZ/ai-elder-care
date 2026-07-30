@@ -8,7 +8,6 @@ from pydantic import ValidationError
 from src.shared.models import (
     SUMMARY_SECTION_KEYS,
     ConversationCreate,
-    ConversationResponse,
     DailySummaryResponse,
     ElderCreate,
     ElderResponse,
@@ -103,7 +102,6 @@ def test_conversation_create_model():
         elder_id="eld_001",
         elder_transcript="我吃過血壓藥了",
         ai_respond_text="真棒！我幫你記下來了。",
-        elder_audio_s3_key="audio/eld_001/input_001.m4a",
         ai_respond_audio_url="https://s3.amazonaws.com/reply.mp3",
         elder_received_at="2026-07-24T17:30:00+08:00",
         ai_responded_at="2026-07-24T17:30:01+08:00",
@@ -114,8 +112,8 @@ def test_conversation_create_model():
     assert cc_elder.ai_prompt_text is None
     assert cc_elder.elder_transcript == "我吃過血壓藥了"
     assert cc_elder.ai_prompt_audio_url is None
-    assert cc_elder.elder_audio_s3_key == "audio/eld_001/input_001.m4a"
     assert cc_elder.ai_respond_audio_url == "https://s3.amazonaws.com/reply.mp3"
+
     assert cc_elder.elder_received_at == "2026-07-24T17:30:00+08:00"
     assert cc_elder.ai_responded_at == "2026-07-24T17:30:01+08:00"
 
@@ -144,22 +142,6 @@ def test_conversation_create_model():
     )
     assert cc_failed.system_status == "failed"
     assert cc_failed.error_message == "Polly TTS synthesis timeout"
-
-
-def test_conversation_response_model():
-    """測試 ConversationResponse 完整結構。"""
-    cr = ConversationResponse(
-        conversation_id="cnv_999",
-        elder_id="eld_001",
-        created_at="2026-07-24T17:30:00+08:00",
-        elder_transcript="昨天睡得很好",
-        ai_respond_text="太棒了！保持規律作息喔。",
-        ai_respond_audio_url="https://s3.amazonaws.com/response.mp3",
-    )
-    assert cr.conversation_id == "cnv_999"
-    assert cr.elder_id == "eld_001"
-    assert cr.created_at == "2026-07-24T17:30:00+08:00"
-    assert cr.ai_respond_audio_url == "https://s3.amazonaws.com/response.mp3"
 
 
 def test_event_models():

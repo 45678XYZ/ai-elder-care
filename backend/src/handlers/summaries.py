@@ -20,23 +20,9 @@ import re
 
 from src.extraction.temporal import day_key, parse_ts
 from src.shared import auth, bedrock, db, responses, summarizer
-from src.shared.models import SUMMARY_SECTION_KEYS
+from src.shared.models import SUMMARY_SECTION_KEYS, DailySummaryResponse
 
 logger = logging.getLogger(__name__)
-
-# 白名單投影欄位：避免資料層新增內部欄位（如 input_through_at、completeness_rank）時無聲外流
-PUBLIC_SUMMARY_FIELDS: tuple[str, ...] = (
-    "elder_id",
-    "date",
-    "overview",
-    "sections",
-    "routines",
-    "alerts",
-    "interaction_count",
-    "data_status",
-    "pending_session_count",
-    "generated_at",
-)
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
@@ -168,18 +154,25 @@ def handle_generate(event) -> dict[str, Any]:
 def to_public_summary(item: dict[str, Any]) -> dict[str, Any]:
     """將資料層 daily_summaries 實體投影為符合 api.md 規範之公開字典。
 
-    sections 7 個鍵必須完整存在（無資料補 null）；其餘欄位提供預設值，避免前端拿到 undefined 造成渲染錯誤。
+    透過 DailySummaryResponse 模型洗滌：隱藏 input_through_at、completeness_rank 等
+    內部欄位，並保證 sections 七個鍵完整存在（無資料補 null）、其餘欄位提供預設值，
+    避免前端拿到 undefined 造成渲染錯誤。
     """
-    projected = {field: item.get(field) for field in PUBLIC_SUMMARY_FIELDS}
-    sections = projected.get("sections") or {}
-    projected["sections"] = {
+    # 補齊 sections 七鍵與預設值，讓 DailySummaryResponse 的必填欄位能通過驗證
+    normalized = dict(item)
+    sections = normalized.get("sections") or {}
+    normalized["sections"] = {
         key: sections.get(key) if sections.get(key) else None for key in SUMMARY_SECTION_KEYS
     }
-    projected["alerts"] = projected.get("alerts") or []
-    projected["routines"] = projected.get("routines") or {"completed": 0, "missed": 0, "items": []}
-    projected["interaction_count"] = projected.get("interaction_count") or 0
-    projected["pending_session_count"] = projected.get("pending_session_count") or 0
-    return projected
+    normalized.setdefault("alerts", [])
+    normalized.setdefault("routines", {"completed": 0, "missed": 0, "items": []})
+    normalized.setdefault("interaction_count", 0)
+    normalized.setdefault("pending_session_count", 0)
+    normalized.setdefault("overview", "")
+    normalized.setdefault("data_status", "complete")
+    normalized.setdefault("generated_at", "")
+
+    return DailySummaryResponse.model_validate(normalized).model_dump(exclude_none=True)
 
 
 def _shift_days(date: str, days: int) -> str:

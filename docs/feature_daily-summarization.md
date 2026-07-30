@@ -8,7 +8,7 @@ API 契約以 [api.md](api.md) 為準；本文件只描述實作決策與步驟�
 | 項目 | 現況 |
 |---|---|
 | `daily_summaries` DynamoDB 表 | terraform 已建（PK `elder_id` + SK `date`，PITR，無 GSI） |
-| `db.save_daily_summary` | 無條件 `put_item`，沒有 api.md 要求的 cutoff／完整度比較，且未走 `prepare_item` |
+| `db.put_daily_summary` | 無條件 `put_item`，沒有 api.md 要求的 cutoff／完整度比較，且未走 `prepare_item` |
 | `db.get_daily_summaries` | 有日期範圍 Query，但正序、無 `limit`／`next_token` |
 | `handlers/summaries.py`、`handlers/summary_generator.py` | 皆為 stub |
 | `pending_session_count` 所需查詢 | 不存在：沒有「依日期找相關 session」或「當日 turn 數」的資料層函式 |

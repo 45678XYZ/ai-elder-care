@@ -334,7 +334,8 @@ resource "aws_lambda_permission" "apigw_elder_ops" {
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/elders/*"
 }
 
-# --- POST /chat/sessions/{session_id}/close嚗?垢?Ⅱ??嚗?--
+# --- POST /chat/sessions/{session_id}/close（前端主動關閉，雙管道設計之一） ---
+# Session 關閉採雙管道：前端可主動呼叫此 endpoint 即時關閉，EventBridge 排程則負責週期性收斂。
 
 resource "aws_api_gateway_resource" "chat_sessions" {
   rest_api_id = aws_api_gateway_rest_api.api.id

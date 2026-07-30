@@ -321,16 +321,19 @@ def test_handle_get_daily_summaries_success(monkeypatch):
     """測試 get_daily_summaries 工具：正常回傳近期摘要清單。"""
     monkeypatch.setattr(
         db,
-        "get_daily_summaries",
-        lambda eid, from_d, to_d: [
-            {
-                "date": "2026-07-29",
-                "overview": "今日身體狀況良好，按時服藥",
-                "routines": {"completed": 2, "missed": 0},
-                "data_status": "complete",
-                "sections": {"diet": "三餐正常", "medication": "血壓藥已服用"}
-            }
-        ]
+        "list_daily_summaries",
+        lambda eid, from_d, to_d: (
+            [
+                {
+                    "date": "2026-07-29",
+                    "overview": "今日身體狀況良好，按時服藥",
+                    "routines": {"completed": 2, "missed": 0},
+                    "data_status": "complete",
+                    "sections": {"diet": "三餐正常", "medication": "血壓藥已服用"}
+                }
+            ],
+            None
+        )
     )
     res = tools.handle_get_daily_summaries({"elder_id": "eld_001", "days": "1"})
     assert res["status"] == "success"
@@ -350,9 +353,10 @@ def test_handle_get_daily_summaries_days_capped(monkeypatch):
     def mock_get_summaries(eid, from_d, to_d):
         captured["from"] = from_d
         captured["to"] = to_d
-        return []
+        return [], None
 
-    monkeypatch.setattr(db, "get_daily_summaries", mock_get_summaries)
+    monkeypatch.setattr(db, "list_daily_summaries", mock_get_summaries)
+
     res = tools.handle_get_daily_summaries({"elder_id": "eld_001", "days": "99"})
     assert res["status"] == "success"
     # 7 天範圍：to - from 應為 6 天差距

@@ -302,7 +302,7 @@ def list_elders(caregiver_id: str = None) -> list[dict[str, Any]]:
 def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
     """儲存對話紀錄。自動補充 conversation_id（若無）與 created_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
-    
+
     data = dict(conversation_data)
 
     # 自動補全 conversation_id (前綴 cnv_)
@@ -310,24 +310,28 @@ def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
     if not conv_id:
         conv_id = f"cnv_{uuid.uuid4().hex[:12]}"
         data["conversation_id"] = conv_id
-        
+
     # 自動補全 DynamoDB Sort Key: record_id ("TURN#cnv_...") 與 item_type ("conversation")
     if not data.get("record_id"):
         data["record_id"] = f"TURN#{conv_id}"
     data.setdefault("item_type", "conversation")
 
-    # 自動補全 created_at 與 ts 時間戳記 (+08:00)
-    now_iso = datetime.now(TZ_TAIPEI).isoformat()
-    if not data.get("created_at"):
-        data["created_at"] = now_iso
-    if not data.get("ts"):
+    # created_at 與 ts 一律正規化為固定毫秒精度（+08:00），與 events 的 event_time_key
+    # 同規範；conversation_time_key 由 created_at 衍生，精度不一致會讓 GSI 字串排序
+    # 與真實時間順序錯亂（例如無小數秒的 "T10:00:00+08:00" 會排在有毫秒的 "T10:00:00.000+08:00" 之前）
+    if data.get("created_at"):
+        data["created_at"] = normalize_ts(data["created_at"])
+    else:
+        data["created_at"] = format_ts(datetime.now(TZ_TAIPEI))
+    if data.get("ts"):
+        data["ts"] = normalize_ts(data["ts"])
+    else:
         data["ts"] = data["created_at"]
 
     # 自動補全 GSI Sort Key: conversation_time_key (<created_at>#<conversation_id>)
     if not data.get("conversation_time_key"):
         data["conversation_time_key"] = f"{data['created_at']}#{conv_id}"
 
-        
     # 透過 ConversationCreate 進行校驗與預設值補充
     validated = ConversationCreate.model_validate(data)
     validated_dict = validated.model_dump(exclude_none=True)
@@ -345,12 +349,25 @@ def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
 def get_recent_conversations(
     elder_id: str, limit: int = 10, next_token: str = None
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """分頁查詢長者近期對話紀錄（按 created_at 時間倒序）。"""
+    """分頁查詢長者近期對話紀錄（按 created_at 時間倒序）。
+
+    走 GSI `conversations-by-time`：Base table 的 SK 是 `record_id`（`TURN#...`／
+    `SESSION#...`），字串排序不等於時間排序，倒序查詢取到的不是「最近」的對話。
+    GSI 的 SK `conversation_time_key` 為 `<created_at>#<conversation_id>`，字串排序
+    即時間排序，`ScanIndexForward=False` 才能真正取到最新優先。
+
+    GSI 設計上只有 turn（session item 不帶 `conversation_time_key`），但仍以
+    `FilterExpression` 顯式過濾 `item_type=conversation` 作為防禦，避免未來 schema
+    變更時混入 session metadata。
+    """
     table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
-    
+
     query_kwargs: dict[str, Any] = {
+        "IndexName": CONVERSATIONS_BY_TIME_INDEX,
         "KeyConditionExpression": "elder_id = :eid",
-        "ExpressionAttributeValues": {":eid": elder_id},
+        "FilterExpression": "#it = :conv",
+        "ExpressionAttributeNames": {"#it": "item_type"},
+        "ExpressionAttributeValues": {":eid": elder_id, ":conv": "conversation"},
         "ScanIndexForward": False,
         "Limit": limit,
     }
@@ -579,10 +596,12 @@ def get_events(elder_id: str, event_ids: list[str]) -> dict[str, dict[str, Any]]
     table_name = TABLE_EVENTS
     resource = get_dynamodb_resource()
     found: dict[str, dict[str, Any]] = {}
+    unique_ids = list(dict.fromkeys(event_ids))
 
     # BatchGetItem 單次上限 100 筆；被節流的 key 有限次重取，避免 Lambda 卡到逾時
-    for start in range(0, len(event_ids), 100):
-        keys = [{"elder_id": elder_id, "event_id": eid} for eid in event_ids[start:start + 100]]
+    for start in range(0, len(unique_ids), 100):
+        keys = [{"elder_id": elder_id, "event_id": eid} for eid in unique_ids[start:start + 100]]
+
         for _ in range(BATCH_GET_MAX_ATTEMPTS):
             if not keys:
                 break
@@ -905,11 +924,14 @@ def put_daily_summary(summary_data: dict[str, Any]) -> tuple[dict[str, Any], boo
     條件不成立不是錯誤，那正是規則生效的樣子（例如手動 partial 想蓋掉排程 complete）；
     此時回傳既有摘要並把 `written=False` 交給呼叫端決定要不要記指標。
     """
-    for field_name in ("elder_id", "date", "input_through_at", "generated_at", "data_status"):
-        if not summary_data.get(field_name):
-            raise DBError(f"儲存每日摘要需要 {field_name}")
+    # 透過 DailySummaryCreate 校驗必填欄位與型別，與 save_conversation / _prepare_event 一致
+    try:
+        validated = DailySummaryCreate.model_validate(summary_data)
+        data = validated.model_dump(exclude_none=True)
+    except Exception as exc:
+        raise DBError(f"儲存每日摘要校驗失敗: {exc}")
 
-    data = dict(summary_data)
+    # completeness_rank 由 data_status 推導，不暴露於 schema；schema_version 為內部欄位
     data["completeness_rank"] = 1 if data["data_status"] == "complete" else 0
     data.setdefault("schema_version", 1)
 
@@ -988,6 +1010,14 @@ def list_daily_summaries(
         resp = get_dynamodb_resource().Table(TABLE_DAILY_SUMMARIES).query(**query_kwargs)
     except ClientError as e:
         raise DBError(f"查詢每日摘要失敗: {e.response['Error']['Message']}")
+
+    items = convert_decimals(resp.get("Items", []))
+    next_token = encode_next_token(resp["LastEvaluatedKey"]) if "LastEvaluatedKey" in resp else None
+    return items, next_token
+
+
+
+
 
 
 # -----------------------------------------------------------------------------

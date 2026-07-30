@@ -26,6 +26,8 @@ def tools_handler(monkeypatch):
     monkeypatch.setenv("TABLE_CONVERSATIONS", CONVERSATIONS_TABLE)
 
     with mock_aws():
+        # 建表時必須包含 GSI conversations-by-time，get_recent_conversations 走此索引
+        # （Base table SK 是 record_id，字串排序不等於時間排序）
         boto3.resource("dynamodb").create_table(
             TableName=CONVERSATIONS_TABLE,
             KeySchema=[
@@ -35,6 +37,17 @@ def tools_handler(monkeypatch):
             AttributeDefinitions=[
                 {"AttributeName": "elder_id", "AttributeType": "S"},
                 {"AttributeName": "record_id", "AttributeType": "S"},
+                {"AttributeName": "conversation_time_key", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "conversations-by-time",
+                    "KeySchema": [
+                        {"AttributeName": "elder_id", "KeyType": "HASH"},
+                        {"AttributeName": "conversation_time_key", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -48,14 +61,21 @@ def tools_handler(monkeypatch):
 
 
 def seed_conversations(n=3):
-    """在 mocked DynamoDB 裡塞入 n 筆假對話紀錄。"""
+    """在 mocked DynamoDB 裡塞入 n 筆假對話紀錄。
+
+    每筆都帶 conversation_time_key 與 item_type，讓 GSI 查詢能正確排序與過濾。
+    """
     table = boto3.resource("dynamodb").Table(CONVERSATIONS_TABLE)
     for i in range(n):
+        created_at = f"2026-07-30T10:{i:02d}:00.000+08:00"
+        conv_id = f"cnv_{i:03d}"
         table.put_item(Item={
             "elder_id": ELDER,
-            "record_id": f"TURN#cnv_{i:03d}",
-            "conversation_id": f"cnv_{i:03d}",
-            "created_at": f"2026-07-30T10:{i:02d}:00.000+08:00",
+            "record_id": f"TURN#{conv_id}",
+            "conversation_id": conv_id,
+            "item_type": "conversation",
+            "created_at": created_at,
+            "conversation_time_key": f"{created_at}#{conv_id}",
             "elder_transcript": f"長者說的第 {i} 句話",
             "ai_respond_text": f"AI 的第 {i} 個回覆",
         })

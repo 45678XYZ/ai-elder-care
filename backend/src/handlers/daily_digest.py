@@ -139,7 +139,8 @@ def process_elder(elder: Dict[str, Any], today_str: str) -> int:
 
     # 取得今日健康摘要
     try:
-        summaries = db.get_daily_summaries(elder_id, today_str, today_str)
+        summaries, _ = db.list_daily_summaries(elder_id, today_str, today_str)
+
         summary = summaries[0] if summaries else {}
     except Exception as e:
         print(f"[Warning] 取得 elder={elder_id} 摘要失敗: {e}")

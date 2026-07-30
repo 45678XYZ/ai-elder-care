@@ -217,3 +217,38 @@ resource "aws_lambda_permission" "summary_backfill" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.summary_backfill.arn
 }
+
+# =============================================================================
+# 5. Session closer sweep（EventBridge 週期性收斂 — Session 關閉唯一來源）
+# =============================================================================
+# Session 關閉
+# POST /chat/sessions/{session_id}/close
+# 此 sweep 執行：idle close、BATCH#PENDING 補投、BATCH#PROCESSING lease 過期重投。
+
+resource "aws_cloudwatch_event_rule" "session_sweep" {
+  name                = "${var.project_name}-session-sweep"
+  description         = "週期性收斂閒置 session 與 batch recovery（idle close / pending requeue / lease expiry）"
+  schedule_expression = "rate(${var.session_sweep_minutes} minutes)"
+}
+
+resource "aws_cloudwatch_event_target" "session_sweep" {
+  rule      = aws_cloudwatch_event_rule.session_sweep.name
+  target_id = "session-closer-sweep"
+  arn       = module.session_closer.lambda_function_arn
+
+  input = jsonencode({
+    source = "aws.events"
+    sweep  = true
+  })
+}
+
+resource "aws_lambda_permission" "session_sweep" {
+  statement_id  = "AllowEventBridgeSessionSweep"
+  action        = "lambda:InvokeFunction"
+  function_name = module.session_closer.lambda_function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.session_sweep.arn
+}
+
+
+
