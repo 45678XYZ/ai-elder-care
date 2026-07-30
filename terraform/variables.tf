@@ -97,6 +97,12 @@ variable "event_slot_minutes" {
   default     = 30
 }
 
+variable "routine_grace_minutes" {
+  description = "occurrence 由 pending 轉 missed 的寬限（分鐘）；routines、摘要與統計共用"
+  type        = number
+  default     = 120
+}
+
 variable "chunker_type" {
   description = "分塊策略：llm_prompt | embedding_depth | pairwise_v2"
   type        = string

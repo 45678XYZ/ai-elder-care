@@ -8,7 +8,7 @@
 #   GET   /events                                           ??events ??
 #   GET/POST /routines?ATCH /routines/{routine_id}??
 #   POST  /routines/{routine_id}/complete                   ??routines嚗??嗡??撖虫?嚗?
-#   GET   /stats                                            ??stats嚗??嗡??撖虫?嚗?
+#   GET   /stats                                            → stats
 #
 # ?芋蝯銵??芸楛?楝?梧??梁?啣嚗EST API?uthorizer?eployment?tage??
 # 摮??亥???瘚??冽迨瑼?甈∪?憒乓憓楝?梁??箏??辣鈭?
@@ -110,6 +110,44 @@ resource "aws_lambda_permission" "get_events" {
   function_name = module.api_events.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/events"
+}
+
+# --- GET /stats（互動與行程統計）---
+
+resource "aws_api_gateway_resource" "stats" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "stats"
+}
+
+resource "aws_api_gateway_method" "get_stats" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.stats.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.querystring.elder_id" = false
+    "method.request.querystring.days"     = false
+  }
+}
+
+resource "aws_api_gateway_integration" "get_stats" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.stats.id
+  http_method             = aws_api_gateway_method.get_stats.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.api_stats.lambda_function_invoke_arn
+}
+
+resource "aws_lambda_permission" "get_stats" {
+  statement_id  = "AllowApiGatewayGetStats"
+  action        = "lambda:InvokeFunction"
+  function_name = module.api_stats.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/stats"
 }
 
 # --- POST /chat + GET|POST /elders + GET|PATCH /elders/{elder_id} ---
@@ -318,6 +356,8 @@ resource "aws_api_gateway_deployment" "api" {
     redeployment = sha1(jsonencode([
       aws_api_gateway_method.get_events,
       aws_api_gateway_integration.get_events,
+      aws_api_gateway_method.get_stats,
+      aws_api_gateway_integration.get_stats,
       aws_api_gateway_method.post_chat,
       aws_api_gateway_integration.post_chat,
       aws_api_gateway_method.get_elders,

@@ -563,7 +563,9 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 }
 ```
 
-`interaction_count` 一律是 `/chat` turn 數，不是 session 數。`today` 即時計算；`daily` 是前端近 N 日趨勢的逐日資料；`routines.by_routine` 只列期間內至少有一次排程的 routine。完成依 canonical events 計數。
+`elder_id` 必填；`days` 預設 7，可帶 1–31，超出範圍或非整數回 400 `INVALID_PARAMETER`。統計區間為台灣日界下含今天的最近 `days` 天，全部即時彙總，不讀每日摘要。
+
+`interaction_count` 一律是 `/chat` turn 數，不是 session 數，且只計已完成的 turn。`today` 即時計算，當日尚無互動時 `interaction_count` 為 0 並省略 `last_interaction_at`；`period.active_days` 是區間內有互動的天數。`daily` 是前端近 N 日趨勢的逐日資料，依日期遞增，區間內每天都有一筆，無資料的日期以 0 呈現。`routines.by_routine` 只列期間內至少有一次排程的 routine，依 `routine_id` 排序：`total` 是該 routine 在區間內的 occurrence 數（含 pending 與 missed），`completed` 是其中已完成數，`title` 取區間內最新一次排程採用的版本。完成依 canonical events 計數，occurrence 的收斂與 `missed` 判定與當日行程同一套規則。
 
 ---
 
