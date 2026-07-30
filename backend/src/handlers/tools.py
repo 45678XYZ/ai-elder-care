@@ -553,6 +553,46 @@ def handle_get_daily_summaries(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"查詢每日摘要失敗: {str(e)}"}
 
 
+def handle_get_recent_conversations(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具九：查詢長者最近幾句對話內容，讓 AI 在 Bedrock session 過期後仍能回憶當前對話脈絡。
+
+    只回傳最新 limit 筆（預設 8 句），並僅保留 elder_transcript、agent_reply 與時間，
+    避免無關 metadata 浪費 LLM Context Window。
+    """
+    elder_id = params.get("elder_id")
+    limit = int(params.get("limit", 8))
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+
+    # 安全上限：最多 15 句，避免 token 爆炸
+    limit = max(1, min(limit, 15))
+
+    try:
+        conversations, _ = db.get_recent_conversations(elder_id, limit=limit)
+
+        # 整理為對話格式，只保留對 AI 有用的欄位
+        turns = []
+        for c in reversed(conversations):  # 反轉為時間正序（舊→新）
+            turn = {"time": c.get("created_at", "")[:16]}  # 只取 YYYY-MM-DDTHH:MM
+            if c.get("elder_transcript"):
+                turn["elder"] = c["elder_transcript"]
+            if c.get("agent_reply"):
+                turn["ai"] = c["agent_reply"]
+            turns.append(turn)
+
+        return {
+            "status": "success",
+            "elder_id": elder_id,
+            "count": len(turns),
+            "note": "以下為此次對話最近紀錄（舊→新），供您回顧剛才談話內容",
+            "turns": turns,
+        }
+    except Exception as e:
+        print(f"[Error] handle_get_recent_conversations 失敗: {e}")
+        return {"status": "error", "message": f"查詢對話紀錄失敗: {str(e)}"}
+
+
 # 工具分流映射字典 (Function Name -> Handler Function)
 # -----------------------------------------------------------------------------
 
@@ -565,6 +605,7 @@ TOOL_HANDLERS = {
     "remind_pending_routines": handle_remind_pending_routines,
     "notify_caregiver": handle_notify_caregiver,
     "get_daily_summaries": handle_get_daily_summaries,
+    "get_recent_conversations": handle_get_recent_conversations,
 }
 
 

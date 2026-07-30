@@ -293,10 +293,28 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
             description = "查詢最近幾天的摘要，預設為 3 天（含今天），最多 7 天。例如 days=3 代表今天+昨天+前天。"
             required    = false
           }
+        }
+
+      # 工具九：回顧本次對話歷史（補救 Bedrock Session 20 分鐘過期問題）
+      functions {
+        name        = "get_recent_conversations"
+        description = "Retrieve the most recent conversation turns with the elder. Use this tool when you feel you have lost context of the current conversation, for example after a session timeout, to recall what was discussed earlier in this session."
+        parameters {
+          map_block_key = "elder_id"
+          type        = "string"
+          description = "長者的唯一識別 ID，例如 eld_001"
+          required    = true
+        }
+        parameters {
+          map_block_key = "limit"
+          type        = "integer"
+          description = "要回顧最近幾句對話，預設為 8，最多 15。建議用預設值即可。"
+          required    = false
+        }
+    }
       }
     }
   }
-}
 
 # 5. 授權 Bedrock 調用 Tools Lambda
 resource "aws_lambda_permission" "allow_bedrock_to_invoke_tools" {
