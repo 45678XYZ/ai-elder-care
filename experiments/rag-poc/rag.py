@@ -1,12 +1,9 @@
 """階段二：檢索 + LLM 生成答案的核心邏輯。"""
 
-import os
 from pathlib import Path
 
 import chromadb
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 
 from bm25_search import BM25Index
 from embedding import get_embedding_function
@@ -23,9 +20,6 @@ COLLECTION_NAME = "kb_collection"  # 需與 ingest.py 一致
 # k=5 又會稀釋「高血壓」這類問題的答案，兩難的根源是排序不夠準，不是 k 選錯）。
 CANDIDATE_POOL = 10
 N_RESULTS = 4
-
-# 測試用 Gemini（免費額度），之後接正式 API 再換回 Anthropic
-MODEL = os.environ.get("RAG_MODEL", "gemini-3.1-flash-lite")
 
 PROMPT_TEMPLATE = """你是一個長照與健康衛教問答助手，只能根據下面提供的「參考資料」回答問題。
 
@@ -44,7 +38,6 @@ PROMPT_TEMPLATE = """你是一個長照與健康衛教問答助手，只能根�
 問題：{question}
 """
 
-_client: genai.Client | None = None
 _collection = None
 _bm25_index: BM25Index | None = None
 
@@ -69,14 +62,33 @@ def _get_bm25_index() -> BM25Index:
     return _bm25_index
 
 
-def _get_genai_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client()  # 讀取環境變數 GEMINI_API_KEY
-    return _client
+def _generate(prompt: str) -> str:
+    """把組好的 prompt 送給 LLM，回傳答案文字。
+
+    PoC 階段這裡接的是 Gemini（免費額度，只為了跑通檢索邏輯）；檢索驗證完成後
+    已移除，正式版改接 **Bedrock**。留成獨立函式而不是直接刪掉整條生成路徑，
+    是因為檢索那半（retrieve）本身還有用——rerank 的參數、CANDIDATE_POOL 與
+    N_RESULTS 的取捨都是在這份 PoC 上調出來的，之後要跟 Bedrock Knowledge Base
+    對照召回率還是從這裡跑。
+
+    TODO(bedrock): 接 `bedrock-runtime` 的 Converse API。可直接參考
+      `backend/src/shared/bedrock.py` 的 `converse()`（同一套 boto3 呼叫、
+      模型 ID 走 BEDROCK_MODEL_ID 環境變數）；這包是獨立的實驗環境、不 import
+      backend 的 src 套件，所以要嘛自己起一個 boto3 client，要嘛把那支抄過來。
+      接上之後 requirements.txt 要補 boto3。
+    """
+    raise NotImplementedError(
+        "生成層待接 Bedrock：Gemini 僅為 PoC 測試用途，檢索驗證完成後已移除。"
+        "檢索的部分可直接呼叫 retrieve() 使用。"
+    )
 
 
-def answer(question: str) -> dict:
+def retrieve(question: str) -> tuple[list[str], list[dict]]:
+    """dense + BM25 混合檢索 → rerank，回傳重排後的前 N_RESULTS 筆（文件, metadata）。
+
+    與生成分開：這半不依賴任何 LLM 供應商，換模型不會動到它，也讓檢索品質
+    可以單獨評估（PoC 的價值主要在這裡）。
+    """
     collection = _get_collection()
     dense_result = collection.query(query_texts=[question], n_results=CANDIDATE_POOL)
 
@@ -99,6 +111,16 @@ def answer(question: str) -> dict:
     order = rerank(question, candidate_documents)[:N_RESULTS]
     documents = [candidate_documents[i] for i in order]
     metadatas = [candidate_metadatas[i] for i in order]
+    return documents, metadatas
+
+
+def answer(question: str) -> dict:
+    """檢索 + 生成的完整流程。
+
+    生成層目前未接（見 [_generate]），呼叫這支會拋 NotImplementedError；
+    只要檢索結果的話請直接用 [retrieve]。
+    """
+    documents, metadatas = retrieve(question)
 
     context_parts = []
     sources = []
@@ -114,14 +136,7 @@ def answer(question: str) -> dict:
 
     context = "\n\n".join(context_parts)
     prompt = PROMPT_TEMPLATE.format(context=context, question=question)
-
-    client = _get_genai_client()
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=1024),
-    )
-    answer_text = response.text
+    answer_text = _generate(prompt)
 
     return {
         "answer": answer_text,

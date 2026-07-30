@@ -34,4 +34,4 @@ python -m pytest
 
 ## RAG PoC（衛教知識庫問答）
 
-已移至 [experiments/rag-poc/](../experiments/rag-poc/)——與此 Lambda 骨架分開維護（在本機用 Chroma + Gemini 跑通檢索/生成）。正式版由 `chat.py` 接 Bedrock Knowledge Base 實作。
+已移至 [experiments/rag-poc/](../experiments/rag-poc/)——與此 Lambda 骨架分開維護（在本機用 Chroma 跑通檢索；生成層待接 Bedrock）。正式版由 `chat.py` 接 Bedrock Knowledge Base 實作。
