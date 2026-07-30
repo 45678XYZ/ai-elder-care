@@ -33,7 +33,7 @@ class SignOutButton extends StatelessWidget {
           // 照護者這句刻意不提「清掉長輩資料」：長輩名冊、行程與事件都在後端，
           // 登出只丟掉這台裝置上的登入狀態與「上次選了哪位長輩」，重新登入就回來。
           // 講成資料會不見會讓人不敢按，那是不實的恐嚇。
-          elderMode ? '登出之後要再輸入一次信箱和密碼才能進來。' : '登出後要重新登入。長輩的資料存在雲端，不會不見。',
+          elderMode ? '登出之後要再輸入一次信箱和密碼才能進來。' : '登出後要重新登入。長者數據不會因登出而消失。',
           style: bodyStyle,
         ),
         actionsPadding: const EdgeInsets.fromLTRB(
