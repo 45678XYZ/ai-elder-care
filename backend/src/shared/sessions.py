@@ -47,6 +47,9 @@ SESSION_MAX_INFLIGHT_TURNS = int(os.environ.get("SESSION_MAX_INFLIGHT_TURNS", "1
 # 超過此時間無互動的 active session 不再接受新 turn，改由 closer 收斂
 SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30"))
 
+# 找 active session 時往回看的 session 筆數；只需要涵蓋「最新幾個」即可（見 find_active_session）
+ACTIVE_SESSION_LOOKUP_LIMIT = 5
+
 # ULID 的 Crockford base32 字母表（去掉 I、L、O、U，避免與數字混淆）
 _CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -176,6 +179,66 @@ def create_session(elder_id: str, *, now: datetime | None = None) -> dict[str, A
             "session_state_time_key": f"{started_at}#{elder_id}#{session_id}",
         }
     )
+
+
+def find_active_session(elder_id: str) -> dict[str, Any] | None:
+    """取長者目前的 active session；沒有則回 None。
+
+    在 Base table 上以 `SESSION#` 前綴倒序讀最近幾筆：`session_id` 是 ULID，字典序即建立順序，
+    最新的 session 必然排在最前面，而新 session 只在前一個不再接納時才建立，因此 active 的
+    那個一定落在最前面幾筆內。不走 `sessions-by-state`：該索引的 partition 是所有長者共用的
+    `ACTIVE`，要撈單一長者得整片掃過再過濾，也不能當成 ownership 的真理來源。
+    """
+    table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
+    try:
+        response = table.query(
+            KeyConditionExpression="elder_id = :eid AND begins_with(record_id, :prefix)",
+            ExpressionAttributeValues={":eid": elder_id, ":prefix": SESSION_RECORD_PREFIX},
+            ScanIndexForward=False,
+            Limit=ACTIVE_SESSION_LOOKUP_LIMIT,
+            ConsistentRead=True,
+        )
+    except ClientError as exc:
+        raise SessionError(f"查詢 active session 失敗: {exc.response['Error']['Message']}")
+
+    for item in response.get("Items", []):
+        if item.get("state") == STATE_ACTIVE:
+            return db.convert_decimals(item)
+    return None
+
+
+def get_recent_turns(elder_id: str, limit: int = 8) -> list[dict[str, Any]]:
+    """目前 active session 內最近幾輪「已完成」的對話，依時間正序（舊→新）。
+
+    走 session 的 `recent_conversation_ids` 再回 Base table 強一致讀取，而不是查
+    `conversations-by-time`：當輪 context 不能建立在最終一致的索引上，剛提交的上一輪很可能
+    還沒出現在索引裡，AI 就會以為那句話沒說過（規則見 docs/framework.md 的 Turn 欄位段落）。
+
+    只回 `completed`：正在飛的當前輪還沒有 AI 回覆，餵給模型只會讓它看到半截對話。
+    """
+    session = find_active_session(elder_id)
+    if session is None:
+        return []
+
+    conversation_ids = list(session.get("recent_conversation_ids") or [])[-limit:]
+    if not conversation_ids:
+        return []
+
+    keys = [
+        {"elder_id": elder_id, "record_id": f"{TURN_RECORD_PREFIX}{conversation_id}"}
+        for conversation_id in conversation_ids
+    ]
+    try:
+        found = {item["record_id"]: db.convert_decimals(item) for item in _batch_get_all(keys)}
+    except ClientError as exc:
+        raise SessionError(f"讀取近期對話失敗: {exc.response['Error']['Message']}")
+
+    recent = []
+    for conversation_id in conversation_ids:
+        turn = found.get(f"{TURN_RECORD_PREFIX}{conversation_id}")
+        if turn and turn.get("request_status") == db.TURN_STATUS_COMPLETED:
+            recent.append(turn)
+    return recent
 
 
 def is_idle(session: dict[str, Any], *, now: datetime | None = None) -> bool:

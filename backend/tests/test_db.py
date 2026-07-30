@@ -194,12 +194,11 @@ def test_put_event_if_absent_returns_existing(mock_get_resource):
 
 
 @patch("src.shared.db.get_dynamodb_resource")
-def test_save_and_get_recent_conversations(mock_get_resource):
-    """測試 Conversations 表之儲存、自動帶入 cnv_ ID/時間戳記與分頁查詢。"""
+def test_save_conversation(mock_get_resource):
+    """測試 Conversations 表之儲存與自動帶入 cnv_ ID/時間戳記。"""
     mock_table = MagicMock()
     mock_get_resource.return_value.Table.return_value = mock_table
 
-    # 1. 測試 save_conversation 自動帶入 ID 與 created_at
     data = {
         "elder_id": "eld_001",
         "source": "system_routine_inquiry",
@@ -215,25 +214,6 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     assert saved["user_status"] == "replied"
     assert saved["system_status"] == "success"
     mock_table.put_item.assert_called_once()
-
-    # 2. 測試 get_recent_conversations (分頁 next_token)
-    mock_table.query.return_value = {
-        "Items": [
-            {
-                "conversation_id": "cnv_001",
-                "elder_id": "eld_001",
-                "created_at": "2026-07-24T17:00:00+08:00",
-                "elder_transcript": "今天心情好",
-            }
-        ],
-        "LastEvaluatedKey": {"elder_id": "eld_001", "created_at": "2026-07-24T17:00:00+08:00"},
-    }
-
-    items, next_token = db.get_recent_conversations("eld_001", limit=1)
-    assert len(items) == 1
-    assert items[0]["conversation_id"] == "cnv_001"
-    assert next_token is not None
-    mock_table.query.assert_called_once()
 
 
 @patch("src.shared.db.put_event_if_absent")
