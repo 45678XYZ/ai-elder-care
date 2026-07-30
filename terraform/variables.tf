@@ -14,6 +14,12 @@ variable "aws_region" {
 #
 # 預設 false：不建立任何 GPU 資源。這與後端 ASR 模組的 model production gate
 # 一致——模型未經人工核准前，程式層與基礎設施層都保持關閉。
+#
+# 啟用前置條件（fail-closed）：
+# 1. 兩個模型的 image URI 與 model-data URL 都必須提供
+# 2. artifact bucket 必須存在
+# 3. Formo 的方言 prompt 必須在 container deployment 中固定（Lambda 不傳送）
+# 4. 程式側 model production gate 5 項全部核准
 
 variable "asr_enable_endpoints" {
   description = "是否建立 ASR 推論端點。預設關閉，避免未驗證的模型產生 GPU 費用"

@@ -1,4 +1,4 @@
-# ASR 實體模型推論端點（SageMaker real-time）
+# ASR 實體模型推論端點（SageMaker real-time）— remote-only 架構
 #
 # 兩個端點構成後端 ASR 備援鏈的實體：
 #   - CE  (Taiwan-Tongues-ASR-CE)：支援 zh 與 hak，是兩種語言的主力
@@ -9,9 +9,14 @@
 #   - 「根據流量而備援」由下方的 target tracking autoscaling 與程式側 slot pool
 #     的飽和溢流共同處理
 #
+# Container contract 見 docs/asr/sagemaker-inference-contract.md。
+#
 # 本檔預設不建立任何資源（var.asr_enable_endpoints = false）。這是刻意的：
 # 模型還沒通過 Colab 人工驗證，程式層的 model production gate 也還關著，
 # 基礎設施層沒有理由先產生 GPU 費用。
+#
+# Fail-closed validation：啟用時必須同時提供兩個模型的 image URI、
+# model-data URL 與 artifact bucket，否則 terraform validate 失敗。
 
 locals {
   asr_endpoints_enabled = var.asr_enable_endpoints ? 1 : 0
@@ -19,6 +24,22 @@ locals {
   # 兩個端點共用的名稱前綴，供程式側以環境變數對應。
   asr_ce_endpoint_name    = "${var.project_name}-asr-ce"
   asr_formo_endpoint_name = "${var.project_name}-asr-formo"
+}
+
+# ─────────────────────────────────────────────────────────────────
+# 0. Fail-closed validation — 啟用時缺少任一必要參數即失敗
+# ─────────────────────────────────────────────────────────────────
+check "asr_endpoints_require_all_parameters" {
+  assert {
+    condition = !var.asr_enable_endpoints || (
+      var.asr_ce_image_uri != "" &&
+      var.asr_ce_model_data_url != "" &&
+      var.asr_formo_image_uri != "" &&
+      var.asr_formo_model_data_url != "" &&
+      var.asr_model_artifact_bucket != ""
+    )
+    error_message = "啟用 ASR 端點（asr_enable_endpoints = true）時，必須同時提供 asr_ce_image_uri、asr_ce_model_data_url、asr_formo_image_uri、asr_formo_model_data_url 與 asr_model_artifact_bucket。缺少任一參數即安全失敗。"
+  }
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -270,8 +291,8 @@ resource "aws_appautoscaling_policy" "asr_formo_invocations" {
 # 供 chat Lambda 呼叫兩個端點。權限限定在這兩個 endpoint ARN，不開放
 # sagemaker:InvokeEndpoint 到 "*"。
 #
-# TODO: chat Lambda 的 role 尚未建立（lambda.tf 目前只有 pre-token trigger），
-# 建立後需 attach 這個 policy 並注入 ASR_*_ENDPOINT 環境變數。
+# chat Lambda role 需 attach 這個 policy 並注入 ASR_CONFIG_JSON 環境變數
+# （見 Task 8 的 IAM 與設定注入）。
 # ─────────────────────────────────────────────────────────────────
 resource "aws_iam_policy" "invoke_asr_endpoints" {
   count = local.asr_endpoints_enabled
