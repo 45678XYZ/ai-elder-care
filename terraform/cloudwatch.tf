@@ -101,7 +101,7 @@ resource "aws_cloudwatch_metric_alarm" "summary_generator_errors" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    FunctionName = aws_lambda_function.summary_generator.function_name
+    FunctionName = module.summary_generator.lambda_function_name
   }
 
   alarm_actions = [aws_sns_topic.batch_alerts.arn]

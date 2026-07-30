@@ -1,4 +1,4 @@
-﻿variable "project_name" {
+variable "project_name" {
   description = "資源命名前綴"
   type        = string
   default     = "ai-elder-care"
@@ -241,12 +241,6 @@ variable "summary_sweep_limit" {
   description = "單次 sweep 處理的長者數上限，避免 Lambda 超時"
   type        = number
   default     = 50
-}
-
-variable "routine_grace_minutes" {
-  description = "occurrence 由 pending 轉 missed 的寬限（分鐘）；routines、摘要與統計共用"
-  type        = number
-  default     = 120
 }
 
 variable "summary_lambda_timeout" {

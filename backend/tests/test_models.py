@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from src.shared.models import (
     SUMMARY_SECTION_KEYS,
     ConversationCreate,
+    DailySummaryCreate,
     DailySummaryResponse,
     ElderCreate,
     ElderResponse,
@@ -269,4 +270,46 @@ def test_routine_request_models_reject_unknown_fields():
         RoutineComplete(date="2026/07/25")
 
     assert RoutineComplete().date is None
+
+
+def test_daily_summary_models():
+    """測試 DailySummaryCreate (DB 寫入模型) 與 DailySummaryResponse (API 回應模型) 驗證與序列化。"""
+    sections = {key: None for key in SUMMARY_SECTION_KEYS}
+    sections["diet"] = "三餐正常"
+
+    dsc = DailySummaryCreate(
+        elder_id="eld_001",
+        date="2026-07-31",
+        overview="今日狀態良好",
+        sections=sections,
+        routines={"completed": 1, "missed": 0, "items": []},
+        alerts=[],
+        interaction_count=3,
+        data_status="complete",
+        pending_session_count=0,
+        input_through_at="2026-07-31T23:50:00+08:00",
+        generated_at="2026-07-31T23:50:05+08:00",
+    )
+    assert dsc.elder_id == "eld_001"
+    assert dsc.data_status == "complete"
+    assert dsc.sections["diet"] == "三餐正常"
+
+    dsr = DailySummaryResponse(
+        elder_id="eld_001",
+        date="2026-07-31",
+        overview="今日狀態良好",
+        sections=sections,
+        routines={"completed": 1, "missed": 0, "items": []},
+        alerts=[],
+        interaction_count=3,
+        data_status="complete",
+        pending_session_count=0,
+        generated_at="2026-07-31T23:50:05+08:00",
+    )
+    dumped = dsr.model_dump()
+    assert dumped["elder_id"] == "eld_001"
+    assert "input_through_at" not in dumped
+    assert "completeness_rank" not in dumped
+    assert dumped["sections"]["diet"] == "三餐正常"
+
 

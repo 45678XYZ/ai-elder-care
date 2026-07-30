@@ -560,6 +560,8 @@ module "api_events" {
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = local.extraction_env
+}
+
 # --- 每日摘要（見 docs/feature_daily-summarization.md）---
 
 
@@ -579,40 +581,49 @@ locals {
 
 # GET /summaries 與 POST /summaries/generate 同一支 handler（依 httpMethod 分派）。
 # POST 會同步呼叫模型，因此 timeout 比純查詢的 api_events 長。
-resource "aws_lambda_function" "api_summaries" {
+module "api_summaries" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-api-summaries"
-  role          = aws_iam_role.extraction.arn
+  description   = "照護者端每日摘要 API"
   handler       = "src.handlers.summaries.handler"
   runtime       = "python3.11"
+  timeout       = var.summary_lambda_timeout
+  memory_size   = 512
 
-  filename         = data.archive_file.backend.output_path
-  source_code_hash = data.archive_file.backend.output_base64sha256
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
 
-  timeout     = var.summary_lambda_timeout
-  memory_size = 512
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
 
-  environment {
-    variables = merge(local.extraction_env, local.summary_env)
-  }
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = merge(local.extraction_env, local.summary_env)
 }
 
 # 排程生成：nightly 與 backfill 兩種 mode 由 EventBridge 的 input 指定
-resource "aws_lambda_function" "summary_generator" {
+module "summary_generator" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-summary-generator"
-  role          = aws_iam_role.extraction.arn
+  description   = "排程每日摘要生成器（nightly + backfill）"
   handler       = "src.handlers.summary_generator.handler"
   runtime       = "python3.11"
+  timeout       = var.summary_generator_timeout
+  memory_size   = 1024
 
-  filename         = data.archive_file.backend.output_path
-  source_code_hash = data.archive_file.backend.output_base64sha256
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
 
-  # 一次要跑多位長者 × 一次模型呼叫；單次處理量另受 SUMMARY_SWEEP_LIMIT 約束
-  timeout     = var.summary_generator_timeout
-  memory_size = 1024
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
 
-  environment {
-    variables = merge(local.extraction_env, local.summary_env)
-  }
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = merge(local.extraction_env, local.summary_env)
 }
 
 module "api_stats" {

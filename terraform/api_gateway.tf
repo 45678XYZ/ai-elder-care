@@ -1,4 +1,4 @@
-﻿# API Gateway（REST，路徑前綴 /v1，Cognito JWT authorizer）
+# API Gateway（REST，路徑前綴 /v1，Cognito JWT authorizer）
 
 #
 # 路由 → Lambda 對應（規格見 docs/api.md 端點總覽）：
@@ -146,7 +146,7 @@ resource "aws_api_gateway_integration" "get_summaries" {
 
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.api_summaries.invoke_arn
+  uri                     = module.api_summaries.lambda_function_invoke_arn
 }
 
 resource "aws_api_gateway_resource" "summaries_generate" {
@@ -170,14 +170,14 @@ resource "aws_api_gateway_integration" "generate_summary" {
 
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.api_summaries.invoke_arn
+  uri                     = module.api_summaries.lambda_function_invoke_arn
 }
 
 # 一支 Lambda 兩條路由，因此兩個 permission 各自收斂到自己的 method
 resource "aws_lambda_permission" "get_summaries" {
   statement_id  = "AllowApiGatewayGetSummaries"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.api_summaries.function_name
+  function_name = module.api_summaries.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/summaries"
 }
@@ -185,7 +185,7 @@ resource "aws_lambda_permission" "get_summaries" {
 resource "aws_lambda_permission" "generate_summary" {
   statement_id  = "AllowApiGatewayGenerateSummary"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.api_summaries.function_name
+  function_name = module.api_summaries.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/summaries/generate"
 }

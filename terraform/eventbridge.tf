@@ -181,7 +181,7 @@ resource "aws_cloudwatch_event_rule" "summary_nightly" {
 resource "aws_cloudwatch_event_target" "summary_nightly" {
   rule      = aws_cloudwatch_event_rule.summary_nightly.name
   target_id = "summary-generator-nightly"
-  arn       = aws_lambda_function.summary_generator.arn
+  arn       = module.summary_generator.lambda_function_arn
 
   input = jsonencode({ mode = "nightly" })
 }
@@ -189,7 +189,7 @@ resource "aws_cloudwatch_event_target" "summary_nightly" {
 resource "aws_lambda_permission" "summary_nightly" {
   statement_id  = "AllowEventBridgeSummaryNightly"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.summary_generator.function_name
+  function_name = module.summary_generator.lambda_function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.summary_nightly.arn
 }
@@ -205,7 +205,7 @@ resource "aws_cloudwatch_event_rule" "summary_backfill" {
 resource "aws_cloudwatch_event_target" "summary_backfill" {
   rule      = aws_cloudwatch_event_rule.summary_backfill.name
   target_id = "summary-generator-backfill"
-  arn       = aws_lambda_function.summary_generator.arn
+  arn       = module.summary_generator.lambda_function_arn
 
   input = jsonencode({ mode = "backfill" })
 }
@@ -213,7 +213,7 @@ resource "aws_cloudwatch_event_target" "summary_backfill" {
 resource "aws_lambda_permission" "summary_backfill" {
   statement_id  = "AllowEventBridgeSummaryBackfill"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.summary_generator.function_name
+  function_name = module.summary_generator.lambda_function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.summary_backfill.arn
 }

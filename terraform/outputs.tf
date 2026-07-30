@@ -40,5 +40,5 @@ output "concept_vector_index" {
 
 output "summary_generator_function_name" {
   description = "排程摘要 Lambda 名稱；手動補算可用 aws lambda invoke 帶 {\"mode\":\"nightly\",\"date\":\"YYYY-MM-DD\"}"
-  value       = aws_lambda_function.summary_generator.function_name
+  value       = module.summary_generator.lambda_function_name
 }
