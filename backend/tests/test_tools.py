@@ -58,14 +58,15 @@ def test_handle_complete_routine_success(monkeypatch):
     """測試 complete_routine 工具處理函式。"""
     monkeypatch.setattr(
         db,
-        "complete_routine_with_event",
+        "complete_routine_occurrence",
         lambda **kwargs: {
             "routine_id": kwargs["routine_id"],
             "status": "done",
             "completed_at": kwargs["ts"],
-            "completed_by": kwargs["source"]
+            "completed_by": kwargs.get("completed_by", "conversation")
         }
     )
+
 
     res = tools.handle_complete_routine({
         "elder_id": "eld_001",
@@ -182,10 +183,18 @@ def _reset_emergency_state():
 
 
 def _mock_create_event(monkeypatch):
-    """共用的 db.create_event mock helper。"""
+    """共用的 db.put_event_if_absent 與 SNS mock helper。"""
     created_events = []
-    monkeypatch.setattr(db, "create_event", lambda data: created_events.append(data) or data)
+    def _fake_put(data):
+        item = dict(data)
+        item.setdefault("event_id", f"evt_{item.get('canonical_event_key', 'test')}")
+        created_events.append(item)
+        return item, True
+
+    monkeypatch.setattr(db, "put_event_if_absent", _fake_put)
+    monkeypatch.setattr(tools, "_publish_sns", lambda topic, sub, body: "msg_mock_123")
     return created_events
+
 
 
 # 情境一：emergency 初次警報 — 正常發送並建立 In-Memory 狀態鎖與 DB 事件
@@ -212,7 +221,8 @@ def test_notify_emergency_first_alert_success(monkeypatch):
     # 確認已寫入 DB events
     assert len(created_events) == 1
     assert "🚨" in created_events[0]["detail"]
-    assert created_events[0]["type"] == "wellbeing"
+    assert created_events[0]["type"] == "safety"
+
 
 
 # 情境二：emergency 冷卻期內重複呼叫 — 應被攔截 (throttled)

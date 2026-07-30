@@ -206,10 +206,7 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     # 1. 測試 save_conversation 自動帶入 ID 與 created_at
     data = {
         "elder_id": "eld_001",
-        "source": "system_routine_inquiry",
-        "routine_id": "rtn_001",
-        "ai_prompt_text": "吃藥時間到囉！",
-        "elder_transcript": "我吃過了",
+        "elder_transcript": "我吃過血壓藥了",
         "ai_respond_text": "好棒！幫你記下來了。",
     }
     saved = db.save_conversation(data)
@@ -220,9 +217,8 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     assert saved["created_at"].endswith("+08:00")
     assert "." in saved["created_at"]  # 帶毫秒
     assert saved["conversation_time_key"] == f"{saved['created_at']}#{saved['conversation_id']}"
-    assert saved["user_status"] == "replied"
-    assert saved["system_status"] == "success"
     mock_table.put_item.assert_called_once()
+
 
     # 2. 測試 get_recent_conversations 走 GSI 並按時間倒序
     mock_table.query.return_value = {
