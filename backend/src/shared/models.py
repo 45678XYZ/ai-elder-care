@@ -90,7 +90,9 @@ class ChatAudio(BaseModel):
 
 class ChatRequest(BaseModel):
     """POST /chat Request Body 模型。"""
-    client_request_id: str | None = Field(default=None, description="冪等 UUID")
+    # 必填：turn 的身分由 elder_id + client_request_id 穩定產生，沒有它就沒有冪等性，
+    # 斷線重送會把同一句話寫成兩輪對話、做兩次 routine 副作用
+    client_request_id: str = Field(..., description="冪等 UUID；同一次輸入重送沿用同值")
     session_id: str | None = Field(default=None, description="Session ID")
     elder_id: str = Field(..., description="長者 ID")
     lang: Literal["zh-TW", "hak"] = Field(..., description="對話語言 (zh-TW | hak)")

@@ -1,20 +1,29 @@
 """POST /chat — 對話核心 Lambda Handler。
 
-規格出處：docs/api.md
+規格出處：docs/api.md 的 `POST /chat`；turn 三態與 session 接納規則見 docs/framework.md。
 
-處理流程：
-1. 解析與驗證傳入欄位 (elder_id, lang, text/audio 擇一)。
+處理流程（順序固定：冪等判定先於任何 session 選擇、建立或 reserve）：
+1. 解析與驗證傳入欄位 (client_request_id, elder_id, lang, text/audio 擇一)。
 2. 進行 Cognito 授權驗證 (透過 shared/auth.py 的 assert_can_access_elder)。
-3. 若傳入音檔 (audio)，先調用 CE ASR 將音訊轉成文字 transcript (超過 60 秒長度限制回傳 400 AUDIO_TOO_LONG)。
-4. 調用 AWS Bedrock AgentCore (Claude 5 Sonnet) 大腦進行推導，帶入 sessionId=elder_id 以載入/更新託管 Memory，並處理 Tool Calling 觸發。
-5. 產生唯一的 conversation_id，並將對話歷史雙寫至 DynamoDB conversations 表 (提供給隊友的 summary 模組使用)。
-6. 依據 lang (zh-TW 或 hak) 調用 TTSFactory 生成語音 (中文 Polly / 客語 OmniVoice 帶 Fallback 降級防護)。
-7. 將 MP3 上傳至 S3 儲存桶並取得 15 分鐘有效的 Presigned URL (reply_audio_url)。
-8. 回傳符合 api.md 規範的 Response 200。
+3. 以 `elder_id + client_request_id` 推出穩定的 conversation_id 並強一致查既有 turn：
+   內容不同回 409 IDEMPOTENCY_CONFLICT，已終態直接重播原結果，
+   仍在飛且租約未到期回 409 REQUEST_IN_PROGRESS，租約到期才接管。
+4. 全新請求才做 session 選擇（沿用可接納的 session 或建立新的），
+   並以 transaction 建立 `processing` turn 並佔用 session 的 inflight 名額。
+5. 若傳入音檔 (audio)，調用 CE ASR 將音訊轉成文字 transcript。
+6. 調用 AWS Bedrock AgentCore (Claude 5 Sonnet) 大腦進行推導，帶入 sessionId=elder_id 以載入/更新託管 Memory，並處理 Tool Calling 觸發。
+7. 依據 lang (zh-TW 或 hak) 調用 TTSFactory 生成語音 (中文 Polly / 客語 OmniVoice 帶 Fallback 降級防護)，並把 MP3 上傳至 S3。
+8. 以 transaction 提交 `completed` 結果、解除 inflight 名額並把本輪追加進 session，
+   再回傳符合 api.md 規範的 Response 200（音訊每次動態簽發 15 分鐘 presigned URL）。
+
+任何一步失敗都把 turn 收成終態 `failed` 並保存穩定錯誤：留在 `processing` 會讓 session
+永遠關不起來，離線萃取也就永遠不會跑。
 """
 
 import base64
+import hashlib
 import json
+import logging
 import os
 import time
 import uuid
@@ -23,15 +32,15 @@ from typing import Any, Dict, Tuple
 import boto3
 from botocore.exceptions import ClientError
 
-from pydantic import ValidationError
-
-from src.shared import auth, db, responses
-from src.shared.models import ChatRequest, ConversationCreate
+from src.shared import auth, responses, sessions, turns
+from src.shared.models import ChatRequest
 from src.shared.tts import TTSFactory
 from src.shared.validation import RequestValidationError, validate
 
+logger = logging.getLogger(__name__)
 
-
+# 單句語音長度上限的防禦邊界（約 60 秒）
+MAX_AUDIO_BYTES = 5 * 1024 * 1024
 
 
 # 環境變數自訂名稱
@@ -87,12 +96,12 @@ def parse_event_body(event: Dict[str, Any]) -> Dict[str, Any]:
 
 def transcribe_audio(audio_bytes: bytes, audio_format: str, lang: str) -> str:
     """呼叫 SageMaker CE 模型 Endpoint 或 CE ASR API 將語音轉寫為文字。
-    
+
     優先檢查 SAGEMAKER_CE_ENDPOINT_NAME，若有設定則透過 boto3 呼叫 SageMaker；
     若未設定 Endpoint，則回傳 Mock 轉譯文字供測試。
     """
     # 檢查長度是否超過約 60 秒（以 5MB 音檔大小為防禦邊界）
-    if len(audio_bytes) > 5 * 1024 * 1024:
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
         raise ValueError("AUDIO_TOO_LONG")
 
     # 1. 若配置了 SageMaker Endpoint，透過 boto3 原生呼叫 SageMaker 上的 CE 模型
@@ -178,27 +187,56 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
 
 
 def upload_audio_to_s3(audio_bytes: bytes, conversation_id: str) -> str:
-    """將 TTS 合成之 MP3 上傳至 S3 儲存桶，並發行 15 分鐘有效的 Presigned URL。"""
-    s3 = get_s3_client()
-    object_key = f"tts/{conversation_id}.mp3"
+    """將 TTS 合成之 MP3 上傳至 S3，回傳 object key。
 
+    只回 key 不回 URL：presigned URL 有 15 分鐘效期，存進 DynamoDB 之後重播就是一條死連結，
+    因此 turn 只保存 key，每次回應再簽發（見 docs/framework.md 的音訊欄位規則）。
+    """
+    object_key = f"tts/{conversation_id}.mp3"
     try:
-        s3.put_object(
+        get_s3_client().put_object(
             Bucket=S3_BUCKET_NAME,
             Key=object_key,
             Body=audio_bytes,
             ContentType="audio/mpeg"
         )
-        url = s3.generate_presigned_url(
+    except Exception as e:
+        print(f"[Warning] S3 upload failed: {e}")
+    return object_key
+
+
+def presign_audio(object_key: str | None) -> str | None:
+    """簽發 15 分鐘有效的 Presigned URL；沒有音檔時回 None。"""
+    if not object_key:
+        return None
+    try:
+        return get_s3_client().generate_presigned_url(
             "get_object",
             Params={"Bucket": S3_BUCKET_NAME, "Key": object_key},
             ExpiresIn=900  # 15 分鐘有效
         )
-        return url
     except Exception as e:
-        print(f"[Warning] S3 upload or presigned URL generation failed: {e}")
+        print(f"[Warning] Presigned URL generation failed: {e}")
         # 當開發環境無 S3 存取權時的回傳預設 URL
         return f"https://{S3_BUCKET_NAME}.s3.amazonaws.com/{object_key}"
+
+
+class ImmediateResponse(Exception):
+    """流程中途就已確定的回應：冪等重播、idempotency 衝突或仍在處理中。"""
+
+    def __init__(self, response: Dict[str, Any]):
+        super().__init__(response.get("body", ""))
+        self.response = response
+
+
+class TurnFailure(Exception):
+    """turn 已 reserve 之後才發生的失敗；帶著要保存並回傳的穩定錯誤。"""
+
+    def __init__(self, status: int, code: str, message: str):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -211,98 +249,270 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             return responses.error(400, "INVALID_JSON", "請求內文不是有效的 JSON 格式")
 
         req = validate(ChatRequest, body)
-        elder_id = req.elder_id
-        lang = req.lang
-
 
         # 2. 身份與存取權限驗證
+        auth.assert_can_access_elder(event, req.elder_id)
+
+        # 3. 冪等判定：同一個 client_request_id 永遠對應同一個 turn
+        audio_bytes = decode_audio(req)
+        owner = lease_owner(context)
+        conversation_id = turns.conversation_id_for(req.elder_id, req.client_request_id)
+        session_id = resume_or_accept(req, conversation_id, request_hash(req, audio_bytes), owner)
+
+        # 4. 副作用區：turn 已是 processing，之後每一條路徑都必須把它收成終態
         try:
-            auth.assert_can_access_elder(event, elder_id)
-        except auth.AuthError as auth_err:
-            return auth_err.response
-        except (AttributeError, NotImplementedError):
-            # 若授權模組在開發測試期尚未綁定，則先放行
-            pass
-
-        # 3. 取得辨識文字 (transcript)
-        if req.text:
-            transcript = req.text
-        else:
-            # 處理音檔辨識
-            audio_b64 = req.audio.data if req.audio else ""
-            audio_fmt = req.audio.format if req.audio else "m4a"
-            if not audio_b64:
-                return responses.error(400, "INVALID_PARAMETER", "audio.data 不可為空")
-
-            try:
-                audio_bytes = base64.b64decode(audio_b64)
-            except Exception:
-                return responses.error(400, "INVALID_PARAMETER", "audio.data 解碼失敗，非有效 base64 字串")
-
-            try:
-                transcript = transcribe_audio(audio_bytes, audio_fmt, lang)
-            except ValueError as val_err:
-                if str(val_err) == "AUDIO_TOO_LONG":
-                    return responses.error(400, "AUDIO_TOO_LONG", "單句語音長度超過 60 秒限制")
-                return responses.error(400, "TRANSCRIPTION_FAILED", "語音轉寫失敗")
-
-        # 4. 調用 Bedrock AgentCore 大腦
-        try:
-            reply_text, routines_updated = invoke_agent_brain(elder_id, transcript)
-        except Exception as e:
-            return responses.error(500, "BEDROCK_ERROR", f"呼叫對話大腦失敗: {str(e)}")
-
-        # 5. 產生獨一無二的對話 ID 與時間戳記
-        conversation_id = f"cnv_{uuid.uuid4().hex[:12]}"
-        now_ts = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
-
-        # 6. 雙寫對話紀錄至 DynamoDB conversations 表 (確保隊友摘要與萃取 API 100% 相容)
-        try:
-            conv_model = ConversationCreate(
-                conversation_id=conversation_id,
-                elder_id=elder_id,
-                created_at=now_ts,
-                ts=now_ts,
-                source="elder_initiated",
-                user_status="replied",
-                system_status="success",
-                lang=lang,
-                input_type="audio" if req.audio else "text",
-                elder_transcript=transcript,
-                ai_respond_text=reply_text,
-                routines_updated=routines_updated,
+            transcript, reply_text, routines_updated, audio_key = run_turn(
+                req, audio_bytes, conversation_id
             )
-            db.save_conversation(conv_model.model_dump(exclude_none=True))
-        except (AttributeError, NotImplementedError):
-            print(f"[Info] db.save_conversation 尚未在當前分支中導入。")
-        except Exception as db_err:
-            print(f"[Warning] 寫入對話紀錄至 DynamoDB 失敗: {db_err}")
+        except TurnFailure as failure:
+            return fail_turn(req.elder_id, conversation_id, session_id, owner, failure)
+        except Exception:
+            logger.exception("對話處理失敗：conversation_id=%s", conversation_id)
+            return fail_turn(
+                req.elder_id,
+                conversation_id,
+                session_id,
+                owner,
+                TurnFailure(500, "INTERNAL_ERROR", "內部系統錯誤"),
+            )
 
-
-        # 7. 語音合成 (TTS Factory - 中文用 Polly，客語用 OmniVoice 帶 Fallback)
+        # 5. 以單一 transaction 提交終態結果並把本輪追加進 session
         try:
-            tts_engine = TTSFactory.get_tts_engine(lang)
-            audio_bytes = tts_engine.synthesize(reply_text)
-        except Exception as tts_err:
-            print(f"[Error] TTS Synthesis failed: {tts_err}")
-            return responses.error(500, "TTS_FAILED", f"語音合成失敗: {str(tts_err)}")
+            committed = turns.commit(
+                req.elder_id,
+                conversation_id,
+                session_id=session_id,
+                owner=owner,
+                result={
+                    "elder_transcript": transcript,
+                    "ai_respond_text": reply_text,
+                    "ai_respond_audio_s3_key": audio_key,
+                    "routines_updated": routines_updated,
+                    "rt_labels": ["routine"] if routines_updated else ["none"],
+                },
+            )
+        except turns.TurnError:
+            # 結果沒能落地就不能回 200：回 500 讓 App 以相同 client_request_id 重試，
+            # 租約到期後接管者會重跑並收斂，不會產生第二輪對話
+            logger.exception("提交對話結果失敗：conversation_id=%s", conversation_id)
+            return responses.error(500, "INTERNAL_ERROR", "對話結果寫入失敗")
 
-        # 8. 上傳 MP3 至 S3 並取得預簽名 URL
-        reply_audio_url = upload_audio_to_s3(audio_bytes, conversation_id)
+        return chat_response(committed)
 
-        # 9. 回傳符合 docs/api.md 規範的 Response 200
-        return responses.json_response(200, {
-            "conversation_id": conversation_id,
-            "transcript": transcript,
-            "reply_text": reply_text,
-            "reply_audio_url": reply_audio_url,
-            "routines_updated": routines_updated
-        })
-
-    except (auth.AuthError, RequestValidationError) as exc:
+    except (auth.AuthError, RequestValidationError, ImmediateResponse) as exc:
         return exc.response
 
-    except Exception as err:
-        print(f"[Unhandled Error] {err}")
-        return responses.error(500, "INTERNAL_ERROR", f"內部系統錯誤: {str(err)}")
+    except Exception:
+        # 例外訊息只進 log：回給 App 的內容是穩定的公開錯誤，不夾帶內部細節
+        logger.exception("未預期的錯誤")
+        return responses.error(500, "INTERNAL_ERROR", "內部系統錯誤")
+
+
+def lease_owner(context: Any) -> str:
+    """本次執行的 request lease 擁有者；用於分辨「自己續約」與「他人接管」。"""
+    return getattr(context, "aws_request_id", None) or f"local-{uuid.uuid4().hex[:12]}"
+
+
+def decode_audio(req: ChatRequest) -> bytes:
+    """解出音檔位元組並做長度防禦；文字輸入回空 bytes。
+
+    在 reserve 之前做完：這些是純輸入驗證，沒必要為了回 400 而先佔用 session 的名額。
+    """
+    if not req.audio:
+        return b""
+    if not req.audio.data:
+        raise RequestValidationError(
+            responses.error(400, "INVALID_PARAMETER", "audio.data 不可為空")
+        )
+    try:
+        audio_bytes = base64.b64decode(req.audio.data)
+    except Exception:
+        raise RequestValidationError(
+            responses.error(400, "INVALID_PARAMETER", "audio.data 解碼失敗，非有效 base64 字串")
+        )
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise RequestValidationError(
+            responses.error(400, "AUDIO_TOO_LONG", "單句語音長度超過 60 秒限制")
+        )
+    return audio_bytes
+
+
+def request_hash(req: ChatRequest, audio_bytes: bytes) -> str:
+    """本次請求內容的正規化 hash，用來分辨「重送」與「同一個 ID 換了內容」。
+
+    不含 `session_id`：那是 routing 的提示而非請求內容，App 在重試時帶了新的 session_id
+    不該被判成 idempotency conflict。音檔取 digest，避免把整段 base64 讀進 hash。
+    """
+    return turns.request_hash(
+        {
+            "elder_id": req.elder_id,
+            "lang": req.lang,
+            "input_type": "audio" if req.audio else "text",
+            "content": req.text or hashlib.sha256(audio_bytes).hexdigest(),
+        }
+    )
+
+
+def resume_or_accept(
+    req: ChatRequest, conversation_id: str, payload_hash: str, owner: str
+) -> str:
+    """回傳本 turn 所屬的 session ID；已終態或仍在飛的請求在此直接結束流程。"""
+    existing = turns.get_turn(req.elder_id, conversation_id)
+    if existing is None:
+        return accept_new_turn(req, conversation_id, payload_hash, owner)
+
+    try:
+        turns.assert_same_request(existing, payload_hash)
+    except turns.TurnConflictError as exc:
+        raise ImmediateResponse(responses.error(409, "IDEMPOTENCY_CONFLICT", str(exc)))
+
+    if existing.get("request_status") in turns.TERMINAL_STATUSES:
+        raise ImmediateResponse(replay(existing))
+    if not turns.is_lease_expired(existing):
+        raise ImmediateResponse(in_progress())
+
+    try:
+        # 租約到期代表前一個 invocation 已死；接管原 turn 與原 reservation，不重做 routing
+        return turns.take_over(req.elder_id, conversation_id, owner=owner)["session_id"]
+    except turns.TurnTransitionRejectedError:
+        current = turns.get_turn(req.elder_id, conversation_id) or {}
+        if current.get("request_status") in turns.TERMINAL_STATUSES:
+            raise ImmediateResponse(replay(current))
+        raise ImmediateResponse(in_progress())
+
+
+def accept_new_turn(
+    req: ChatRequest, conversation_id: str, payload_hash: str, owner: str
+) -> str:
+    """全新請求才走 session 選擇與 reserve。"""
+    session = requested_session(req)
+    turn = {
+        "conversation_id": conversation_id,
+        "idempotency_key": req.client_request_id,
+        "client_request_id": req.client_request_id,
+        "request_hash": payload_hash,
+        "lang": req.lang,
+        "input_type": "audio" if req.audio else "text",
+        "source": "elder_initiated",
+    }
+
+    # 最多兩輪：指定的 session 可能在讀取後才被 close 或塞滿，這時改用新的 active session。
+    # 新建的 session 不會有第二個競爭者，因此不需要無上限重試。
+    for _ in range(2):
+        if session is None:
+            session = sessions.create_session(req.elder_id)
+        try:
+            turns.reserve(req.elder_id, session["session_id"], turn=turn, owner=owner)
+            return session["session_id"]
+        except turns.TurnReserveRejectedError:
+            session = None
+        except turns.TurnInProgressError:
+            # 併發的相同請求先一步建立了 turn，交回冪等判定處置
+            raise ImmediateResponse(in_progress())
+
+    logger.error("無法接納新的 turn：conversation_id=%s", conversation_id)
+    raise ImmediateResponse(responses.error(500, "INTERNAL_ERROR", "無法建立對話 session"))
+
+
+def requested_session(req: ChatRequest) -> Dict[str, Any] | None:
+    """取出可沿用的 session；不能沿用時回 None（由呼叫端建立新的）。"""
+    if not req.session_id:
+        return None
+    session = sessions.get_session(req.elder_id, req.session_id)
+    if session is None:
+        # 不屬於該長者的 session 在此同樣讀不到；一律回 404，不以 403 洩漏 session 是否存在
+        raise ImmediateResponse(
+            responses.error(404, "SESSION_NOT_FOUND", "找不到指定的 session")
+        )
+    return session if sessions.can_accept(session) else None
+
+
+def run_turn(
+    req: ChatRequest, audio_bytes: bytes, conversation_id: str
+) -> Tuple[str, str, bool, str]:
+    """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, audio key)。"""
+    if req.text:
+        transcript = req.text
+    else:
+        audio_format = req.audio.format if req.audio else "m4a"
+        try:
+            transcript = transcribe_audio(audio_bytes, audio_format, req.lang)
+        except ValueError:
+            raise TurnFailure(400, "TRANSCRIPTION_FAILED", "語音轉寫失敗")
+        except Exception:
+            raise TurnFailure(500, "TRANSCRIPTION_FAILED", "語音轉寫服務暫時無法使用")
+
+    try:
+        reply_text, routines_updated = invoke_agent_brain(req.elder_id, transcript)
+    except Exception:
+        raise TurnFailure(500, "BEDROCK_ERROR", "呼叫對話大腦失敗")
+
+    try:
+        audio_reply = TTSFactory.get_tts_engine(req.lang).synthesize(reply_text)
+    except Exception:
+        raise TurnFailure(500, "TTS_FAILED", "語音合成失敗")
+
+    return transcript, reply_text, routines_updated, upload_audio_to_s3(
+        audio_reply, conversation_id
+    )
+
+
+def fail_turn(
+    elder_id: str,
+    conversation_id: str,
+    session_id: str,
+    owner: str,
+    failure: TurnFailure,
+) -> Dict[str, Any]:
+    """把 turn 收成終態 failed 並回傳該錯誤。
+
+    錯誤訊息會被持久化並在重送時原樣重播，因此只放穩定、安全化的內容，不夾帶模型輸出、
+    逐字稿或內部例外訊息。
+    """
+    try:
+        turns.fail(
+            elder_id,
+            conversation_id,
+            session_id=session_id,
+            code=failure.code,
+            message=failure.message,
+            http_status=failure.status,
+            owner=owner,
+        )
+    except turns.TurnError:
+        # 收不成終態就交給 closer 的 inflight 收斂；這裡仍要把錯誤回給 App
+        logger.exception("標記 turn 失敗未成立：conversation_id=%s", conversation_id)
+    return responses.error(failure.status, failure.code, failure.message)
+
+
+def replay(turn: Dict[str, Any]) -> Dict[str, Any]:
+    """重播既有終態結果：completed 回原業務結果，failed 回首次持久化的穩定錯誤。"""
+    if turn.get("request_status") == turns.STATUS_FAILED:
+        return responses.error(
+            int(turn.get("error_http_status") or 500),
+            turn.get("error_code") or "INTERNAL_ERROR",
+            turn.get("error_message") or "對話處理失敗",
+        )
+    return chat_response(turn)
+
+
+def in_progress() -> Dict[str, Any]:
+    return responses.error(
+        409, "REQUEST_IN_PROGRESS", "同一請求仍在處理中，請以相同 client_request_id 重試"
+    )
+
+
+def chat_response(turn: Dict[str, Any]) -> Dict[str, Any]:
+    """docs/api.md 規範的 flat response；音訊每次重新簽發 presigned URL。"""
+    return responses.json_response(
+        200,
+        {
+            "conversation_id": turn["conversation_id"],
+            "session_id": turn.get("session_id"),
+            "transcript": turn.get("elder_transcript") or "",
+            "reply_text": turn.get("ai_respond_text") or "",
+            "reply_audio_url": presign_audio(turn.get("ai_respond_audio_s3_key")),
+            "routines_updated": bool(turn.get("routines_updated")),
+        },
+    )
 
