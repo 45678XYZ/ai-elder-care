@@ -1,279 +1,225 @@
-"""例行公事 occurrence 的衍生（不保存狀態）。
+"""例行公事領域邏輯（純運算，不接觸 AWS）。規格見 docs/api.md 與 docs/framework.md。
 
-規範見 docs/api.md 的「例行公事」與 docs/framework.md 的 `routines` 表。核心原則：
-`routines` 表只存**不可變的版本化計畫**，occurrence 的 `done/pending/missed` 一律動態衍生，
-真理來源是 `elder_id + routine_id + routine_date` 的 canonical completion event。
-
-三條規則決定結果，順序不可換：
-
-1. `occurrence_cutoff = min(查詢或摘要 cutoff, 該日台灣日界結束)`。歷史日期一旦過完，
-   cutoff 就封頂在那一天，後續改版不得回頭改寫已成為過去的 occurrence。
-2. **completion-first**：completion event 存在即為 `done`，顯示用的定義取 event 記錄的
-   `routine_version` 對應版本。同日稍後改標題或改時間都不影響已完成的紀錄。
-3. 未完成才展開排程，且只用 `occurrence_cutoff` 前最新的有效版本；每個
-   `routine_id + date` 最多一筆 occurrence，同日改版是 supersede 而不是新增第二筆。
-
-這一層同時服務每日摘要與未來的 `GET /routines?date=`，避免兩處各算一次而給出不同答案。
+- **版本不可變**：每次修改產生新版本，只有最新版本為 current；歷史日期沿用當時有效版本，
+  後續改版不得回頭改寫既有日期的 occurrence
+- **occurrence 狀態不落地**：以 canonical completion event、`occurrence_cutoff` 與寬限期
+  即時推導 `done`／`missed`／`pending`，routines 表不保存完成狀態
+- **冪等鍵**：`routine_id`、`change_request_id` 與 `request_hash` 都由 scoped 輸入穩定產生，
+  相同請求重送收斂到同一結果而不產生新版本
 """
-
 from datetime import datetime, timedelta
-from typing import Any
-import logging
+import hashlib
+import json
 import os
+from typing import Any
 
-from botocore.exceptions import ClientError
+from src.extraction.canonical import routine_completion_key
+from src.shared.db import TZ_TAIPEI
 
-from src.extraction.temporal import TZ_TAIPEI, day_end, format_ts, parse_ts
+# 未完成 occurrence 超過 scheduled_at 加此寬限期才算 missed；routines、摘要與統計共用
+GRACE_MINUTES = int(os.environ.get("ROUTINE_GRACE_MINUTES", "120"))
 
-from . import db
+# 不同組合雜湊出相同字串會造成身分碰撞，因此以不可能出現在 ID 中的控制字元分隔
+_ID_SEPARATOR = "\x1f"
 
-logger = logging.getLogger(__name__)
-
-ROUTINE_VERSIONS_BY_ELDER_INDEX = "routine-versions-by-elder"
-
-STATUS_PENDING = "pending"
-STATUS_DONE = "done"
-STATUS_MISSED = "missed"
-
-FREQ_DAILY = "daily"
-FREQ_WEEKLY = "weekly"
-FREQ_ONCE = "once"
-
-# occurrence 由 pending 轉 missed 的寬限；routines、摘要與統計共用同一個值
-DEFAULT_GRACE_MINUTES = 120
-
-# 未指定時間的版本用這個時間展開，避免因缺欄位整筆消失
-FALLBACK_TIME = "09:00"
-
-# 摘要 `routines.items[]` 的固定欄位（docs/api.md）
-SUMMARY_ITEM_FIELDS: tuple[str, ...] = ("routine_id", "title", "status")
+# version_time_key 的上界：讓 effective_from 恰等於 cutoff 的版本也落在查詢區間內
+_MAX_SORT_SUFFIX = "#\uffff"
 
 
-class RoutineError(db.DBError):
-    """routines 讀取或版本解析失敗。"""
+# -----------------------------------------------------------------------------
+# 時間與日期
+# -----------------------------------------------------------------------------
+
+def now() -> datetime:
+    """目前台灣時間。"""
+    return datetime.now(TZ_TAIPEI)
 
 
-def grace_minutes() -> int:
-    raw = os.environ.get("ROUTINE_GRACE_MINUTES", "").strip()
-    if not raw:
-        return DEFAULT_GRACE_MINUTES
+def to_iso(dt: datetime) -> str:
+    """固定毫秒精度的台灣時間 ISO 8601，供 effective_from 等排序鍵使用。"""
+    return dt.astimezone(TZ_TAIPEI).isoformat(timespec="milliseconds")
+
+
+def now_iso() -> str:
+    return to_iso(now())
+
+
+def today(current: datetime | None = None) -> str:
+    """台灣日界下的今天（YYYY-MM-DD）。"""
+    return (current or now()).astimezone(TZ_TAIPEI).strftime("%Y-%m-%d")
+
+
+def is_valid_date(date_str: str) -> bool:
     try:
-        return int(raw)
-    except ValueError:
-        return DEFAULT_GRACE_MINUTES
-
-
-def occurrence_cutoff(date: str, cutoff: str | datetime | None = None) -> datetime:
-    """`min(傳入 cutoff, 該日台灣日界結束)`。
-
-    傳入 cutoff 才是「觀察到哪個時間點」的來源：當日查詢傳現在時間，摘要傳
-    `input_through_at`。封頂在日界結束是為了讓歷史日期的結果穩定。
-    """
-    day_boundary = parse_ts(day_end(date))
-    if cutoff is None:
-        moment = datetime.now(TZ_TAIPEI)
-    else:
-        moment = parse_ts(cutoff)
-    return min(moment, day_boundary)
-
-
-# -----------------------------------------------------------------------------
-# routines 表讀取
-# -----------------------------------------------------------------------------
-
-
-def get_routine_version(routine_id: str, version: int) -> dict[str, Any] | None:
-    """取特定版本的不可變定義；不存在回 None。"""
-    table = db.get_dynamodb_resource().Table(db.TABLE_ROUTINES)
-    try:
-        response = table.get_item(Key={"routine_id": routine_id, "version": int(version)})
-    except ClientError as exc:
-        raise RoutineError(f"讀取 routine 版本失敗: {exc.response['Error']['Message']}")
-    item = response.get("Item")
-    return db.convert_decimals(item) if item else None
-
-
-def list_versions_effective_by(elder_id: str, cutoff: datetime) -> list[dict[str, Any]]:
-    """取 `effective_from` 不晚於 cutoff 的所有版本，走 `routine-versions-by-elder`。
-
-    不用 `routines-current-by-elder`：那個 sparse GSI 只有 current 版本，拿它回推歷史日期
-    會把今天的定義套到過去，違反「不得 retroactively 改寫」。
-    """
-    upper_bound = format_ts(cutoff) + db.TIME_KEY_UPPER_BOUND_SUFFIX
-    query: dict[str, Any] = {
-        "IndexName": ROUTINE_VERSIONS_BY_ELDER_INDEX,
-        "KeyConditionExpression": "elder_id = :eid AND version_time_key <= :upper",
-        "ExpressionAttributeValues": {":eid": elder_id, ":upper": upper_bound},
-        "ScanIndexForward": True,
-    }
-    table = db.get_dynamodb_resource().Table(db.TABLE_ROUTINES)
-    versions: list[dict[str, Any]] = []
-    while True:
-        try:
-            response = table.query(**query)
-        except ClientError as exc:
-            raise RoutineError(f"查詢 routine 版本失敗: {exc.response['Error']['Message']}")
-        versions.extend(db.convert_decimals(response.get("Items", [])))
-        last_key = response.get("LastEvaluatedKey")
-        if not last_key:
-            return versions
-        query["ExclusiveStartKey"] = last_key
-
-
-def latest_versions_by_routine(versions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """依 `routine_id` 收斂成 cutoff 前最新的有效版本。
-
-    排序鍵用 `(effective_from, version)`：同一毫秒建立兩個版本時 `version` 才是決勝欄位。
-    """
-    latest: dict[str, dict[str, Any]] = {}
-    for item in versions:
-        routine_id = item.get("routine_id")
-        if not routine_id:
-            continue
-        current = latest.get(routine_id)
-        key = (str(item.get("effective_from") or ""), int(item.get("version") or 0))
-        if current is None or key > (
-            str(current.get("effective_from") or ""),
-            int(current.get("version") or 0),
-        ):
-            latest[routine_id] = item
-    return latest
-
-
-def list_completion_events(elder_id: str, date: str, *, page_size: int = 100) -> dict[str, dict[str, Any]]:
-    """取該日的 canonical routine completion event，依 `routine_id` 索引。
-
-    completion event 必帶 `routine_id` 與 `routine_date`（framework 的 events 欄位表），
-    batch 萃取到的疑似完成只寫在 `structured_detail.suspected_routine_id`，因此不會誤入。
-    """
-    completions: dict[str, dict[str, Any]] = {}
-    next_token: str | None = None
-    while True:
-        items, next_token = db.list_events(
-            elder_id, from_date=date, to_date=date, limit=page_size, next_token=next_token
-        )
-        for item in items:
-            routine_id = item.get("routine_id")
-            if not routine_id or item.get("routine_date") != date:
-                continue
-            # 同一 canonical key 只會有一筆；真出現多筆時保留最早寫入的那筆
-            completions.setdefault(routine_id, item)
-        if not next_token:
-            return completions
-
-
-# -----------------------------------------------------------------------------
-# occurrence 衍生
-# -----------------------------------------------------------------------------
-
-
-def is_scheduled_on(schedule: dict[str, Any], date: str) -> bool:
-    """該版本的排程是否落在這一天。每種 freq 每天最多一次。"""
-    freq = schedule.get("freq")
-    if freq == FREQ_DAILY:
+        datetime.strptime(date_str, "%Y-%m-%d")
         return True
-    if freq == FREQ_WEEKLY:
-        # weekday 1–7，週一為 1；一筆 weekly routine 只帶單一 weekday
-        return schedule.get("weekday") == parse_ts(f"{date}T00:00:00+08:00").isoweekday()
-    if freq == FREQ_ONCE:
-        return schedule.get("date") == date
-    return False
+    except (TypeError, ValueError):
+        return False
 
 
-def scheduled_at_for(version: dict[str, Any], date: str) -> str:
-    time_of_day = (version.get("schedule") or {}).get("time") or FALLBACK_TIME
-    return f"{date}T{time_of_day}:00.000+08:00"
+def occurrence_cutoff(date_str: str, current: datetime) -> datetime:
+    """`min(查詢時間, 該日台灣日界結束)`；歷史日期越過日界後即封頂於該日。"""
+    day_end = datetime.fromisoformat(f"{date_str}T23:59:59.999+08:00")
+    return min(current, day_end)
 
 
-def list_occurrences(
-    elder_id: str,
-    date: str,
-    *,
-    cutoff: str | datetime | None = None,
-    grace: int | None = None,
-) -> list[dict[str, Any]]:
-    """展開某一天的 occurrence 快照，依 `scheduled_at` 正序。"""
-    limit = occurrence_cutoff(date, cutoff)
-    grace_delta = timedelta(minutes=grace if grace is not None else grace_minutes())
+# -----------------------------------------------------------------------------
+# 排序鍵與冪等鍵
+# -----------------------------------------------------------------------------
 
-    completions = list_completion_events(elder_id, date)
-    latest = latest_versions_by_routine(list_versions_effective_by(elder_id, limit))
-
-    occurrences: list[dict[str, Any]] = []
-
-    for routine_id, event in completions.items():
-        definition = _definition_for_completion(routine_id, event, latest.get(routine_id))
-        occurrence = {
-            "routine_id": routine_id,
-            "title": (definition or {}).get("title") or "",
-            "type": (definition or {}).get("type") or event.get("type") or "other",
-            "scheduled_at": (
-                scheduled_at_for(definition, date) if definition else event.get("ts")
-            ),
-            "status": STATUS_DONE,
-            "completed_at": event.get("ts"),
-            "completed_by": event.get("completed_by") or "conversation",
-        }
-        occurrences.append(occurrence)
-
-    for routine_id, version in latest.items():
-        if routine_id in completions:
-            continue
-        if not version.get("active", True):
-            # 停用後的最新版本不再產生 occurrence；已完成的那些走上面的 completion 路徑
-            continue
-        if not is_scheduled_on(version.get("schedule") or {}, date):
-            continue
-        scheduled_at = scheduled_at_for(version, date)
-        deadline = parse_ts(scheduled_at) + grace_delta
-        occurrences.append(
-            {
-                "routine_id": routine_id,
-                "title": version.get("title") or "",
-                "type": version.get("type") or "other",
-                "scheduled_at": scheduled_at,
-                "status": STATUS_MISSED if limit > deadline else STATUS_PENDING,
-            }
-        )
-
-    occurrences.sort(key=lambda item: (item.get("scheduled_at") or "", item["routine_id"]))
-    return occurrences
+def current_sort_key(active: bool, created_at: str, routine_id: str) -> str:
+    """sparse GSI `routines-current-by-elder` 的排序鍵；只有 current 版本帶此欄位。"""
+    return f"{'A' if active else 'I'}#{created_at}#{routine_id}"
 
 
-def _definition_for_completion(
-    routine_id: str,
-    event: dict[str, Any],
-    fallback: dict[str, Any] | None,
+def version_time_key(effective_from: str, routine_id: str, version: int) -> str:
+    """GSI `routine-versions-by-elder` 的排序鍵。"""
+    return f"{effective_from}#{routine_id}#{version}"
+
+
+def versions_upper_bound(cutoff: datetime) -> str:
+    """查 cutoff 前所有版本時的 `version_time_key` 上界。"""
+    return f"{to_iso(cutoff)}{_MAX_SORT_SUFFIX}"
+
+
+def stable_id(prefix: str, *parts: str) -> str:
+    """由 scoped 輸入穩定產生 ID：相同輸入永遠得到相同 ID。"""
+    raw = _ID_SEPARATOR.join(parts).encode("utf-8")
+    return f"{prefix}{hashlib.sha256(raw).hexdigest()[:12]}"
+
+
+def request_hash(payload: dict[str, Any]) -> str:
+    """正規化 payload 的 hash，供同一冪等 scope 判斷是重送或衝突。"""
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def completion_event_key(routine_id: str, routine_date: str) -> str:
+    """occurrence 的 canonical 事件身分；對話與手動完成都收斂到同一筆 event。
+
+    key 的組法只有一份實作（src/extraction/canonical.py），realtime 與 batch 兩條軌
+    各自組字串就會漂移成兩筆事件。
+    """
+    return routine_completion_key(routine_id, routine_date)
+
+
+# -----------------------------------------------------------------------------
+# 版本收斂與 occurrence 推導
+# -----------------------------------------------------------------------------
+
+def select_effective_version(
+    versions: list[dict[str, Any]], cutoff: datetime
 ) -> dict[str, Any] | None:
-    """已完成 occurrence 的顯示定義：優先取 event 記錄的版本。
+    """cutoff 前最新的有效版本；沒有任何版本生效時回 None。"""
+    candidates = [v for v in versions if datetime.fromisoformat(v["effective_from"]) <= cutoff]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda v: (v["effective_from"], int(v["version"])))
 
-    `routine_version` 只記錄「完成當下採用的版本」，不參與 identity；拿它讀回不可變版本，
-    才能在同日改版後仍呈現完成當時看到的標題與時間。版本讀不到時退回 cutoff 前最新版本，
-    並記錄下來——那代表資料被刪過，不該讓整份摘要生成失敗。
+
+def scheduled_at(date_str: str, schedule: dict[str, Any]) -> str | None:
+    """該版本在指定日期的排定時間；該日無排程回 None。"""
+    time_str = schedule.get("time")
+    if not time_str:
+        return None
+
+    freq = schedule.get("freq")
+    if freq == "daily":
+        matched = True
+    elif freq == "weekly":
+        weekday = schedule.get("weekday")
+        matched = weekday is not None and int(weekday) == _isoweekday(date_str)
+    elif freq == "once":
+        matched = schedule.get("date") == date_str
+    else:
+        matched = False
+
+    return f"{date_str}T{time_str}:00+08:00" if matched else None
+
+
+def resolve_occurrence(
+    versions: list[dict[str, Any]],
+    completion_event: dict[str, Any] | None,
+    date_str: str,
+    current: datetime,
+    grace_minutes: int | None = None,
+) -> dict[str, Any] | None:
+    """單一 routine 在指定日期的唯一 occurrence；該日無排程回 None。
+
+    completion-first：已有 completion event 就固定為 `done`，顯示資料取事件所記版本，
+    即使同日稍後改版也保留完成當時的結果。
     """
-    version_number = event.get("routine_version")
-    if version_number is not None:
-        definition = get_routine_version(routine_id, int(version_number))
-        if definition:
-            return definition
-        logger.warning(
-            "completion event 指向的 routine 版本不存在：routine_id=%s version=%s",
-            routine_id,
-            version_number,
+    cutoff = occurrence_cutoff(date_str, current)
+
+    if completion_event:
+        version = _find_version(versions, completion_event.get("routine_version"))
+        version = version or select_effective_version(versions, cutoff)
+        if version is None:
+            return None
+        occurrence = _display_fields(version, date_str)
+        # 完成後才改動排程時，該版本可能已不落在本日；仍以完成時間呈現這筆 occurrence
+        occurrence["scheduled_at"] = occurrence["scheduled_at"] or completion_event.get("ts")
+        occurrence["status"] = "done"
+        occurrence["completed_at"] = completion_event.get("ts")
+        occurrence["completed_by"] = completion_event.get("completed_by", "conversation")
+        return occurrence
+
+    version = select_effective_version(versions, cutoff)
+    if version is None or not version.get("active", True):
+        return None
+    occurrence = _display_fields(version, date_str)
+    if occurrence["scheduled_at"] is None:
+        return None
+
+    grace = GRACE_MINUTES if grace_minutes is None else grace_minutes
+    deadline = datetime.fromisoformat(occurrence["scheduled_at"]) + timedelta(minutes=grace)
+    occurrence["status"] = "missed" if current > deadline else "pending"
+    return occurrence
+
+
+def resolve_occurrences(
+    versions: list[dict[str, Any]],
+    completion_events: dict[str, dict[str, Any]],
+    date_str: str,
+    current: datetime,
+    grace_minutes: int | None = None,
+) -> list[dict[str, Any]]:
+    """指定日期的完整行程視圖，依 scheduled_at 排序；每個 routine 最多一筆。"""
+    by_routine: dict[str, list[dict[str, Any]]] = {}
+    for version in versions:
+        by_routine.setdefault(version["routine_id"], []).append(version)
+
+    items = []
+    for routine_id, routine_versions in by_routine.items():
+        occurrence = resolve_occurrence(
+            routine_versions,
+            completion_events.get(routine_id),
+            date_str,
+            current,
+            grace_minutes,
         )
-    return fallback
+        if occurrence:
+            items.append(occurrence)
+
+    items.sort(key=lambda item: (item["scheduled_at"] or "", item["routine_id"]))
+    return items
 
 
-def summary_snapshot(occurrences: list[dict[str, Any]]) -> dict[str, Any]:
-    """摘要用的 `routines` 區塊：固定 `{completed, missed, items[{routine_id,title,status}]}`。
-
-    `pending` 不計入 `completed` 也不計入 `missed`（docs/api.md），但仍出現在 `items`，
-    照護者才看得到「今天還有什麼沒做」。
-    """
+def _display_fields(version: dict[str, Any], date_str: str) -> dict[str, Any]:
     return {
-        "completed": sum(1 for item in occurrences if item["status"] == STATUS_DONE),
-        "missed": sum(1 for item in occurrences if item["status"] == STATUS_MISSED),
-        "items": [
-            {field: item.get(field) for field in SUMMARY_ITEM_FIELDS} for item in occurrences
-        ],
+        "routine_id": version["routine_id"],
+        "title": version.get("title", ""),
+        "type": version.get("type", "other"),
+        "scheduled_at": scheduled_at(date_str, version.get("schedule") or {}),
     }
+
+
+def _find_version(versions: list[dict[str, Any]], version_no: Any) -> dict[str, Any] | None:
+    if version_no is None:
+        return None
+    return next((v for v in versions if int(v["version"]) == int(version_no)), None)
+
+
+def _isoweekday(date_str: str) -> int:
+    """週一為 1、週日為 7，與 schedule.weekday 同一套定義。"""
+    return datetime.strptime(date_str, "%Y-%m-%d").isoweekday()

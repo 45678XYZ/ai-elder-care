@@ -7,7 +7,7 @@
 - **伺服器端受控詞彙 (Server-Owned Controlled Lexicon)**：主體與謂語在組裝鍵值前必須經由伺服器端正規化。例如將「阿公」、「長者本人」統一收斂為「長者」，將「吃了降壓藥」、「服血壓藥」透過 `predicate_lexicon.json` 映射至相同的受控謂語，防止同一照護事實因口語表達差異而重複寫入。
 - **三類事件 Canonical Key 分立**：
   1. 一般事件：`Date#Slot#Subject#Predicate`
-  2. Routine 完成：`ROUTINE#routine_id#routine_date`（刻意排除 `routine_version`，同日改版手動或對話完成均收斂至同一筆）
+  2. Routine 完成：`routine_completion#routine_id#routine_date`（刻意排除 `routine_version`，同日改版手動或對話完成均收斂至同一筆）
   3. 高風險 Safety：`SAFETY#session_id#episode`（收斂 Realtime 與 Batch 事件）
 - **穩定確定性 `event_id` 產出**：由 `elder_id + canonical_event_key` 進行 SHA-256 雜湊產生。該識別碼與 Chunk 拆分方式、模型版本完全無關，能保證 SQS 批次作業 Retry 或 DLQ Replay 時為具備冪等性的覆蓋/去重寫入。
 """
@@ -40,7 +40,7 @@ EVENT_ID_HASH_LENGTH = 12
 
 # Canonical Key 內部欄位分隔符號；採用 `#` 以配合 DynamoDB SK 複合鍵分割與前綴查詢
 KEY_SEPARATOR = "#"
-ROUTINE_KEY_PREFIX = "ROUTINE"
+ROUTINE_KEY_PREFIX = "routine_completion"
 SAFETY_KEY_PREFIX = "SAFETY"
 
 # 預設事件主體；當模型未指明主體時預設對應長者本人
@@ -304,7 +304,7 @@ def canonical_event_key(
 
 
 def routine_completion_key(routine_id: str, routine_date: str) -> str:
-    """組合 Routine 完成事件的唯一身分鍵：`ROUTINE#routine_id#routine_date`。
+    """組合 Routine 完成事件的唯一身分鍵：`routine_completion#routine_id#routine_date`。
 
     刻意排除 `routine_version`，確保同一天內即便 Routine 定義修改，手動打卡或對話完成均收斂至同一筆實例。
     """

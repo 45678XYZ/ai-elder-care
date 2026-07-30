@@ -1,6 +1,6 @@
 """DynamoDB 存取層（docs/framework.md 與 docs/api.md 資料模型）。
 
-提供 5 張表的統一讀寫介面：
+提供 6 張表的統一讀寫介面：
 - elders: 長者 persona 與綁定資料
 - conversations: 對話紀錄
 - events: 結構化生活事件（「實際發生」的唯一紀錄，含例行公事完成）
@@ -14,7 +14,8 @@
 - events 一律條件式寫入：canonical key 決定身分，內容互斥不靜默覆寫，
   safety enrichment 以 revision 為條件遞增（規則見 docs/framework.md）
 - 事件時間軸走 GSI events-by-time，日界以台灣時間計算
-- 基於「最晚完成時間 / 寬限期」之例行公事動態狀態計算
+- 條件式寫入與 transact_write_items（canonical event 冪等、routine 版本推進）
+- routine 的 occurrence 狀態不落地，推導邏輯見 src/shared/routines.py
 """
 
 import base64
@@ -27,6 +28,7 @@ from typing import Any
 import uuid
 
 import boto3
+from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 
 # canonical 事件身分與時間正規化只有一份實作，避免同一筆資料在兩處算出不同 ID／精度
@@ -73,6 +75,9 @@ EVENT_MATERIAL_FIELDS: tuple[str, ...] = (
 ENRICHABLE_EVENT_FIELDS: frozenset[str] = frozenset(
     {"detail", "structured_detail", "evidence_conversation_ids", "confidence"}
 )
+
+# BatchGetItem 遇節流時重取未處理 key 的次數上限
+BATCH_GET_MAX_ATTEMPTS = 3
 
 # 全域 Boto3 資源初始化（連線重用）
 _dynamodb = None
@@ -124,9 +129,22 @@ class EventRevisionConflictError(DBError):
         self.expected_revision = expected_revision
 
 
+class ConditionFailedError(DBError):
+    """條件式寫入未通過：項目已存在，或狀態已被其他請求推進。"""
+    pass
+
+
 # -----------------------------------------------------------------------------
 # 輔助函式：Decimal 轉換與分頁游標
 # -----------------------------------------------------------------------------
+
+_serializer = TypeSerializer()
+
+
+def to_attribute_values(data: dict[str, Any]) -> dict[str, Any]:
+    """Python 值轉為 client 層 API（transact_write_items）所需的 AttributeValue。"""
+    return {k: _serializer.serialize(v) for k, v in data.items()}
+
 
 def convert_decimals(obj: Any) -> Any:
     """遞迴將 DynamoDB 回傳之 Decimal 物件轉換為 Python 原生 int 或 float。"""
@@ -374,26 +392,23 @@ def list_turns_by_day(elder_id: str, date: str, *, page_size: int = 100) -> list
 # -----------------------------------------------------------------------------
 
 def get_event(elder_id: str, event_id: str) -> dict[str, Any] | None:
-    """讀取單一事件；不存在回 None。"""
+    """強一致讀取單一事件；不存在回 None。"""
     table = get_dynamodb_resource().Table(TABLE_EVENTS)
     try:
-        resp = table.get_item(Key={"elder_id": elder_id, "event_id": event_id})
+        resp = table.get_item(Key={"elder_id": elder_id, "event_id": event_id}, ConsistentRead=True)
     except ClientError as e:
         raise DBError(f"讀取事件紀錄失敗: {e.response['Error']['Message']}")
     item = resp.get("Item")
     return convert_decimals(item) if item else None
 
 
-def create_event(event_data: dict[str, Any]) -> dict[str, Any]:
-    """以條件式寫入建立事件；命中相同內容視為冪等，內容互斥則拋出衝突。
+def _prepare_event(event_data: dict[str, Any]) -> dict[str, Any]:
+    """補齊事件身分（`event_id`／`event_time_key`）與預設欄位。
 
-    寫入規則見 docs/framework.md 的「Canonical identity 與寫入規則」：
-
-    - `canonical_event_key` 與 `ts` 必填。沒有 canonical key 就沒有穩定事件身分，
-      退回隨機 ID 會讓 retry 與 duplicate delivery 各寫一筆；`ts` 也不能用當下時間補，
-      否則同一段對話重跑會落到不同 Slot。
-    - `attribute_not_exists(event_id)` 條件式 Put。已存在時比對事實欄位：
-      完全相同 → 冪等回傳既有資料；互斥 → 保留既有、拋 `EventConflictError` 讓工作失敗告警。
+    `canonical_event_key` 與 `ts` 必填：沒有 canonical key 就沒有穩定事件身分，
+    退回隨機 ID 會讓 retry 與 duplicate delivery 各寫一筆；`ts` 也不能用當下時間補，
+    否則同一段對話重跑會落到不同 Slot。`event_id` 的推導只有一份實作，
+    見 src/extraction/canonical.py。
     """
     elder_id = event_data.get("elder_id")
     canonical_key = event_data.get("canonical_event_key")
@@ -417,6 +432,21 @@ def create_event(event_data: dict[str, Any]) -> dict[str, Any]:
     now = format_ts(datetime.now(TZ_TAIPEI))
     data.setdefault("created_at", now)
     data.setdefault("updated_at", data["created_at"])
+    return data
+
+
+def create_event(event_data: dict[str, Any]) -> dict[str, Any]:
+    """以條件式寫入建立事件；命中相同內容視為冪等，內容互斥則拋出衝突。
+
+    寫入規則見 docs/framework.md 的「Canonical identity 與寫入規則」：
+    `attribute_not_exists(event_id)` 條件式 Put，已存在時比對事實欄位，
+    完全相同 → 冪等回傳既有資料；互斥 → 保留既有、拋 `EventConflictError` 讓工作失敗告警。
+
+    routine completion 這種「先寫者為準、後到者不算衝突」的情境走 `put_event_if_absent`。
+    """
+    data = _prepare_event(event_data)
+    elder_id = data["elder_id"]
+    canonical_key = data["canonical_event_key"]
 
     item = prepare_item(data)
     table = get_dynamodb_resource().Table(TABLE_EVENTS)
@@ -493,6 +523,57 @@ def enrich_event(
     return convert_decimals(resp.get("Attributes", {}))
 
 
+def put_event_if_absent(event_data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """條件式寫入事件，回傳 (事件, 是否為本次建立)。
+
+    與 `create_event` 的差別只在後到者的處置：這裡「先寫者為準」，同一 canonical event
+    已存在時不比對事實欄位、不視為衝突，直接回既有項目。用於同一件事本來就會由多個入口
+    寫入、描述必然不同的情境（例如對話已完成的 routine 又被照護者手動確認）。
+    """
+    data = _prepare_event(event_data)
+    item = prepare_item(data)
+
+    table = get_dynamodb_resource().Table(TABLE_EVENTS)
+    try:
+        table.put_item(Item=item, ConditionExpression="attribute_not_exists(event_id)")
+        return convert_decimals(item), True
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise DBError(f"建立事件紀錄失敗: {e.response['Error']['Message']}")
+
+    existing = get_event(data["elder_id"], data["event_id"])
+    if existing is None:
+        raise DBError("事件已存在但讀取失敗")
+    return existing, False
+
+
+def get_events(elder_id: str, event_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """依 event_id 批次取事件，回傳 {event_id: 事件}；不存在者不出現在結果中。"""
+    table_name = TABLE_EVENTS
+    resource = get_dynamodb_resource()
+    found: dict[str, dict[str, Any]] = {}
+
+    # BatchGetItem 單次上限 100 筆；被節流的 key 有限次重取，避免 Lambda 卡到逾時
+    for start in range(0, len(event_ids), 100):
+        keys = [{"elder_id": elder_id, "event_id": eid} for eid in event_ids[start:start + 100]]
+        for _ in range(BATCH_GET_MAX_ATTEMPTS):
+            if not keys:
+                break
+            try:
+                resp = resource.batch_get_item(
+                    RequestItems={table_name: {"Keys": keys, "ConsistentRead": True}}
+                )
+            except ClientError as e:
+                raise DBError(f"批次讀取事件失敗: {e.response['Error']['Message']}")
+            for item in resp.get("Responses", {}).get(table_name, []):
+                found[item["event_id"]] = convert_decimals(item)
+            keys = resp.get("UnprocessedKeys", {}).get(table_name, {}).get("Keys", [])
+        if keys:
+            raise DBError("批次讀取事件失敗: 仍有未處理的 key")
+
+    return found
+
+
 def list_events(
     elder_id: str,
     from_date: str | None = None,
@@ -562,177 +643,171 @@ def _material_differences(existing: dict[str, Any], incoming: dict[str, Any]) ->
 
 
 # -----------------------------------------------------------------------------
-# Routines 表操作與動態行程比對
+# Routines 表操作（不可變版本：PK routine_id + SK version）
 # -----------------------------------------------------------------------------
 
-def create_routine(routine_data: dict[str, Any]) -> dict[str, Any]:
-    """新增例行公事定義。"""
+def list_routine_versions(routine_id: str) -> list[dict[str, Any]]:
+    """強一致取得單一 routine 的所有版本，依 version 遞增；最後一筆即 current 版本。"""
+    table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+    items: list[dict[str, Any]] = []
+    query_kwargs: dict[str, Any] = {
+        "KeyConditionExpression": "routine_id = :rid",
+        "ExpressionAttributeValues": {":rid": routine_id},
+        "ConsistentRead": True,
+    }
+
+    try:
+        while True:
+            resp = table.query(**query_kwargs)
+            items.extend(resp.get("Items", []))
+            last_key = resp.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            query_kwargs["ExclusiveStartKey"] = last_key
+    except ClientError as e:
+        raise DBError(f"查詢例行公事版本失敗: {e.response['Error']['Message']}")
+
+    return convert_decimals(items)
+
+
+def get_routine_version(routine_id: str, version: int) -> dict[str, Any] | None:
+    """強一致取得指定版本。"""
     table = get_dynamodb_resource().Table(TABLE_ROUTINES)
     try:
-        table.put_item(Item=routine_data)
-        return convert_decimals(routine_data)
+        resp = table.get_item(
+            Key={"routine_id": routine_id, "version": version}, ConsistentRead=True
+        )
+        item = resp.get("Item")
+        return convert_decimals(item) if item else None
     except ClientError as e:
+        raise DBError(f"讀取例行公事版本失敗: {e.response['Error']['Message']}")
+
+
+def put_routine_version(item: dict[str, Any]) -> dict[str, Any]:
+    """條件式建立 routine 版本。
+
+    版本不可變，因此同一 (routine_id, version) 已存在時不覆寫而拋 ConditionFailedError，
+    由呼叫端比對 request_hash 判斷是重送（回既有結果）或衝突。
+    """
+    table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+    try:
+        table.put_item(Item=item, ConditionExpression="attribute_not_exists(routine_id)")
+        return convert_decimals(item)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            raise ConditionFailedError("例行公事版本已存在")
         raise DBError(f"建立例行公事失敗: {e.response['Error']['Message']}")
 
 
-def update_routine(routine_id: str, patch_data: dict[str, Any]) -> dict[str, Any]:
-    """更新/停用例行公事。"""
-    table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+def replace_current_routine_version(
+    current: dict[str, Any], next_version: dict[str, Any]
+) -> dict[str, Any]:
+    """以單一 transaction 關閉舊 current 版並寫入下一版。
 
-    update_parts = []
-    expr_names = {}
-    expr_values = {}
-    for k, v in patch_data.items():
-        if k in ("routine_id", "elder_id", "created_at"):
-            continue
-        attr_key = f"#{k}"
-        attr_val = f":{k}"
-        update_parts.append(f"{attr_key} = {attr_val}")
-        expr_names[attr_key] = k
-        expr_values[attr_val] = v
+    舊版仍為 current 且新版尚未存在才成立；條件不成立代表有並行修改，拋
+    ConditionFailedError 讓呼叫端重新判斷是重送或衝突。
+    """
+    client = get_dynamodb_client()
+    effective_to = next_version["effective_from"]
 
-    if not update_parts:
-        resp = table.get_item(Key={"routine_id": routine_id})
-        return convert_decimals(resp.get("Item", {}))
-
-    update_expr = "SET " + ", ".join(update_parts)
     try:
-        resp = table.update_item(
-            Key={"routine_id": routine_id},
-            UpdateExpression=update_expr,
-            ExpressionAttributeNames=expr_names,
-            ExpressionAttributeValues=expr_values,
-            ReturnValues="ALL_NEW",
+        client.transact_write_items(
+            TransactItems=[
+                {
+                    "Update": {
+                        "TableName": TABLE_ROUTINES,
+                        "Key": to_attribute_values(
+                            {
+                                "routine_id": current["routine_id"],
+                                "version": int(current["version"]),
+                            }
+                        ),
+                        "UpdateExpression": (
+                            "SET is_current = :false, effective_to = :ts REMOVE current_sort_key"
+                        ),
+                        "ConditionExpression": "is_current = :true",
+                        "ExpressionAttributeValues": to_attribute_values(
+                            {":false": False, ":true": True, ":ts": effective_to}
+                        ),
+                    }
+                },
+                {
+                    "Put": {
+                        "TableName": TABLE_ROUTINES,
+                        "Item": to_attribute_values(next_version),
+                        "ConditionExpression": "attribute_not_exists(routine_id)",
+                    }
+                },
+            ]
         )
-        return convert_decimals(resp.get("Attributes", {}))
+        return convert_decimals(next_version)
     except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code in ("TransactionCanceledException", "ConditionalCheckFailedException"):
+            raise ConditionFailedError("例行公事已被其他請求改版")
         raise DBError(f"更新例行公事失敗: {e.response['Error']['Message']}")
 
 
-def list_routines_by_elder(elder_id: str, active_only: bool = True) -> list[dict[str, Any]]:
-    """列表查詢長者的例行公事定義。"""
+def list_current_routines(
+    elder_id: str,
+    active_only: bool = True,
+    limit: int = 50,
+    next_token: str = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """查 sparse GSI `routines-current-by-elder` 取得長者的 current 定義（最終一致）。"""
     table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+
+    key_cond = "elder_id = :eid"
+    expr_values: dict[str, Any] = {":eid": elder_id}
+    if active_only:
+        key_cond += " AND begins_with(current_sort_key, :prefix)"
+        expr_values[":prefix"] = "A#"
+
+    query_kwargs: dict[str, Any] = {
+        "IndexName": "routines-current-by-elder",
+        "KeyConditionExpression": key_cond,
+        "ExpressionAttributeValues": expr_values,
+        "Limit": limit,
+    }
+    if next_token:
+        query_kwargs["ExclusiveStartKey"] = decode_next_token(next_token)
+
     try:
-        resp = table.scan(
-            FilterExpression="elder_id = :eid",
-            ExpressionAttributeValues={":eid": elder_id},
-        )
-        items = resp.get("Items", [])
-        if active_only:
-            items = [i for i in items if i.get("active", True)]
-        return convert_decimals(items)
+        resp = table.query(**query_kwargs)
+        items = convert_decimals(resp.get("Items", []))
+        last_key = resp.get("LastEvaluatedKey")
+        return items, encode_next_token(last_key) if last_key else None
     except ClientError as e:
         raise DBError(f"查詢例行公事定義失敗: {e.response['Error']['Message']}")
 
 
-def get_daily_routines(
-    elder_id: str,
-    date_str: str,
-    current_iso_ts: str = None,
-    grace_period_hours: float = 2.0,
-) -> dict[str, Any]:
-    """DEPRECATED：展開指定日期的例行公事行程與動態完成狀態 (pending/done/missed)。
+def list_routine_versions_by_elder(elder_id: str, upper_bound: str) -> list[dict[str, Any]]:
+    """查 GSI `routine-versions-by-elder` 取得 effective_from 不晚於 upper_bound 的所有版本。
 
-    請改用 `src.shared.routines.list_occurrences()`。這支的假設與真實 schema 不符：
-    routines 表是 `routine_id + version` 複合鍵、定義列表走 `routines-current-by-elder`
-    GSI，而這裡用 `scan` 加單一 key；也沒有 `occurrence_cutoff` 與 routine 版本解析，
-    因此無法滿足 api.md 的 completion-first 規則。待 routines handler 實作時一併移除。
-
-    判斷規則：
-    1. 從 routines 讀取所有活躍項目，判斷該日期是否需排程 (daily / weekly / once)。
-    2. 從 events 查詢該日所有完成記錄 (帶有 routine_id 的事件)。
-    3. 若有對應完成事件 => status = 'done'。
-    4. 若無完成事件 =>
-       - 比對目前時間 (current_iso_ts) 與排定時間 (scheduled_at) + 寬限期 (grace_period_hours)。
-       - 超過排定時間 + 寬限期或超過當日最晚完成時間 => status = 'missed'。
-       - 否則 => status = 'pending'。
+    upper_bound 為 `version_time_key` 的上界（見 src/shared/routines.py 的
+    versions_upper_bound），供展開指定日期行程時收斂各 routine 的有效版本。
     """
-    # 解析日期與目前時間
-    dt_target = datetime.strptime(date_str, "%Y-%m-%d")
-    target_weekday = dt_target.isoweekday()  # 1-7 (週一為 1)
+    table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+    items: list[dict[str, Any]] = []
+    query_kwargs: dict[str, Any] = {
+        "IndexName": "routine-versions-by-elder",
+        "KeyConditionExpression": "elder_id = :eid AND version_time_key <= :upper",
+        "ExpressionAttributeValues": {":eid": elder_id, ":upper": upper_bound},
+    }
 
-    if current_iso_ts:
-        now_dt = datetime.fromisoformat(current_iso_ts)
-    else:
-        now_dt = datetime.now(TZ_TAIPEI)
+    try:
+        while True:
+            resp = table.query(**query_kwargs)
+            items.extend(resp.get("Items", []))
+            last_key = resp.get("LastEvaluatedKey")
+            if not last_key:
+                break
+            query_kwargs["ExclusiveStartKey"] = last_key
+    except ClientError as e:
+        raise DBError(f"查詢例行公事版本失敗: {e.response['Error']['Message']}")
 
-    # 1. 讀取 routines
-    routines = list_routines_by_elder(elder_id, active_only=True)
+    return convert_decimals(items)
 
-    # 2. 讀取當日 events
-    events, _ = list_events(elder_id, from_date=date_str, to_date=date_str, limit=200)
-    completed_event_map = {}
-    for evt in events:
-        rid = evt.get("routine_id")
-        if rid:
-            completed_event_map[rid] = evt
-
-    daily_items = []
-
-    for rtn in routines:
-        schedule = rtn.get("schedule", {})
-        freq = schedule.get("freq")
-        is_scheduled = False
-
-        if freq == "daily":
-            is_scheduled = True
-        elif freq == "weekly":
-            weekday = schedule.get("weekday")
-            if weekday == target_weekday:
-                is_scheduled = True
-        elif freq == "once":
-            if schedule.get("date") == date_str:
-                is_scheduled = True
-
-        if not is_scheduled:
-            continue
-
-        rid = rtn["routine_id"]
-        time_str = schedule.get("time", "09:00")
-        scheduled_at_str = f"{date_str}T{time_str}:00+08:00"
-        scheduled_dt = datetime.fromisoformat(scheduled_at_str)
-
-        # 動態判定狀態
-        if rid in completed_event_map:
-            evt = completed_event_map[rid]
-            status = "done"
-            completed_at = evt.get("ts")
-            completed_by = evt.get("source", "conversation")
-        else:
-            completed_at = None
-            completed_by = None
-            # 檢查寬限期與截止時間
-            deadline_dt = scheduled_dt + timedelta(hours=grace_period_hours)
-
-            # 若排定時間加上寬限期已過，或是目標日期為過去日期
-            if now_dt > deadline_dt or now_dt.date() > dt_target.date():
-                status = "missed"
-            else:
-                status = "pending"
-
-        item = {
-            "routine_id": rid,
-            "title": rtn.get("title", ""),
-            "type": rtn.get("type", "other"),
-            "scheduled_at": scheduled_at_str,
-            "status": status,
-        }
-        if completed_at:
-            item["completed_at"] = completed_at
-        if completed_by:
-            item["completed_by"] = completed_by
-
-        daily_items.append(item)
-
-    # 排序：依 scheduled_at
-    daily_items.sort(key=lambda x: x["scheduled_at"])
-
-    return {"date": date_str, "items": daily_items}
-
-
-# -----------------------------------------------------------------------------
-# TransactWriteItems 跨表連動交易操作
-# -----------------------------------------------------------------------------
 
 def complete_routine_with_event(
     elder_id: str,
@@ -749,22 +824,19 @@ def complete_routine_with_event(
 ) -> dict[str, Any]:
     """寫入 canonical routine completion event。
 
-    這支是 completion 的唯一寫入點，由兩個入口共用：realtime rail 在 `/chat` 回應前的
-    交易，以及照護者的 `POST /routines/{routine_id}/complete`。canonical key 只由
-    `routine_id + routine_date` 決定，因此同日改版、手動與對話完成都收斂到同一筆 event，
-    occurrence 是否 `done` 完全由此 event 是否存在判定，`routines` 表不重複保存狀態。
+    canonical key 只由 `routine_id + routine_date` 決定，因此同日改版、手動與對話完成都
+    收斂到同一筆 event，occurrence 是否 `done` 完全由此 event 是否存在判定，`routines` 表
+    不重複保存狀態。`routine_version` 只記錄完成當下採用的有效版本，不參與 identity。
 
-    `routine_version` 只記錄完成當下採用的有效版本，不參與 identity。
     batch 一律不得呼叫（規範：batch 不得建立、修改、停用或完成 routine）。
     """
     if extraction_track == "batch":
         raise DBError("batch 不得寫入 routine completion event")
 
-    canonical_key = routine_completion_key(routine_id, routine_date)
-    event = create_event(
+    event, _ = put_event_if_absent(
         {
             "elder_id": elder_id,
-            "canonical_event_key": canonical_key,
+            "canonical_event_key": routine_completion_key(routine_id, routine_date),
             "ts": ts,
             "type": event_type,
             "detail": detail,
@@ -890,7 +962,72 @@ def list_daily_summaries(
     except ClientError as e:
         raise DBError(f"查詢每日摘要失敗: {e.response['Error']['Message']}")
 
-    items = convert_decimals(resp.get("Items", []))
-    last_key = resp.get("LastEvaluatedKey")
-    return items, encode_next_token(last_key) if last_key else None
+
+# -----------------------------------------------------------------------------
+# Routine 高階便利函式（供 tools handler 與 daily_digest 呼叫）
+# 底層讀寫透過 list_routine_versions_by_elder / put_routine_version；
+# occurrence 狀態推導由 src/shared/routines.py 完成，不落地。
+# -----------------------------------------------------------------------------
+
+def get_daily_routines(elder_id: str, date_str: str) -> dict[str, Any]:
+    """查詢指定長者在指定日期的行程清單（含動態完成狀態）。
+
+    回傳格式：
+        { "date": "YYYY-MM-DD", "items": [ occurrence, ... ] }
+
+    occurrence 狀態由 routines.resolve_occurrences 推導，
+    completion event 透過 completion_event_key 從 events 表查詢。
+    """
+    from src.shared import routines as rtn
+
+    current = datetime.now(tz=timezone(timedelta(hours=8)))
+    upper_bound = rtn.versions_upper_bound(rtn.occurrence_cutoff(date_str, current))
+
+    # 取出當天有效的所有 routine 版本
+    versions = list_routine_versions_by_elder(elder_id, upper_bound)
+
+    # 收集對應的 completion event（用穩定 canonical key 查詢）
+    completion_event_ids = [
+        db_event_id
+        for v in versions
+        for db_event_id in [
+            event_id_for(elder_id, rtn.completion_event_key(v["routine_id"], date_str))
+        ]
+    ]
+
+    # BatchGet 取完成事件
+    completion_map: dict[str, dict[str, Any]] = {}
+    if completion_event_ids:
+        events_batch = get_events(elder_id, completion_event_ids)
+        for evt in events_batch.values():
+            rid = evt.get("routine_id")
+            if rid:
+                completion_map[rid] = evt
+
+    items = rtn.resolve_occurrences(versions, completion_map, date_str, current)
+    return {"date": date_str, "items": items}
+
+
+def create_routine(routine_item: dict[str, Any]) -> dict[str, Any]:
+    """建立新的 routine（版本 1，is_current=True）。
+
+    routine_item 應包含：routine_id、elder_id、title、type、schedule、active、created_at。
+    """
+    from src.shared import routines as rtn
+
+    now_iso = routine_item.get("created_at") or rtn.now_iso()
+    version_item = {
+        **routine_item,
+        "version": 1,
+        "is_current": True,
+        "effective_from": now_iso,
+        "current_sort_key": rtn.current_sort_key(
+            routine_item.get("active", True),
+            now_iso,
+            routine_item["routine_id"],
+        ),
+        "version_time_key": rtn.version_time_key(now_iso, routine_item["routine_id"], 1),
+    }
+    return put_routine_version(version_item)
+
 

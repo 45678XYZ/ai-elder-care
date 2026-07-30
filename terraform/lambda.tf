@@ -1,4 +1,4 @@
-# Lambda（Python，程式碼在 backend/src/）
+﻿# Lambda（Python，程式碼在 backend/src/）
 #
 # functions：chat / elders / summaries / events / routines / stats / summary_generator
 #
@@ -70,6 +70,25 @@ resource "aws_lambda_permission" "pre_token_cognito" {
   source_arn    = aws_cognito_user_pool.accounts.arn
 }
 
+
+# =============================================================================
+# 模組 A：chat / tools / elders Lambda 函數宣告與專屬 IAM 權限
+# =============================================================================
+
+# 1. 建立模組 A 專屬 Lambda 共用 IAM Role (信任 Lambda 服務)
+resource "aws_iam_role" "lambda_backend_role" {
+  name = "${var.project_name}-lambda-backend-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
 # --- 生活記錄（Module B）批次萃取 ---
 #
 # 多支 Lambda 共用同一個部署包來源（backend/src + backend/requirements.txt），
@@ -132,6 +151,170 @@ resource "aws_iam_role" "extraction" {
   })
 }
 
+# 2. 基礎 CloudWatch Logs 寫入權限
+resource "aws_iam_role_policy_attachment" "lambda_backend_logs" {
+  role       = aws_iam_role.lambda_backend_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# 3. 模組 A 專屬權限政策 (Polly, S3, Bedrock, SageMaker, SNS, DynamoDB 5 表)
+resource "aws_iam_role_policy" "lambda_backend_policy" {
+  name = "${var.project_name}-lambda-backend-policy"
+  role = aws_iam_role.lambda_backend_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["polly:SynthesizeSpeech"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject"]
+        Resource = "arn:aws:s3:::${var.project_name}-audio/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeAgent", "bedrock:InvokeModel"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sagemaker:InvokeEndpoint"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sns:Publish", "sns:Subscribe"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan",
+          "dynamodb:BatchGetItem",
+          "dynamodb:BatchWriteItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.elders.arn,
+          aws_dynamodb_table.conversations.arn,
+          aws_dynamodb_table.events.arn,
+          aws_dynamodb_table.daily_summaries.arn,
+          aws_dynamodb_table.routines.arn
+        ]
+      }
+    ]
+  })
+}
+
+# 照護者即時緊急警報與摘要通知 SNS Topic
+resource "aws_sns_topic" "caregiver_notifications" {
+  name = "${var.project_name}-caregiver-notifications"
+}
+
+# 4. chat Lambda 函數 (POST /chat 對話進入點)
+resource "aws_lambda_function" "chat" {
+  function_name = "${var.project_name}-chat"
+  role          = aws_iam_role.lambda_backend_role.arn
+  handler       = "handlers.chat.handler"
+  runtime       = "python3.11"
+  timeout       = 28
+  memory_size   = 512
+
+  filename = "${path.module}/build/backend.zip"
+
+  environment {
+    variables = {
+      S3_AUDIO_BUCKET            = "${var.project_name}-audio"
+      BEDROCK_AGENT_ID           = aws_bedrockagent_agent.elder_companion_agent.id
+      BEDROCK_AGENT_ALIAS_ID     = "TSTALIASID"
+      AWS_REGION                 = var.aws_region
+      SAGEMAKER_CE_ENDPOINT_NAME = ""
+      TABLE_ELDERS               = aws_dynamodb_table.elders.name
+      TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
+      TABLE_EVENTS               = aws_dynamodb_table.events.name
+      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    }
+  }
+}
+
+# 5. tools Lambda 函數 (Bedrock Action Group 7 大工具箱)
+resource "aws_lambda_function" "tools" {
+  function_name = "${var.project_name}-tools"
+  role          = aws_iam_role.lambda_backend_role.arn
+  handler       = "handlers.tools.handler"
+  runtime       = "python3.11"
+  timeout       = 15
+  memory_size   = 256
+
+  filename = "${path.module}/build/backend.zip"
+
+  environment {
+    variables = {
+      TABLE_ELDERS               = aws_dynamodb_table.elders.name
+      TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
+      TABLE_EVENTS               = aws_dynamodb_table.events.name
+      TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
+      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    }
+  }
+}
+
+# 6. elders Lambda 函數 (GET/POST/PATCH /elders 長者個人檔案與偏好 API)
+resource "aws_lambda_function" "elders" {
+  function_name = "${var.project_name}-elders"
+  role          = aws_iam_role.lambda_backend_role.arn
+  handler       = "handlers.elders.handler"
+  runtime       = "python3.11"
+  timeout       = 10
+
+  filename = "${path.module}/build/backend.zip"
+
+  environment {
+    variables = {
+      TABLE_ELDERS               = aws_dynamodb_table.elders.name
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    }
+  }
+}
+
+# =============================================================================
+# 5. Cognito Post Confirmation Trigger
+# =============================================================================
+
+resource "aws_lambda_function" "post_confirmation" {
+  function_name = "${var.project_name}-post-confirmation"
+  role          = aws_iam_role.lambda_backend_role.arn
+  handler       = "handlers.post_confirmation.handler"
+  runtime       = "python3.11"
+  timeout       = 10
+
+  filename = "${path.module}/build/backend.zip"
+
+  environment {
+    variables = {
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    }
+  }
+}
+
+resource "aws_lambda_permission" "allow_cognito_post_confirmation" {
+  statement_id  = "AllowCognitoInvokePostConfirmation"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.post_confirmation.function_name
+  principal     = "cognito-idp.amazonaws.com"
+  source_arn    = aws_cognito_user_pool.accounts.arn
+}
+
 resource "aws_iam_role_policy_attachment" "extraction_logs" {
   role       = aws_iam_role.extraction.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
@@ -148,30 +331,24 @@ resource "aws_iam_role_policy_attachment" "extraction_vectors" {
 }
 
 # 最小權限：只給實際會碰到的表與動作。
-# events 需要條件式 Put 與 revision enrichment；conversations 需要 session 狀態機與
-# sessions-by-state GSI 查詢；elders 只讀 persona 供萃取 prompt 使用。
 data "aws_iam_policy_document" "extraction_data" {
   statement {
     sid    = "EventsWrite"
     effect = "Allow"
-
     actions = [
       "dynamodb:GetItem",
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
       "dynamodb:Query",
     ]
-
     resources = [
       aws_dynamodb_table.events.arn,
       "${aws_dynamodb_table.events.arn}/index/*",
     ]
   }
-
   statement {
     sid    = "ConversationsSessionState"
     effect = "Allow"
-
     actions = [
       "dynamodb:GetItem",
       "dynamodb:BatchGetItem",
@@ -179,7 +356,6 @@ data "aws_iam_policy_document" "extraction_data" {
       "dynamodb:UpdateItem",
       "dynamodb:Query",
     ]
-
     resources = [
       aws_dynamodb_table.conversations.arn,
       "${aws_dynamodb_table.conversations.arn}/index/*",
@@ -233,17 +409,14 @@ data "aws_iam_policy_document" "extraction_data" {
   statement {
     sid    = "BatchQueue"
     effect = "Allow"
-
     actions = [
       "sqs:SendMessage",
       "sqs:ReceiveMessage",
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
     ]
-
     resources = [aws_sqs_queue.batch.arn, aws_sqs_queue.batch_dlq.arn]
   }
-
   statement {
     sid       = "BatchAlerts"
     effect    = "Allow"
@@ -270,10 +443,8 @@ module "batch_extractor" {
   description   = "Module B 生活記錄批次萃取器"
   handler       = "src.handlers.batch_extractor.handler"
   runtime       = "python3.11"
-
-  # 一個 session 要跑 chunk 數 × 兩次模型呼叫；timeout 必須小於 SQS visibility timeout
-  timeout     = var.batch_lambda_timeout
-  memory_size = 1024
+  timeout       = var.batch_lambda_timeout
+  memory_size   = 1024
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
@@ -289,10 +460,8 @@ module "batch_extractor" {
 }
 
 resource "aws_lambda_event_source_mapping" "batch_extractor" {
-  event_source_arn = aws_sqs_queue.batch.arn
-  function_name    = module.batch_extractor.lambda_function_arn
-
-  # 一次一則：單則失敗不牽連其他 session；handler 仍回報 partial batch failure
+  event_source_arn                   = aws_sqs_queue.batch.arn
+  function_name                      = module.batch_extractor.lambda_function_arn
   batch_size                         = 1
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 0
@@ -306,9 +475,8 @@ module "session_closer" {
   description   = "Session 關閉與離線 materialization 觸發器"
   handler       = "src.handlers.session_closer.handler"
   runtime       = "python3.11"
-
-  timeout     = 60
-  memory_size = 512
+  timeout       = 60
+  memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
@@ -331,9 +499,8 @@ module "dlq_reconciler" {
   description   = "DLQ 訊息對賬與告警器"
   handler       = "src.handlers.dlq_reconciler.handler"
   runtime       = "python3.11"
-
-  timeout     = 60
-  memory_size = 512
+  timeout       = 60
+  memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
@@ -354,9 +521,7 @@ resource "aws_lambda_event_source_mapping" "dlq_reconciler" {
   batch_size       = 10
 }
 
-# 照護者端資料 API：目前 GET /events 與 /summaries 已實作。
-# 其餘 handler（chat/elders/routines/stats）由各模組補上自己的 Lambda 與路由，
-# 共用同一個部署包與同一組資料表環境變數。
+# 照護者端資料 API
 module "api_events" {
   source  = "terraform-aws-modules/lambda/aws"
   version = "~> 8.0"
@@ -365,10 +530,8 @@ module "api_events" {
   description   = "照護者端事件時間軸 API"
   handler       = "src.handlers.events.handler"
   runtime       = "python3.11"
-
-  # 只做一次 GSI Query 與投影，不呼叫模型
-  timeout     = 15
-  memory_size = 512
+  timeout       = 15
+  memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn

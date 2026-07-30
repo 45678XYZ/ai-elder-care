@@ -184,7 +184,7 @@ def test_same_slot_converges_and_next_slot_does_not():
 def test_routine_completion_key_excludes_version():
     """同日不同 routine version 的完成必須收斂到同一 event。"""
     key = routine_completion_key("rtn_001", "2026-07-26")
-    assert key == "ROUTINE#rtn_001#2026-07-26"
+    assert key == "routine_completion#rtn_001#2026-07-26"
     assert "version" not in key
     assert routine_completion_key("rtn_001", "2026-07-26") == key
 
