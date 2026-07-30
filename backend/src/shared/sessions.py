@@ -651,36 +651,9 @@ def mark_turns_batch_completed(
     extractor_version: str,
     now: datetime | None = None,
 ) -> int:
-    """更新 turn 的 `batch_*` 欄位。
+    """標記 turn 萃取完成（極簡架構：所有狀態集中維護於 Session 的 `chunk_manifest`）。"""
+    return len(chunk_by_turn)
 
-    batch 只擁有 turn 的 batch 欄位，不得改 realtime 欄位或對話內容（ownership 分軌）。
-    """
-    moment = format_ts(now or _now())
-    table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
-    updated = 0
-    for turn_id, chunk_id in chunk_by_turn.items():
-        try:
-            table.update_item(
-                Key={"elder_id": elder_id, "record_id": f"{TURN_RECORD_PREFIX}{turn_id}"},
-                UpdateExpression=(
-                    "SET batch_extraction_status = :completed, batch_chunk_id = :chunk_id, "
-                    "batch_extractor_version = :version, batch_extracted_at = :now"
-                ),
-                ConditionExpression="attribute_exists(record_id)",
-                ExpressionAttributeValues={
-                    ":completed": BATCH_COMPLETED,
-                    ":chunk_id": chunk_id,
-                    ":version": extractor_version,
-                    ":now": moment,
-                },
-            )
-            updated += 1
-        except ClientError as exc:
-            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                logger.warning("turn 不存在，略過 batch 欄位更新：turn_id=%s", turn_id)
-                continue
-            raise SessionError(f"更新 turn batch 欄位失敗: {exc.response['Error']['Message']}")
-    return updated
 
 
 def is_lease_expired(session: dict[str, Any], *, now: datetime | None = None) -> bool:

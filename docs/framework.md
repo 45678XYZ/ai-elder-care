@@ -218,15 +218,11 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 | `ai_respond_audio_s3_key` | String | 否 | 只存 S3 object key (不存公開 URL) |
 | `elder_received_at`, `ai_responded_at` | String | 否 | 長者發話接收與 AI 回覆完成時間戳記 |
 | `routines_updated` | Boolean | 是 | 本 turn 是否觸發 routine 狀態更新 |
-| `batch_extraction_status` | String | 是 | `pending` \| `processing` \| `completed` \| `failed` |
-| `batch_chunk_id` | String | 否 | manifest 首次持久化後指向 core 所屬 chunk |
-| `batch_extractor_version` | String | 否 | 完成本 turn 的 batch extractor 版本 |
-| `batch_extracted_at` | String | 否 | batch 完成時間 |
 
-
-tool calling 副作用（routine create/update/deactivate/complete、safety event 寫入）由 Bedrock Agent 在 `InvokeAgent` 回應前同步完成，不寫入 turn 的 extraction 欄位。batch 只更新 `batch_extraction_status`、`batch_chunk_id`、`batch_extractor_version`、`batch_extracted_at`，並寫一般 events 或 enrich 既有 safety event。所有對話皆為長者主動發話（長者先輸入文字或語音，AI 再合成語音回覆）。音訊欄位只存 S3 object key（`ai_respond_audio_s3_key`），不在 DynamoDB 保存公開 URL；API 每次回傳時動態簽發 15 分鐘 presigned URL。
+tool calling 副作用（routine create/update/deactivate/complete、safety event 寫入）由 Bedrock Agent 在 `InvokeAgent` 回應前同步完成。所有離線 Topic Chunk 萃取狀態（Manifest、Topic 分塊與 Chunk 萃取狀態）100% 集中維護於 Session 的 `chunk_manifest` 中，Turn Item 不另外保存 `batch_*` 狀態欄位。所有對話皆為長者主動發話（長者先輸入文字或語音，AI 再合成語音回覆）。音訊欄位只存 S3 object key（`ai_respond_audio_s3_key`），不在 DynamoDB 保存公開 URL；API 每次回傳時動態簽發 15 分鐘 presigned URL。
 
 #### Session metadata 欄位
+
 
 
 | 欄位 | 型別 | 必填 | 說明 |

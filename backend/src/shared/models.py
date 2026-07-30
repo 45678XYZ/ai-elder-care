@@ -138,11 +138,7 @@ class ConversationCreate(BaseModel):
     ai_responded_at: str | None = Field(default=None, description="AI 推理完成送出回應之時間戳記")
     routines_updated: bool = Field(default=False, description="本輪對話是否觸發例行公事狀態更新")
 
-    # 離線萃取追蹤欄位
-    batch_extraction_status: str = Field(default="pending", description="離線批次萃取狀態 (pending/completed/failed)")
-    batch_chunk_id: str | None = Field(default=None, description="離線批次所屬 Chunk ID")
-    batch_extractor_version: str | None = Field(default=None, description="完成本 turn 的 batch extractor 版本")
-    batch_extracted_at: str | None = Field(default=None, description="batch 萃取完成時間")
+
 
 
 
