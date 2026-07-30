@@ -343,31 +343,6 @@ def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
 
 
 
-def get_recent_conversations(
-    elder_id: str, limit: int = 10, next_token: str = None
-) -> tuple[list[dict[str, Any]], str | None]:
-    """分頁查詢長者近期對話紀錄（按 created_at 時間倒序）。"""
-    table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
-    
-    query_kwargs: dict[str, Any] = {
-        "KeyConditionExpression": "elder_id = :eid",
-        "ExpressionAttributeValues": {":eid": elder_id},
-        "ScanIndexForward": False,
-        "Limit": limit,
-    }
-    if next_token:
-        query_kwargs["ExclusiveStartKey"] = decode_next_token(next_token)
-
-    try:
-        resp = table.query(**query_kwargs)
-        items = convert_decimals(resp.get("Items", []))
-        last_key = resp.get("LastEvaluatedKey")
-        new_next_token = encode_next_token(last_key) if last_key else None
-        return items, new_next_token
-    except ClientError as e:
-        raise DBError(f"查詢對話紀錄失敗: {e.response['Error']['Message']}")
-
-
 def list_turn_times(elder_id: str, from_date: str, to_date: str) -> list[str]:
     """取期間內已完成 turn 的 `created_at`（遞增），供統計計算對話輪數。
 
