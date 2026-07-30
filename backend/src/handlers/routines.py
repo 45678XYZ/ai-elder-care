@@ -29,19 +29,16 @@ from src.shared.models import (
     RoutineOccurrence,
     RoutineUpdate,
 )
+from src.shared.validation import (
+    RequestValidationError,
+    bad_request,
+    validate,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
-
-
-class _RequestError(Exception):
-    """請求不合法，attach 對應的 HTTP 回應；handler 捕捉後直接回傳 self.response。"""
-
-    def __init__(self, response: dict):
-        super().__init__(response["body"])
-        self.response = response
 
 
 def handler(event, context):
@@ -59,8 +56,9 @@ def handler(event, context):
         if method == "PATCH" and routine_id:
             return _update_routine(event, routine_id)
         return responses.error(400, "INVALID_PARAMETER", "不支援的方法或路徑")
-    except (auth.AuthError, _RequestError) as e:
+    except (auth.AuthError, RequestValidationError) as e:
         return e.response
+
     except Exception:
         # 內部錯誤訊息可能含資料內容，只留在 CloudWatch，對外一律回穩定錯誤碼
         logger.exception("例行公事 API 處理失敗")
@@ -139,7 +137,8 @@ def _create_routine(event):
     if caller.role != auth.ROLE_CAREGIVER:
         return responses.error(403, "FORBIDDEN", "只有照護者可建立例行公事")
 
-    payload = _validate(RoutineCreate, _parse_body(event))
+    payload = validate(RoutineCreate, _parse_body(event))
+
     auth.assert_can_access_elder(event, payload.elder_id)
 
     # 冪等 scope：同一照護者以同一 client_request_id 重送必然得到同一個 routine_id
@@ -201,7 +200,8 @@ def _update_routine(event, routine_id: str):
     if caller.role != auth.ROLE_CAREGIVER:
         return responses.error(403, "FORBIDDEN", "只有照護者可修改例行公事")
 
-    payload = _validate(RoutineUpdate, _parse_body(event))
+    payload = validate(RoutineUpdate, _parse_body(event))
+
     changes = payload.model_dump(exclude_unset=True, exclude_none=True)
     changes.pop("client_request_id", None)
     if not changes:
@@ -266,7 +266,8 @@ def _update_routine(event, routine_id: str):
 # -----------------------------------------------------------------------------
 
 def _complete_routine(event, routine_id: str):
-    payload = _validate(RoutineComplete, _parse_body(event))
+    payload = validate(RoutineComplete, _parse_body(event))
+
 
     versions = db.list_routine_versions(routine_id)
     if not versions:
@@ -344,28 +345,20 @@ def _find_change(versions: list[dict], change_request_id: str, request_hash: str
 
 def _assert_same_request(existing: dict, request_hash: str) -> None:
     if existing.get("request_hash") != request_hash:
-        raise _RequestError(
+        raise RequestValidationError(
             responses.error(
                 409, "IDEMPOTENCY_CONFLICT", "相同的 client_request_id 已用於不同內容"
             )
         )
 
 
-def _validate(model, body: dict):
-    """驗證 request body；只有 client 送來的內容不合規才回 400，內部資料異常留給 500。"""
-    try:
-        return model.model_validate(body)
-    except ValidationError as e:
-        raise _bad_request(_validation_message(e))
-
-
 def _parse_body(event) -> dict:
     try:
         body = json.loads(event.get("body") or "{}")
     except json.JSONDecodeError:
-        raise _bad_request("request body 不是合法的 JSON")
+        raise bad_request("request body 不是合法的 JSON")
     if not isinstance(body, dict):
-        raise _bad_request("request body 必須是 JSON 物件")
+        raise bad_request("request body 必須是 JSON 物件")
     return body
 
 
@@ -376,18 +369,9 @@ def _parse_limit(params: dict) -> int:
     try:
         limit = int(raw)
     except (TypeError, ValueError):
-        raise _bad_request("limit 必須是整數")
+        raise bad_request("limit 必須是整數")
     if not 1 <= limit <= MAX_LIMIT:
-        raise _bad_request(f"limit 必須介於 1 與 {MAX_LIMIT} 之間")
+        raise bad_request(f"limit 必須介於 1 與 {MAX_LIMIT} 之間")
     return limit
 
 
-def _validation_message(exc: ValidationError) -> str:
-    """取第一個欄位錯誤組人讀訊息；前端分支請依 error.code，不依 message。"""
-    first = exc.errors()[0]
-    location = ".".join(str(part) for part in first["loc"]) or "body"
-    return f"{location}: {first['msg']}"
-
-
-def _bad_request(message: str) -> _RequestError:
-    return _RequestError(responses.error(400, "INVALID_PARAMETER", message))
