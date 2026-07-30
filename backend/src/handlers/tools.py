@@ -255,7 +255,7 @@ def handle_get_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             "lang_preference": elder_info.get("lang_preference"),
             "health_notes": elder_info.get("health_notes", []),
             "family": elder_info.get("family", []),
-            "preferences": elder_info.get("preferences", {})
+            "habit_note": elder_info.get("habit_note", {})
         }
         return {"status": "success", "data": profile}
     except Exception as e:
