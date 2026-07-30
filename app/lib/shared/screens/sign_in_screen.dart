@@ -59,7 +59,7 @@ class _SignInScreenState extends State<SignInScreen> {
     //
     // 密碼在這裡**只檢查有沒有填**，不驗格式：既有帳號的密碼未必符合現行規則，
     // 在登入頁擋格式會把合法使用者關在門外。格式是註冊時的事。
-    final emailError = looksLikeEmail(email) ? null : '信箱格式不太對，請再看一下';
+    final emailError = looksLikeEmail(email) ? null : '信箱格式錯誤';
     final passwordError = password.isEmpty ? '請填密碼' : null;
 
     if (emailError != null || passwordError != null) {

@@ -102,8 +102,20 @@ class AppSession {
   /// 客語裝置端 ASR 不支援，走錄音送後端；華語走裝置端辨識。
   bool get isHakka => (selectedElder?.langPreference ?? lang) == 'hak';
 
-  /// 稱呼 fallback：選定長者的暱稱／姓名 → 首次設定填的 → 通用占位。
+  /// 稱呼 fallback：這個帳號首次設定填的 → 選定長者的暱稱／姓名 → 通用占位。
+  ///
+  /// 為什麼「自己填的」排在 [selectedElder] 前面：[elderNickname]／[elderName] 只有在
+  /// **這個帳號自己走過 /setup** 時才有值（見 loadForAccount），也就是長者本人填的稱呼；
+  /// 而 [elders] 目前是 [DemoData] 無條件灌進來的假名冊（陳阿蘭／林金水），對長者帳號來說
+  /// 那是別人的資料。原本的順序讓假名冊蓋過本人填的名字，長者不管改成什麼、登入後都被叫
+  /// 「阿蘭嬤」。照護者帳號不受影響：他們不走 /setup，這兩個欄位是空的，照樣落到
+  /// [selectedElder]（切換長輩才會跟著換稱呼）。
+  ///
+  /// TODO: 後端上線、`GET /elders` 回真名冊之後，長者本人的資料就在 [selectedElder] 裡，
+  /// 這兩層的先後就不再有差別，屆時可以收斂回單一來源。
   String get displayName {
+    if (elderNickname.trim().isNotEmpty) return elderNickname.trim();
+    if (elderName.trim().isNotEmpty) return elderName.trim();
     final e = selectedElder;
     if (e != null) {
       if (e.nickname != null && e.nickname!.trim().isNotEmpty) {
@@ -111,8 +123,6 @@ class AppSession {
       }
       if (e.name.trim().isNotEmpty) return e.name.trim();
     }
-    if (elderNickname.trim().isNotEmpty) return elderNickname.trim();
-    if (elderName.trim().isNotEmpty) return elderName.trim();
     return '阿公／阿嬤';
   }
 

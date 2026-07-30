@@ -11,6 +11,7 @@ import 'elder/elder_shell.dart';
 import 'elder/screens/chat_screen.dart';
 import 'elder/screens/link_caregiver_screen.dart';
 import 'elder/screens/today_screen.dart';
+import 'shared/screens/consent_policy_screen.dart';
 import 'shared/screens/role_select_screen.dart';
 import 'shared/screens/sign_in_screen.dart';
 import 'shared/screens/sign_up_screen.dart';
@@ -51,7 +52,14 @@ String? _redirect(BuildContext context, GoRouterState state) {
   }
 
   // 已登入的人不該再看到認證頁或身分宣告頁，這三個位置一律要被踢走。
-  final isPreAppRoute = isAuthRoute || location == '/' || location == '/setup';
+  //
+  // `/auth/consent` 是例外：它掛在 /auth/ 底下只是因為註冊頁從那裡進來，本身是純資訊頁，
+  // 沒有任何認證或身分作用。照護者的管理頁也有一個入口（[_PolicyLink]）——政策裡寫
+  // 「刪除資料請聯繫家人或管理者」，執行的人就是照護者，登入後查不到這份文件說不過去。
+  // 不豁免的話那個入口會被這條守衛吃掉，點了直接彈回 /care/summary。
+  final isPreAppRoute = (isAuthRoute && location != '/auth/consent') ||
+      location == '/' ||
+      location == '/setup';
 
   final role = auth.effectiveRole;
 
@@ -82,8 +90,15 @@ GoRouter buildRouter({String initialLocation = '/auth/sign-in'}) => GoRouter(
       redirect: _redirect,
       routes: [
         // 認證。長者與照護者共用同一組畫面，登入後才由 token 的 elder_id claim 分流。
-        GoRoute(path: '/auth/sign-in', builder: (_, __) => const SignInScreen()),
-        GoRoute(path: '/auth/sign-up', builder: (_, __) => const SignUpScreen()),
+        GoRoute(
+            path: '/auth/sign-in', builder: (_, __) => const SignInScreen()),
+        GoRoute(
+            path: '/auth/sign-up', builder: (_, __) => const SignUpScreen()),
+        // 註冊頁的「查看說明」連結進來，純資訊頁，不影響同意勾選狀態
+        // （勾選狀態留在 SignUpScreen 自己的 state，這頁 pop 回去時原樣還在）。
+        GoRoute(
+            path: '/auth/consent',
+            builder: (_, __) => const ConsentPolicyScreen()),
         GoRoute(
           path: '/auth/verify',
           // 信箱由上一頁用 extra 帶進來。直接開網址（例如重整）時沒有 extra，
@@ -115,7 +130,8 @@ GoRouter buildRouter({String initialLocation = '/auth/sign-in'}) => GoRouter(
         // 不該變成第三個常駐 tab（長者模式一頁最多 3 個可互動元素）。
         // 從今天頁 push 進來，返回時回到原本的 tab 與捲動位置。
         GoRoute(
-            path: '/elder/link', builder: (_, __) => const LinkCaregiverScreen()),
+            path: '/elder/link',
+            builder: (_, __) => const LinkCaregiverScreen()),
 
         // S3+S4 長者模式：底部 2 tab
         StatefulShellRoute.indexedStack(

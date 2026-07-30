@@ -388,12 +388,16 @@ class _Message {
   final String text;
 }
 
-/// 開始對話前的引導：只有一句時段問候，整個對話區正中央。純顯示，不可互動——
-/// 長者模式的三個互動額度要留給麥克風、打字、底部分頁。
+/// 開始對話前的引導：時段問候 + 健康資訊免責聲明，整個對話區正中央。純顯示，
+/// 不可互動——長者模式的三個互動額度要留給麥克風、打字、底部分頁。
 ///
 /// 原本這裡還有「你可以這樣說」跟三句範例，但那三句是靠左的卡片，
 /// 看起來像「可以點的選項」卻不能點；拿掉之後聊天室一開始就只留一句問候，
 /// 乾淨地待在畫面正中間，不會有東西看起來像按鈕卻按不下去。
+///
+/// 免責聲明放在這裡而不是底部語音面板：那塊已經有麥克風、狀態文字與打字按鈕，
+/// 再加一行會壓縮對話區的高度；開場這片留白本來就是空的，擺進來不佔任何版面成本，
+/// 而且每次進聊天室都會先看到。完整說明在註冊時的 [ConsentPolicyScreen]。
 class _ConversationHint extends StatelessWidget {
   const _ConversationHint({required this.greeting});
 
@@ -403,10 +407,35 @@ class _ConversationHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-        child: _HintLine(text: greeting, style: text.headlineLarge),
+    // 捲動容器：兩倍字級下問候加聲明會比這塊空間高，硬塞會 overflow。
+    // 包 SingleChildScrollView 之後內容照樣置中（靠 minHeight 撐滿可用高度），
+    // 只有真的放不下時才變成可捲。
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg, vertical: AppSpacing.lg),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _HintLine(text: greeting, style: text.headlineLarge),
+                const SizedBox(height: AppSpacing.xl),
+                // 講「看醫生」而不是「非醫療診斷之參酌」：長輩要看得懂才有意義，
+                // 法律用語留在政策頁。字級仍守長者下限 24sp。
+                Text(
+                  '我說的健康資訊只能參考，\n身體不舒服要看醫生喔',
+                  textAlign: TextAlign.center,
+                  style: text.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.inkSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

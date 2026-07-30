@@ -299,6 +299,65 @@ class TextLink extends StatelessWidget {
   }
 }
 
+/// 條款同意勾選：方框（非圓點，避免跟 [BigChoiceCard] 的身分選擇搞混）+ 說明文字。
+///
+/// 目前用在註冊頁的「同意使用者同意機制與資料保留政策」——選取狀態除了外框變色，
+/// 還加對勾圖示（§9 狀態不可只靠顏色傳遞），觸控區整列都能點，不必精準點中方框本身。
+class ConsentCheckbox extends StatelessWidget {
+  const ConsentCheckbox({
+    super.key,
+    required this.checked,
+    required this.label,
+    required this.onChanged,
+  });
+
+  final bool checked;
+  final String label;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      checked: checked,
+      button: true,
+      label: '$label${checked ? '，已勾選' : ''}',
+      child: InkWell(
+        onTap: () => onChanged(!checked),
+        borderRadius: const BorderRadius.all(AppRadius.card),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 60),
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                margin: const EdgeInsets.only(top: 2),
+                decoration: BoxDecoration(
+                  borderRadius: const BorderRadius.all(Radius.circular(6)),
+                  color: checked ? AppColors.accentText : Colors.transparent,
+                  border: Border.all(
+                    color: checked ? AppColors.accentText : AppColors.chevron,
+                    width: 2,
+                  ),
+                ),
+                child: checked
+                    ? const Icon(Icons.check, size: 18, color: Colors.white)
+                    : null,
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(child: Text(label, style: text.headlineSmall)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 長者規格的返回：不用 AppBar 的小箭頭，給看得見、按得到的區塊。
 class BigBackButton extends StatelessWidget {
   const BigBackButton({super.key, required this.onTap, this.label = '回上一頁'});

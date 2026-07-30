@@ -96,7 +96,7 @@ void main() {
       await pump(tester, const SignInScreen());
       await tapPrimary(tester);
 
-      expect(find.text('信箱格式不太對，請再看一下'), findsOneWidget);
+      expect(find.text('信箱格式錯誤'), findsOneWidget);
       expect(find.text('請填密碼'), findsOneWidget);
       expect(find.byType(FeedbackBanner), findsNothing);
     });
@@ -106,7 +106,7 @@ void main() {
       await tester.enterText(find.byType(TextField).first, 'not-an-email');
       await tapPrimary(tester);
 
-      expect(find.text('信箱格式不太對，請再看一下'), findsOneWidget);
+      expect(find.text('信箱格式錯誤'), findsOneWidget);
       expect(find.text('請填密碼'), findsOneWidget);
     });
 
@@ -129,7 +129,7 @@ void main() {
       await tester.enterText(find.byType(TextField).last, 'secret123');
       await tapPrimary(tester);
 
-      expect(find.text('信箱格式不太對，請再看一下'), findsOneWidget);
+      expect(find.text('信箱格式錯誤'), findsOneWidget);
     });
 
     testWidgets('信箱的錯誤長在信箱欄位下方，不丟到頁尾', (tester) async {
@@ -140,7 +140,7 @@ void main() {
 
       final emailField = tester.getRect(find.byType(TextField).first);
       final passwordField = tester.getRect(find.byType(TextField).last);
-      final error = tester.getRect(find.text('信箱格式不太對，請再看一下'));
+      final error = tester.getRect(find.text('信箱格式錯誤'));
       expect(error.top, greaterThanOrEqualTo(emailField.bottom),
           reason: '錯誤要在信箱欄位下方');
       expect(error.bottom, lessThanOrEqualTo(passwordField.top),
@@ -163,12 +163,12 @@ void main() {
       await tester.enterText(find.byType(TextField).first, 'not-an-email');
       await tester.enterText(find.byType(TextField).last, 'secret123');
       await tapPrimary(tester);
-      expect(find.text('信箱格式不太對，請再看一下'), findsOneWidget);
+      expect(find.text('信箱格式錯誤'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField).first, 'a@example.com');
       await tester.pump();
 
-      expect(find.text('信箱格式不太對，請再看一下'), findsNothing);
+      expect(find.text('信箱格式錯誤'), findsNothing);
     });
 
     testWidgets('帳號密碼錯會講，而且不說是哪一個錯', (tester) async {
@@ -187,7 +187,7 @@ void main() {
       await pump(tester, const SignUpScreen(), size: const Size(390, 1400));
       await tapPrimary(tester);
 
-      expect(find.text('信箱格式不太對，請再看一下'), findsOneWidget);
+      expect(find.text('信箱格式錯誤'), findsOneWidget);
       expect(find.text('密碼格式錯誤'), findsOneWidget);
       expect(find.text('請選擇身分'), findsOneWidget);
       // 沒填不另外給「請填…」，也不留任何頁尾的一句話
@@ -201,20 +201,20 @@ void main() {
       await tester.pump();
       await tapPrimary(tester);
 
-      expect(find.text('信箱格式不太對，請再看一下'), findsOneWidget);
+      expect(find.text('信箱格式錯誤'), findsOneWidget);
       expect(find.text('密碼格式錯誤'), findsOneWidget);
       expect(find.byType(FeedbackBanner), findsNothing);
     });
 
     testWidgets('信箱格式的錯誤也長在信箱欄位下方', (tester) async {
-      await pump(tester, const SignUpScreen());
+      await pump(tester, const SignUpScreen(), size: const Size(390, 1400));
       await tester.enterText(find.byType(TextField).first, 'not-an-email');
       await tester.enterText(find.byType(TextField).last, 'secret123');
       await tapPrimary(tester);
 
       final emailField = tester.getRect(find.byType(TextField).first);
       final passwordField = tester.getRect(find.byType(TextField).last);
-      final error = tester.getRect(find.text('信箱格式不太對，請再看一下'));
+      final error = tester.getRect(find.text('信箱格式錯誤'));
       expect(error.top, greaterThanOrEqualTo(emailField.bottom));
       expect(error.bottom, lessThanOrEqualTo(passwordField.top));
       expect(find.byType(FeedbackBanner), findsNothing);
@@ -228,7 +228,7 @@ void main() {
     });
 
     testWidgets('密碼不合規則會擋，而且規則不會被錯誤蓋掉', (tester) async {
-      await pump(tester, const SignUpScreen());
+      await pump(tester, const SignUpScreen(), size: const Size(390, 1400));
       await tester.enterText(find.byType(TextField).first, 'a@example.com');
       await tester.enterText(find.byType(TextField).last, 'abc');
       await tapPrimary(tester);
@@ -239,7 +239,7 @@ void main() {
     });
 
     testWidgets('密碼的錯誤長在密碼欄位下方，不丟到頁尾', (tester) async {
-      await pump(tester, const SignUpScreen());
+      await pump(tester, const SignUpScreen(), size: const Size(390, 1400));
       await tester.enterText(find.byType(TextField).first, 'a@example.com');
       await tester.enterText(find.byType(TextField).last, 'abc');
       await tapPrimary(tester);
@@ -255,7 +255,7 @@ void main() {
     });
 
     testWidgets('開始改密碼就把錯誤收掉', (tester) async {
-      await pump(tester, const SignUpScreen());
+      await pump(tester, const SignUpScreen(), size: const Size(390, 1400));
       await tester.enterText(find.byType(TextField).first, 'a@example.com');
       await tester.enterText(find.byType(TextField).last, 'abc');
       await tapPrimary(tester);
@@ -308,6 +308,47 @@ void main() {
       expect(cards.every((c) => !c.selected), isTrue);
     });
 
+    testWidgets('同意條款沒有預設勾選', (tester) async {
+      // 理由同身分：不能在使用者沒表態時默默替他同意資料保留政策。
+      await pump(tester, const SignUpScreen());
+
+      final consent =
+          tester.widget<ConsentCheckbox>(find.byType(ConsentCheckbox));
+      expect(consent.checked, isFalse);
+    });
+
+    testWidgets('沒勾同意就按註冊 → 擋下來並說明原因', (tester) async {
+      await pump(tester, const SignUpScreen(), size: const Size(390, 1400));
+      await tester.enterText(find.byType(TextField).first, 'a@example.com');
+      await tester.enterText(find.byType(TextField).last, 'secret123');
+      await tester.tap(find.text('長輩'));
+      await tester.pump();
+      await tapPrimary(tester);
+
+      expect(find.text('請先閱讀並同意使用者同意機制與資料保留政策'), findsOneWidget);
+      // 其他三格都填對了，不該連坐冒出別的錯
+      expect(find.text('信箱格式錯誤'), findsNothing);
+      expect(find.text('密碼格式錯誤'), findsNothing);
+      expect(find.text('請選擇身分'), findsNothing);
+      expect(find.byType(FeedbackBanner), findsNothing);
+    });
+
+    testWidgets('勾了同意就把錯誤收掉，不必等下一次送出', (tester) async {
+      await pump(tester, const SignUpScreen(), size: const Size(390, 1400));
+      await tapPrimary(tester);
+      expect(find.text('請先閱讀並同意使用者同意機制與資料保留政策'), findsOneWidget);
+
+      await tester.tap(find.byType(ConsentCheckbox));
+      await tester.pump();
+
+      expect(find.text('請先閱讀並同意使用者同意機制與資料保留政策'), findsNothing);
+    });
+
+    testWidgets('看得到政策說明的入口，不是只有一個沒展開的詞條', (tester) async {
+      await pump(tester, const SignUpScreen(), size: const Size(390, 1400));
+      expect(find.text('查看使用者同意機制與資料保留政策說明'), findsOneWidget);
+    });
+
     /// 註冊頁 + 註冊流程下一站的最小路由。
     ///
     /// 「有沒有進到下一頁」不能只看畫面上有沒有錯誤訊息——註冊頁是用 `context.push`
@@ -347,9 +388,12 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    /// 填完信箱、密碼並勾選同意條款——除了身分之外都完成的狀態。
+    /// 身分刻意留給各測試自己決定（有些測試就是要驗「沒選身分」）。
     Future<void> fillForm(WidgetTester tester) async {
       await tester.enterText(find.byType(TextField).first, 'a@example.com');
       await tester.enterText(find.byType(TextField).last, 'secret123');
+      await tester.tap(find.byType(ConsentCheckbox));
       await tester.pump();
     }
 

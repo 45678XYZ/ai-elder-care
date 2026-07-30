@@ -18,11 +18,15 @@ import 'sign_in_screen.dart' show looksLikeEmail;
 /// 格式不符時在規則上方多一行錯誤，而不是把規則換掉（規則就是修正方法）。
 /// 密碼欄位另給一顆顯示／隱藏鈕，看得到自己打了什麼比藏起來重要。
 ///
-/// 身分在這一頁問，不再另開一頁：可互動元素因此變成六個（信箱、密碼、兩張身分卡、
-/// 註冊、去登入），比長者模式的上限 3 多。可以接受的理由有兩個——認證頁本來就是 §3 的
-/// 刻意例外（[SignInScreen] 同樣超出，登入需要的欄位砍不掉）；而且在這裡順手問一句
-/// 「你是誰」，可以整整省掉登入後那一頁只有兩個選項的畫面，對長輩是少一次迷路的機會。
-/// 登入之後的每一頁仍守 <=3。
+/// 身分在這一頁問，不再另開一頁：可互動元素因此變成八個（信箱、密碼、兩張身分卡、
+/// 查看條款連結、同意勾選、註冊、去登入），比長者模式的上限 3 多。可以接受的理由有
+/// 兩個——認證頁本來就是 §3 的刻意例外（[SignInScreen] 同樣超出，登入需要的欄位砍不
+/// 掉）；而且在這裡順手問一句「你是誰」、順手要求同意條款，可以整整省掉登入後另開頁面
+/// 的迂迴，對長輩是少一次迷路的機會。登入之後的每一頁仍守 <=3。
+///
+/// 同意條款是註冊的最後一道關卡：查看說明（[ConsentPolicyScreen]）與勾選同意分開放，
+/// 不能只憑一個沒展開的詞條就要求同意；勾選狀態不給預設值，理由跟身分一樣——
+/// 不能在使用者沒表態時默默替他同意資料保留政策。
 ///
 /// 沒有預設選項：預設任一邊，等於在使用者沒表態時默默替他指派身分，選錯的人會直接進到
 /// 另一種模式而不知道發生了什麼。未選就送出一律擋下並說明。
@@ -52,6 +56,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
   String? _emailError;
   String? _passwordError;
   String? _roleError;
+
+  /// 是否已勾選同意使用者同意機制與資料保留政策；不給預設勾選，理由同身分——
+  /// 不能在使用者沒表態時默默替他同意。
+  bool _consentGiven = false;
+  String? _consentError;
   bool _busy = false;
 
   /// 送出前把欄位層級的錯誤清乾淨，一次只呈現目前這一輪的問題。
@@ -59,6 +68,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _emailError = null;
     _passwordError = null;
     _roleError = null;
+    _consentError = null;
   }
 
   /// 選身分。選了就把「請選擇身分」收掉，不必等下一次送出。
@@ -84,7 +94,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     //
     // 沒填也走同一條規則，不另外給「請填…」：空的信箱本來就不符合信箱格式，
     // 空的密碼也不符合密碼規則，講同一句話就好，而且訊息就長在該負責的那一格下面。
-    final emailError = looksLikeEmail(email) ? null : '信箱格式不太對，請再看一下';
+    final emailError = looksLikeEmail(email) ? null : '信箱格式錯誤';
     // 密碼規則在送出前就檢查：規則寫在畫面上，就不該讓人送出後才被打回票。
     // 訊息刻意不重述規則（那一行本來就一直在下面），只講「這裡有問題」。
     final passwordError =
@@ -92,12 +102,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
     // 身分不給預設值，所以未選就得擋下來——猜錯的代價是整個 App 進錯模式。
     // `role == null` 寫在條件裡（而不是先算成訊息）才能讓下面的 role 被推導成非 null。
-    if (emailError != null || passwordError != null || role == null) {
+    //
+    // 同意條款也不給預設勾選：沒勾就送出一律擋下，理由跟身分一樣——
+    // 不能在使用者沒表態時默默替他同意資料保留政策。
+    if (emailError != null ||
+        passwordError != null ||
+        role == null ||
+        !_consentGiven) {
       setState(() {
         _error = null;
         _emailError = emailError;
         _passwordError = passwordError;
         _roleError = role == null ? '請選擇身分' : null;
+        _consentError = _consentGiven ? null : '請先閱讀並同意使用者同意機制與資料保留政策';
       });
       return;
     }
@@ -224,6 +241,29 @@ class _SignUpScreenState extends State<SignUpScreen> {
               if (_roleError != null) ...[
                 const SizedBox(height: AppSpacing.sm),
                 FieldNote(_roleError!, isError: true),
+              ],
+              const SizedBox(height: AppSpacing.xl),
+
+              // 同意條款：先給看得到內容的連結，再給勾選——不能只憑一個沒展開的
+              // 詞條就要求同意。兩者放在身分之後、送出之前，是流程的最後一步。
+              TextLink(
+                label: '查看使用者同意機制與資料保留政策說明',
+                onTap: _busy ? null : () => context.push('/auth/consent'),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              ConsentCheckbox(
+                checked: _consentGiven,
+                label: '我已閱讀並同意上述使用者同意機制與資料保留政策',
+                onChanged: _busy
+                    ? (_) {}
+                    : (value) => setState(() {
+                          _consentGiven = value;
+                          if (value) _consentError = null;
+                        }),
+              ),
+              if (_consentError != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                FieldNote(_consentError!, isError: true),
               ],
               const SizedBox(height: AppSpacing.xl),
 

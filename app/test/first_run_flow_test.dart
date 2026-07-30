@@ -126,6 +126,9 @@ void main() {
     await fillCredentials(tester, SignUpScreen, email: email);
     await tester.tap(inScreen(SignUpScreen, find.text(roleLabel)));
     await tester.pump();
+    // 同意條款是註冊的必要條件，沒勾就會被擋在註冊頁
+    await tester.tap(inScreen(SignUpScreen, find.byType(ConsentCheckbox)));
+    await tester.pump();
     await tapPrimary(tester, SignUpScreen);
   }
 
@@ -194,8 +197,7 @@ void main() {
     expect(find.byType(SetupScreen), findsNothing);
   });
 
-  testWidgets('已登入的長者但本機沒有這個帳號的資料 → 仍然要先建資料（換裝置的退路）',
-      (tester) async {
+  testWidgets('已登入的長者但本機沒有這個帳號的資料 → 仍然要先建資料（換裝置的退路）', (tester) async {
     // 順便釘住舊的裝置層級旗標（`setup_done`）不再有任何效力：那個 true 是誰按出來的
     // 已無從得知，猜錯的代價是讓長者跳過建資料，之後每一頁都沒有稱呼與行程可用。
     final backend = await resetToFreshDevice(const {'setup_done': true});

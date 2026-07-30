@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../shared/models/caregiver.dart';
@@ -233,12 +234,47 @@ class _EldersScreenState extends State<EldersScreen> {
                           ],
                         ],
                       ],
+                      const SizedBox(height: AppSpacing.xl),
+                      const _PolicyLink(),
                     ],
                   );
                 },
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 政策說明入口。內容不在這裡，是註冊時那頁 [ConsentPolicyScreen] 的同一份。
+///
+/// 為什麼登入後還要留一個入口：註冊時看過一次就再也找不到，但真正會用到這份文件的
+/// 時機在後面——政策裡寫「刪除資料請聯繫照顧你的家人或系統管理者」，執行的人就是
+/// 照護者本人。放管理頁而不是長者端：長輩不會來刪帳號，而且長者模式的三個互動額度
+/// 要留給主要操作。
+class _PolicyLink extends StatelessWidget {
+  const _PolicyLink();
+
+  @override
+  Widget build(BuildContext context) {
+    // 不用 shared 的 TextLink：那是長者規格（24sp / 60dp），放進管理頁會比周圍
+    // Material density 的東西大一截。這裡照管理頁自己的 TextButton 走 48dp。
+    return Center(
+      child: TextButton(
+        onPressed: () => context.push('/auth/consent'),
+        style: TextButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          foregroundColor: AppColors.inkSecondary,
+        ),
+        child: Text(
+          '使用者同意機制與資料保留政策',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: AppColors.inkSecondary,
+                decoration: TextDecoration.underline,
+                decorationColor: AppColors.inkSecondary,
+              ),
         ),
       ),
     );
@@ -1085,8 +1121,12 @@ class _IdCard extends StatelessWidget {
           child: FilledButton.icon(
             onPressed: onCopy,
             // 狀態不只靠文字：icon 一起換（MASTER.md §6）。
-            icon: Icon(copied ? Icons.check : Icons.copy_all_outlined, size: 18),
-            label: Text(copied ? '已複製' : '複製 ID', style: text.labelLarge),
+            icon:
+                Icon(copied ? Icons.check : Icons.copy_all_outlined, size: 18),
+            // labelLarge 自帶 AppColors.ink，直接傳會蓋掉 foregroundColor，
+            // 變成深褐字壓朱紅底（2.2:1）。字級要 16/w700 又要白字，只能自己 copyWith。
+            label: Text(copied ? '已複製' : '複製 ID',
+                style: text.labelLarge?.copyWith(color: Colors.white)),
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.accentText,
               foregroundColor: Colors.white,

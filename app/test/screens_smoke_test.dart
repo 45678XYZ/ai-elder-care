@@ -3,6 +3,7 @@ import 'package:ai_elder_care/caregiver/screens/stats_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/summaries_screen.dart';
 import 'package:ai_elder_care/caregiver/screens/timeline_screen.dart'
     show TimelineScreen, filterBarKey;
+import 'package:ai_elder_care/elder/screens/chat_screen.dart';
 import 'package:ai_elder_care/elder/screens/today_screen.dart';
 import 'package:ai_elder_care/elder/widgets/greeting_slot.dart';
 import 'package:ai_elder_care/shared/screens/role_select_screen.dart';
@@ -72,6 +73,43 @@ void main() {
   Future<void> pumpTall(WidgetTester tester, Widget screen) =>
       pumpScreen(tester, screen, size: const Size(390, 3000));
 
+  /// 聊天畫面專用的掛載。
+  ///
+  /// 不能走 [pumpScreen]：麥克風的脈動外環是 `repeat()` 的動畫，永遠不會停，
+  /// pumpAndSettle 會一路等到逾時。改推進固定的時間，長度要蓋過 DemoData 的
+  /// 400ms 延遲（[_loadElder] 會等長輩資料），否則測試結束時 Timer 還沒完成，
+  /// 框架會判定「widget tree 已 dispose 但 Timer 仍在」而失敗。
+  ///
+  /// 測試環境沒有語音／音訊外掛，畫面會退回「沒有麥克風」的打字備援路徑
+  /// （見 _initSpeech 的 catch）。
+  Future<void> pumpChat(
+    WidgetTester tester, {
+    double textScale = 1.0,
+    Size size = const Size(390, 844),
+  }) async {
+    tester.view
+      ..physicalSize = size
+      ..devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: MediaQuery(
+          data: MediaQueryData(
+            size: size,
+            textScaler: TextScaler.linear(textScale),
+            disableAnimations: true,
+          ),
+          child: const ChatScreen(),
+        ),
+      ),
+    );
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  }
+
   final screens = <String, Widget Function()>{
     '長者今日': () => const TodayScreen(),
     '角色選擇': () => const RoleSelectScreen(),
@@ -97,6 +135,24 @@ void main() {
         expect(tester.takeException(), isNull);
       });
     }
+  });
+
+  group('聊天畫面', () {
+    testWidgets('畫得出來', (tester) async {
+      await pumpChat(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('textScaler 2.0 下不 overflow', (tester) async {
+      await pumpChat(tester, textScale: 2.0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('開場就看得到健康資訊免責聲明', (tester) async {
+      // AI 講的健康資訊只能參考，這句話要在長輩開口問之前就先看到。
+      await pumpChat(tester);
+      expect(find.text('我說的健康資訊只能參考，\n身體不舒服要看醫生喔'), findsOneWidget);
+    });
   });
 
   group('今日畫面', () {
