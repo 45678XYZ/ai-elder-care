@@ -556,7 +556,7 @@ def handle_get_daily_summaries(params: Dict[str, Any]) -> Dict[str, Any]:
 def handle_get_recent_conversations(params: Dict[str, Any]) -> Dict[str, Any]:
     """工具九：查詢長者最近幾句對話內容，讓 AI 在 Bedrock session 過期後仍能回憶當前對話脈絡。
 
-    只回傳最新 limit 筆（預設 8 句），並僅保留 elder_transcript、agent_reply 與時間，
+    只回傳最新 limit 筆（預設 8 句），並僅保留 elder_transcript、ai_respond_text 與時間，
     避免無關 metadata 浪費 LLM Context Window。
     """
     elder_id = params.get("elder_id")
@@ -577,8 +577,8 @@ def handle_get_recent_conversations(params: Dict[str, Any]) -> Dict[str, Any]:
             turn = {"time": c.get("created_at", "")[:16]}  # 只取 YYYY-MM-DDTHH:MM
             if c.get("elder_transcript"):
                 turn["elder"] = c["elder_transcript"]
-            if c.get("agent_reply"):
-                turn["ai"] = c["agent_reply"]
+            if c.get("ai_respond_text"):
+                turn["ai"] = c["ai_respond_text"]
             turns.append(turn)
 
         return {

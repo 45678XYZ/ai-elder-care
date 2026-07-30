@@ -4,35 +4,32 @@
 1. 驗證權限：確認請求者具備指定 elder_id 的讀取權限
 2. 參數校驗：校驗 from / to 日期格式（YYYY-MM-DD）、type 分類與 limit 分頁範圍
 3. 資料查詢：從 DynamoDB events 表依條件倒序查詢事件
-4. 資料投影：僅暴露 api.md 規範之公開白名單欄位，過濾後端內部萃取細節
+4. 資料投影：使用 EventResponse Pydantic 模型過濾洗滌，隱藏後端內部萃取細節
 """
 
 from datetime import datetime
 import logging
 import re
-from typing import Any, get_args
+from typing import Any, Dict, get_args
 
 from src.extraction.temporal import day_key
 from src.shared import auth, db, responses
-from src.shared.models import EventType
+from src.shared.models import EventResponse, EventType
 
 logger = logging.getLogger(__name__)
-
-# 回應允許出現的欄位；採白名單機制而非黑名單，防止資料層新增內部欄位時無聲外流
-PUBLIC_EVENT_FIELDS: tuple[str, ...] = (
-    "event_id",
-    "elder_id",
-    "ts",
-    "type",
-    "detail",
-    "source",
-    "conversation_id",
-    "routine_id",
-)
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
 _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _serialize_event(item: Dict[str, Any]) -> Dict[str, Any]:
+    """將資料層 event 實體經由 EventResponse 模型投影洗滌為符合 api.md 規範之公開字典。
+
+    選填欄位若為 None（如手動事件之 conversation_id 或非 routine 事件之 routine_id）
+    經由 exclude_none=True 自動過濾，不殘留 null 鍵。
+    """
+    return EventResponse.model_validate(item).model_dump(exclude_none=True)
 
 
 def handler(event, context):
@@ -84,20 +81,9 @@ def handler(event, context):
         logger.exception("查詢事件時間軸失敗：elder_id=%s", elder_id)
         return responses.error(500, "INTERNAL_ERROR", "查詢事件失敗")
 
-    body: dict[str, Any] = {"items": [_to_public_event(item) for item in items]}
+    body: Dict[str, Any] = {"items": [_serialize_event(item) for item in items]}
     if next_token:
         body["next_token"] = next_token
     return responses.json_response(200, body)
 
-
-def _to_public_event(item: dict[str, Any]) -> dict[str, Any]:
-    """將資料層 event 實體投影為符合 api.md 規範之公開字典。
-
-    若欄位值為 None 則直接省略不寫入字典（避免回應帶 null 鍵），維持 API 回應一致性。
-    """
-    return {
-        field: item[field]
-        for field in PUBLIC_EVENT_FIELDS
-        if item.get(field) is not None
-    }
 

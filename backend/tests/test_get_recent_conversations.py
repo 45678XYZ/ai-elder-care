@@ -57,7 +57,7 @@ def seed_conversations(n=3):
             "conversation_id": f"cnv_{i:03d}",
             "created_at": f"2026-07-30T10:{i:02d}:00.000+08:00",
             "elder_transcript": f"長者說的第 {i} 句話",
-            "agent_reply": f"AI 的第 {i} 個回覆",
+            "ai_respond_text": f"AI 的第 {i} 個回覆",
         })
 
 
