@@ -292,7 +292,8 @@ class _LangCard extends StatelessWidget {
             color: AppColors.card,
             borderRadius: const BorderRadius.all(AppRadius.card),
             border: Border.all(
-              color: selected ? AppColors.accentText : AppColors.border,
+              color:
+                  selected ? AppColors.accentText : AppColors.borderInteractive,
               width: selected ? 2 : 1,
             ),
           ),

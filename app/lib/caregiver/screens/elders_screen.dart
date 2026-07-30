@@ -447,7 +447,10 @@ class _LangOption extends StatelessWidget {
             color: selected ? AppColors.accentText : Colors.transparent,
             borderRadius: const BorderRadius.all(AppRadius.pill),
             border: Border.all(
-              color: selected ? AppColors.accentText : AppColors.border,
+              // 未選取走 borderInteractive 而不是 border：後者是輸入框線，
+              // 壓在紙色底上只有 1.3:1，看不出這裡有一顆可以按的東西。
+              color:
+                  selected ? AppColors.accentText : AppColors.borderInteractive,
               width: selected ? 2 : 1,
             ),
           ),
@@ -915,7 +918,10 @@ class _ChoicePill extends StatelessWidget {
             color: selected ? AppColors.accentText : Colors.transparent,
             borderRadius: const BorderRadius.all(AppRadius.pill),
             border: Border.all(
-              color: selected ? AppColors.accentText : AppColors.border,
+              // 未選取走 borderInteractive 而不是 border：後者是輸入框線，
+              // 壓在紙色底上只有 1.3:1，看不出這裡有一顆可以按的東西。
+              color:
+                  selected ? AppColors.accentText : AppColors.borderInteractive,
               width: selected ? 2 : 1,
             ),
           ),

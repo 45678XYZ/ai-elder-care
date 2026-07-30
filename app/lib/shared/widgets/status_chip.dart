@@ -108,7 +108,7 @@ class EventTypeChip extends StatelessWidget {
         color: selected ? category.bg : Colors.transparent,
         borderRadius: const BorderRadius.all(AppRadius.pill),
         border: Border.all(
-          color: selected ? category.bg : AppColors.border,
+          color: selected ? category.bg : AppColors.borderInteractive,
           width: selected ? 2 : 1,
         ),
       ),

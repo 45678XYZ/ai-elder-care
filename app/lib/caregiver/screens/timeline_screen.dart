@@ -230,8 +230,9 @@ class _FilterBar extends StatelessWidget {
                       selected == null ? AppColors.barDark : Colors.transparent,
                   borderRadius: const BorderRadius.all(AppRadius.pill),
                   border: Border.all(
-                    color:
-                        selected == null ? AppColors.barDark : AppColors.border,
+                    color: selected == null
+                        ? AppColors.barDark
+                        : AppColors.borderInteractive,
                   ),
                 ),
                 child: Text('全部',

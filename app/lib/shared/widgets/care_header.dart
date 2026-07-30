@@ -216,7 +216,7 @@ class _ElderOption extends StatelessWidget {
     return AppCard(
       padding: const EdgeInsets.all(AppSpacing.md),
       border: Border.all(
-        color: selected ? AppColors.accentText : AppColors.border,
+        color: selected ? AppColors.accentText : AppColors.borderInteractive,
         width: selected ? 2 : 1,
       ),
       onTap: onTap,

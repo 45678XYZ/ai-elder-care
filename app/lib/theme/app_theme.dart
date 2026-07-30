@@ -28,6 +28,22 @@ abstract final class AppColors {
   static const chevron = Color(0xFFC9B8A3);
   static const divider = Color(0xFFEFE8DB);
 
+  /// **可點選元件**未選取時的外框（選項膠囊等），不是輸入框線。
+  ///
+  /// MASTER.md 的 `border`（#e5dccb）是輸入框那種裝飾性框線，壓在 `cardAlt`
+  /// 上只有 **1.34:1**——當成「這裡有一個可以按的選項」的邊界就太淡了，選項之間
+  /// 的界線也看不出來（WCAG 1.4.11 對 UI 元件邊界要求 3:1）。
+  ///
+  /// 取 [hint] 的同一個值：它是暖紙色盤裡**過得了 3:1 又最輕**的一階
+  /// （cardAlt 上 5.14:1、card 上 4.88:1）。`chevron` 只有 1.90:1 還是不夠，
+  /// `inkSecondary` 到 9.43:1 又重得像實心按鈕。文字本身走 `inkSecondary`，
+  /// 外框比文字淡一階，層次才對。
+  ///
+  /// TODO(design): MASTER.md 目前只定義「邊框／輸入框線」一種，沒有「可互動元件
+  ///   邊界」這一階。這個值要補進 MASTER.md 的色表，否則下一個人會再從 `border`
+  ///   複製一次同樣的問題。
+  static const borderInteractive = Color(0xFF7A6A55);
+
   /// 佔位文字。對欄位底 4.9:1，過 4.5:1。
   /// [chevron] 是裝飾用的淡色，拿來當文字色一律不合格。
   static const hint = Color(0xFF7A6A55);
