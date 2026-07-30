@@ -1,22 +1,12 @@
 """
-Property-based test: 未核准路由永遠 fail closed。
-
-**Validates: Requirements 3.4, 3.7, 4.4, 4.5, 8.7; Design Property 1**
+Property-based test: 未核准路由永遠 fail closed（remote-only 架構）。
 
 驗證三大情境下 Router 必須 fail-closed：
-1. zh-TW AWS capability-gate 任一缺少 → route_not_approved 且 zero transport call
-2. CE/Formo 的 production gate 未逐項核准 → route_not_approved 且 zero transport call
-3. 不在 language allowlist 的值 → unsupported_language 且 zero transport call
+1. CE/Formo 的 production gate 未逐項核准 → route_not_approved 且 zero provider call
+2. 不在 language allowlist 的值 → unsupported_language 且 zero provider call
+3. 遠端 provider endpoint 缺失 → route_not_approved
 
-### 不變量的演進
-
-原本第 2 項是「CE/Formo 的 production route 一律禁止」——那是永久封鎖。現在改為
-「未核准即封鎖」：模型要上線必須同時具備 `usage_restriction=production`、
-`approval_state=approved` 與 5 項全數核准的 `ModelProductionGate`。
-
-這個 property 仍然涵蓋兩個模型的預設狀態（gate 全為 False），因此**預設行為依舊
-fail closed**；差別只在於現在存在一條明確、可追溯的解鎖路徑，而不是靠程式碼硬編
-死禁止。解鎖後才允許上線的驗證由 `test_router.py` 的正向案例負責。
+remote-only 架構下不再有 AWS capability gate 檢查。
 """
 from __future__ import annotations
 
@@ -28,7 +18,6 @@ from hypothesis import given, settings
 
 from src.shared.asr.config import (
     AsrConfig,
-    AwsCapabilityGate,
     CE_MODEL_METADATA,
     FORMO_MODEL_METADATA,
     ModelMetadata,
@@ -66,7 +55,6 @@ _FORMO_ALLOWLIST = frozenset(
 
 
 def _make_canonical_audio() -> CanonicalAudio:
-    """Minimal valid CanonicalAudio for testing."""
     return CanonicalAudio(
         pcm_s16le=b"\x00\x00" * 160,
         sample_rate_hz=16000,
@@ -90,61 +78,32 @@ def _make_cancellation_not_triggered() -> CancellationSignal:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Transport call spy — verifies zero-call invariant
+# Provider call spy — verifies zero-call invariant
 # ─────────────────────────────────────────────────────────────────
 @dataclass
-class TransportCallSpy:
-    """Spy that tracks if any transport call was made. Should remain at zero calls."""
+class ProviderCallSpy:
+    """Spy that tracks if any provider call was made."""
 
     call_count: int = 0
+    provider_id: str = "spy"
 
-    def transcribe(self, request: Any) -> str:
+    def transcribe(self, audio, language, deadline, cancellation, context):
         self.call_count += 1
-        return "should not be called"
+        return TypedAsrError(
+            category=AsrErrorCategory.PROVIDER_FAILURE,
+            message="spy should not be called",
+            retryable=False,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────
 # Hypothesis Strategies
 # ─────────────────────────────────────────────────────────────────
 
-# Strategy: Generate an incomplete capability gate (at least one field is False)
-@st.composite
-def incomplete_capability_gate(draw: st.DrawFn) -> AwsCapabilityGate:
-    """Generate a gate where at least one of the 9 items is False."""
-    gate_items = [
-        "region_zh_tw_support",
-        "service_input_output_mode",
-        "canonical_pcm_compatibility",
-        "timeout_behavior",
-        "cancellation_behavior",
-        "iam_permissions",
-        "s3_necessity",
-        "s3_result_handling",
-        "s3_cleanup_requirement",
-    ]
-
-    # Generate 9 booleans
-    values = draw(st.lists(st.booleans(), min_size=9, max_size=9))
-
-    # Ensure at least one is False
-    if all(values):
-        # Pick a random index to flip to False
-        idx = draw(st.integers(min_value=0, max_value=8))
-        values[idx] = False
-
-    kwargs = dict(zip(gate_items, values))
-    # Optionally add approval_record_ref
-    ref = draw(st.one_of(st.none(), st.text(min_size=1, max_size=10)))
-    kwargs["approval_record_ref"] = ref
-
-    return AwsCapabilityGate(**kwargs)
-
-
 # Strategy: Generate a CE or Formo model metadata reference for a provider
 @st.composite
 def ce_or_formo_route_config(draw: st.DrawFn) -> AsrConfig:
-    """Generate a config where zh-TW route points to CE or Formo model."""
-    # Choose CE or Formo
+    """Generate a config where zh-TW route points to unapproved CE or Formo model."""
     metadata = draw(st.sampled_from([CE_MODEL_METADATA, FORMO_MODEL_METADATA]))
     provider_id = draw(
         st.text(
@@ -166,13 +125,13 @@ def ce_or_formo_route_config(draw: st.DrawFn) -> AsrConfig:
                 identifier=provider_id,
                 status=ProviderStatus.ENABLED,
                 metadata_ref=metadata_ref,
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name=f"ep-{provider_id}",
             ),
         },
         model_metadata={
             metadata_ref: metadata,
         },
-        aws_capability_gate=AwsCapabilityGate.default_incomplete(),
         formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
@@ -181,12 +140,11 @@ def ce_or_formo_route_config(draw: st.DrawFn) -> AsrConfig:
 @st.composite
 def unknown_language_string(draw: st.DrawFn) -> str:
     """Generate a string that is NOT 'zh-TW' or 'hak'."""
-    lang = draw(
+    return draw(
         st.text(min_size=1, max_size=20).filter(
             lambda x: x not in ("zh-TW", "hak")
         )
     )
-    return lang
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -194,61 +152,8 @@ def unknown_language_string(draw: st.DrawFn) -> str:
 # ─────────────────────────────────────────────────────────────────
 class TestPropertyRouteApproval:
     """
-    Property 1: 未核准路由永遠 fail closed。
-
-    **Validates: Requirements 3.4, 3.7, 4.4, 4.5, 8.7; Design Property 1**
+    Property: 未核准路由永遠 fail closed（remote-only 架構）。
     """
-
-    @given(gate=incomplete_capability_gate())
-    @settings(max_examples=100)
-    def test_incomplete_gate_returns_route_not_approved(
-        self, gate: AwsCapabilityGate
-    ) -> None:
-        """
-        zh-TW 路由搭配任一 capability gate 缺項 → route_not_approved 且 zero call。
-
-        **Validates: Requirements 3.4, 3.7**
-        """
-        config = AsrConfig(
-            routes={
-                "zh-TW": RouteConfig(
-                    route="zh-TW", provider_identifier="aws_zh", enabled=True
-                ),
-            },
-            providers={
-                "aws_zh": ProviderConfig(
-                    identifier="aws_zh",
-                    status=ProviderStatus.ENABLED,
-                    kind=ProviderKind.AWS_MANAGED,
-                ),
-            },
-            model_metadata={},
-            aws_capability_gate=gate,
-            formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
-        )
-
-        spy = TransportCallSpy()
-        router = AsrRouter(config)
-
-        result = router.route(
-            audio=_make_canonical_audio(),
-            language=Language.ZH_TW,
-            deadline=_make_deadline_not_expired(),
-            cancellation=_make_cancellation_not_triggered(),
-            context=_make_context(),
-        )
-
-        # Must be route_not_approved
-        assert isinstance(result, TypedAsrError), (
-            f"Expected TypedAsrError but got {type(result).__name__}"
-        )
-        assert result.category == AsrErrorCategory.ROUTE_NOT_APPROVED, (
-            f"Expected ROUTE_NOT_APPROVED but got {result.category}"
-        )
-        # Transport spy must have zero calls (router blocks before provider)
-        assert spy.call_count == 0, (
-            f"Expected zero transport calls but got {spy.call_count}"
-        )
 
     @given(config=ce_or_formo_route_config())
     @settings(max_examples=100)
@@ -256,12 +161,12 @@ class TestPropertyRouteApproval:
         self, config: AsrConfig
     ) -> None:
         """
-        CE 或 Formo 模型的 production route → route_not_approved 且 zero call。
-
-        **Validates: Requirements 4.4, 4.5**
+        CE 或 Formo 模型未核准 → route_not_approved 且 zero provider call。
         """
-        spy = TransportCallSpy()
-        router = AsrRouter(config)
+        spy = ProviderCallSpy()
+        router = AsrRouter(config, providers={
+            list(config.providers.keys())[0]: spy,
+        })
 
         result = router.route(
             audio=_make_canonical_audio(),
@@ -271,16 +176,14 @@ class TestPropertyRouteApproval:
             context=_make_context(),
         )
 
-        # Must be route_not_approved
         assert isinstance(result, TypedAsrError), (
             f"Expected TypedAsrError but got {type(result).__name__}"
         )
         assert result.category == AsrErrorCategory.ROUTE_NOT_APPROVED, (
             f"Expected ROUTE_NOT_APPROVED but got {result.category}"
         )
-        # Transport spy must have zero calls
         assert spy.call_count == 0, (
-            f"Expected zero transport calls but got {spy.call_count}"
+            f"Expected zero provider calls but got {spy.call_count}"
         )
 
     @given(lang_str=unknown_language_string())
@@ -289,33 +192,32 @@ class TestPropertyRouteApproval:
         self, lang_str: str
     ) -> None:
         """
-        不在 language allowlist（非 zh-TW 或 hak）→ unsupported_language 且 zero call。
-
-        **Validates: Requirements 8.7**
+        不在 language allowlist（非 zh-TW 或 hak）→ unsupported_language。
         """
-        # Use a minimal config — language check happens first regardless
         config = AsrConfig(
             routes={
                 "zh-TW": RouteConfig(
-                    route="zh-TW", provider_identifier="aws_zh", enabled=True
+                    route="zh-TW", provider_identifier="ce_remote", enabled=True
                 ),
             },
             providers={
-                "aws_zh": ProviderConfig(
-                    identifier="aws_zh",
+                "ce_remote": ProviderConfig(
+                    identifier="ce_remote",
                     status=ProviderStatus.ENABLED,
-                    kind=ProviderKind.AWS_MANAGED,
+                    kind=ProviderKind.REMOTE_MODEL,
+                    metadata_ref="ce_meta",
+                    endpoint_name="ep-ce",
                 ),
             },
-            model_metadata={},
-            aws_capability_gate=AwsCapabilityGate.default_incomplete(),
+            model_metadata={
+                "ce_meta": CE_MODEL_METADATA,
+            },
             formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
 
-        spy = TransportCallSpy()
-        router = AsrRouter(config)
+        spy = ProviderCallSpy(provider_id="ce_remote")
+        router = AsrRouter(config, providers={"ce_remote": spy})
 
-        # Pass the raw string (not Language enum) — this simulates unknown language
         result = router.route(
             audio=_make_canonical_audio(),
             language=lang_str,  # type: ignore[arg-type]
@@ -324,14 +226,10 @@ class TestPropertyRouteApproval:
             context=_make_context(),
         )
 
-        # Must be unsupported_language
         assert isinstance(result, TypedAsrError), (
             f"Expected TypedAsrError but got {type(result).__name__}"
         )
         assert result.category == AsrErrorCategory.UNSUPPORTED_LANGUAGE, (
             f"Expected UNSUPPORTED_LANGUAGE but got {result.category}"
         )
-        # Transport spy must have zero calls
-        assert spy.call_count == 0, (
-            f"Expected zero transport calls but got {spy.call_count}"
-        )
+        assert spy.call_count == 0

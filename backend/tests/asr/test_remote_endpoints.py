@@ -304,3 +304,202 @@ def test_saturated_provider_does_not_invoke_endpoint() -> None:
 
     assert denied.admitted is False
     assert denied.result.category is AsrErrorCategory.PROVIDER_UNAVAILABLE
+
+
+# ─────────────────────────────────────────────────────────────────
+# SageMaker 傳輸契約驗證（Task 3 強化）
+# ─────────────────────────────────────────────────────────────────
+class TestSageMakerContract:
+    """驗證 Lambda 產生正確的 InvokeEndpoint 請求，並嚴格驗證回應 schema。"""
+
+    def test_content_type_is_octet_stream(self) -> None:
+        """ContentType 必須是 application/octet-stream。"""
+        client = FakeSageMakerClient()
+        run(build(client))
+        assert client.calls[0]["ContentType"] == "application/octet-stream"
+
+    def test_accept_is_json(self) -> None:
+        """Accept 必須是 application/json。"""
+        client = FakeSageMakerClient()
+        run(build(client))
+        assert client.calls[0]["Accept"] == "application/json"
+
+    def test_body_is_raw_pcm_s16le_bytes(self) -> None:
+        """Body 必須是 CanonicalAudio 的原始 PCM bytes，非 base64、非容器格式。"""
+        client = FakeSageMakerClient()
+        run(build(client))
+        body = client.calls[0]["Body"]
+        assert isinstance(body, bytes)
+        assert body == AUDIO.pcm_s16le
+        # 不是 base64 或 WAV/M4A header
+        assert not body.startswith(b"RIFF")
+        assert not body.startswith(b"\x00\x00\x00")
+
+    def test_custom_attributes_format_is_semicolon_separated(self) -> None:
+        """CustomAttributes 格式：key=value 以分號分隔。"""
+        client = FakeSageMakerClient()
+        run(build(client))
+        attrs = client.calls[0]["CustomAttributes"]
+        parts = attrs.split(";")
+        assert len(parts) == 3
+        kv_pairs = {p.split("=")[0]: p.split("=")[1] for p in parts}
+        assert kv_pairs["language"] == "zh-TW"
+        assert kv_pairs["sample_rate_hz"] == "16000"
+        assert kv_pairs["channels"] == "1"
+
+    def test_custom_attributes_with_hak_language(self) -> None:
+        """客語請求的 CustomAttributes 應帶 language=hak。"""
+        client = FakeSageMakerClient()
+        run(build(client), language=Language.HAK)
+        attrs = client.calls[0]["CustomAttributes"]
+        assert "language=hak" in attrs
+
+    def test_no_extra_invoke_endpoint_fields(self) -> None:
+        """InvokeEndpoint 呼叫只包含 5 個欄位，不夾帶任何額外資訊。"""
+        client = FakeSageMakerClient()
+        run(build(client))
+        assert set(client.calls[0]) == {
+            "EndpointName",
+            "ContentType",
+            "Accept",
+            "Body",
+            "CustomAttributes",
+        }
+
+    def test_endpoint_name_matches_spec(self) -> None:
+        """EndpointName 必須精確匹配 RemoteEndpointSpec。"""
+        client = FakeSageMakerClient()
+        run(build(client))
+        assert client.calls[0]["EndpointName"] == "ai-elder-care-asr-ce"
+
+    def test_response_text_field_is_extracted(self) -> None:
+        """成功回應 {"text": "..."} 的 text 欄位被正確取出。"""
+        client = FakeSageMakerClient(payload={"text": "你好世界"})
+        record = run(build(client))
+        assert isinstance(record.result, Transcript)
+        assert record.result.text == "你好世界"
+
+    def test_response_with_extra_fields_only_uses_text(self) -> None:
+        """回應帶額外欄位時，只取 text，不猜測其他欄位。"""
+        client = FakeSageMakerClient(
+            payload={"text": "辨識結果", "confidence": 0.95, "segments": []}
+        )
+        record = run(build(client))
+        assert isinstance(record.result, Transcript)
+        assert record.result.text == "辨識結果"
+
+    def test_response_text_null_is_invalid(self) -> None:
+        """text 為 null 視為無效回應。"""
+        client = FakeSageMakerClient(payload={"text": None})
+        record = run(build(client))
+        assert record.result.category is AsrErrorCategory.PROVIDER_INVALID_RESPONSE
+
+
+class TestSageMakerTimeoutErrors:
+    """驗證各種逾時類例外的分類。"""
+
+    def test_connect_timeout_becomes_deadline_exceeded(self) -> None:
+        """連線逾時也應被分類為 deadline_exceeded。"""
+
+        class ConnectTimeoutError(Exception):
+            pass
+
+        record = run(build(FakeSageMakerClient(raise_exc=ConnectTimeoutError())))
+        assert record.result.category is AsrErrorCategory.DEADLINE_EXCEEDED
+        assert record.result.retryable is True
+
+    def test_connection_closed_becomes_deadline_exceeded(self) -> None:
+        """連線被關閉也視為逾時。"""
+
+        class ConnectionClosedError(Exception):
+            pass
+
+        record = run(build(FakeSageMakerClient(raise_exc=ConnectionClosedError())))
+        assert record.result.category is AsrErrorCategory.DEADLINE_EXCEEDED
+
+    def test_all_transient_codes_are_covered(self) -> None:
+        """所有已知暫時性錯誤碼都映射為 provider_unavailable。"""
+        for code in [
+            "ThrottlingException",
+            "ModelNotReadyException",
+            "ServiceUnavailable",
+            "ServiceUnavailableException",
+            "InternalFailure",
+            "InternalServerException",
+            "ModelError",
+            "TooManyRequestsException",
+        ]:
+            record = run(build(FakeSageMakerClient(raise_exc=ClientError(code))))
+            assert record.result.category is AsrErrorCategory.PROVIDER_UNAVAILABLE, (
+                f"Expected PROVIDER_UNAVAILABLE for {code}"
+            )
+
+
+class TestSageMakerResponseBodyErrors:
+    """驗證回應 body 讀取失敗的情境。"""
+
+    def test_body_read_raises_exception(self) -> None:
+        """Body.read() 拋例外時視為無效回應。"""
+
+        class BrokenBody:
+            def read(self):
+                raise IOError("stream reset")
+
+        client = FakeSageMakerClient()
+        provider = build(client)
+        # 覆蓋 invoke_endpoint 回傳壞掉的 body
+        original_invoke = client.invoke_endpoint
+
+        def broken_invoke(**kwargs):
+            client.calls.append(kwargs)
+            return {"Body": BrokenBody()}
+
+        client.invoke_endpoint = broken_invoke
+        record = run(provider)
+        assert record.result.category is AsrErrorCategory.PROVIDER_INVALID_RESPONSE
+
+    def test_empty_body_is_invalid(self) -> None:
+        """空 body 不是合法 JSON。"""
+        record = run(build(FakeSageMakerClient(payload=b"")))
+        assert record.result.category is AsrErrorCategory.PROVIDER_INVALID_RESPONSE
+
+
+class TestSageMakerSecurityConstraints:
+    """驗證安全限制：不記錄音訊或逐字稿。"""
+
+    def test_error_messages_do_not_contain_audio_bytes(self) -> None:
+        """錯誤訊息不得包含音訊 bytes 的任何片段。"""
+        record = run(
+            build(FakeSageMakerClient(raise_exc=ClientError("ValidationError")))
+        )
+        msg = record.result.message
+        # 音訊 bytes 的 hex 不應出現在訊息中
+        assert "\\x01\\x02" not in msg
+        assert AUDIO.pcm_s16le[:10].hex() not in msg
+
+    def test_error_messages_do_not_contain_transcript(self) -> None:
+        """即使端點回傳了文字，錯誤路徑不應把它放進 message。"""
+        # 模擬：端點回傳文字但 postflight 發現已取消
+        client = FakeSageMakerClient(payload={"text": "機密逐字稿內容"})
+        cancelled = CancellationSignal()
+
+        class DelayedCancelClient(FakeSageMakerClient):
+            def invoke_endpoint(self, **kwargs):
+                self.calls.append(kwargs)
+                # 在呼叫後觸發取消
+                cancelled.trigger()
+                return {"Body": io.BytesIO(json.dumps({"text": "機密逐字稿內容"}).encode())}
+
+        provider = build(DelayedCancelClient())
+        record = run(provider, cancellation=cancelled)
+        # 應該回傳 cancelled（postflight 檢查）
+        assert record.result.category is AsrErrorCategory.CANCELLED
+        assert "機密" not in record.result.message
+
+    def test_custom_attributes_never_contain_pii(self) -> None:
+        """CustomAttributes 不得含任何 PII（elder_id、correlation_id 等）。"""
+        client = FakeSageMakerClient()
+        run(build(client))
+        attrs = client.calls[0]["CustomAttributes"]
+        for pii_token in ("elder", "eld_", "corr-", "cognito", "token", "prompt"):
+            assert pii_token not in attrs.lower()

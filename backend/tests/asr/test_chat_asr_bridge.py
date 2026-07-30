@@ -328,3 +328,109 @@ def test_server_errors_do_not_leak_exception_text() -> None:
     )
 
     assert interpolated == [], "5xx 錯誤訊息不得用 f-string 內插例外內容"
+
+
+# ─────────────────────────────────────────────────────────────────
+# remote-only facade 端到端（Task 5）
+# ─────────────────────────────────────────────────────────────────
+def test_remote_endpoint_success_flows_through_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """模擬遠端 endpoint 回傳文字後，聊天流程可繼續執行。"""
+    from src.shared.asr.composition import build_facade, reset_asr_facade
+    from src.shared.asr.facade import AsrFacade
+    from src.shared.asr.types import Transcript
+    import time
+
+    class FakeRemoteFacade:
+        """模擬已核准的 remote-only facade。"""
+        def recognize(self, audio_bytes, input_format, language, deadline,
+                      cancellation, context):
+            return Transcript(text="遠端辨識成功的文字")
+
+    # 替換 get_asr_facade 回傳我們的假 facade
+    monkeypatch.setattr(
+        "src.handlers.chat.get_asr_facade",
+        lambda: FakeRemoteFacade(),
+    )
+
+    status, body = call(audio_body(lang="hak"))
+    assert status == 200
+    assert body["transcript"] == "遠端辨識成功的文字"
+
+
+def test_remote_endpoint_route_not_approved_returns_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """遠端 endpoint 路由未核准時，chat handler 回 500 INTERNAL_ERROR。"""
+    from src.shared.asr.types import AsrErrorCategory, TypedAsrError
+
+    class FailingFacade:
+        def recognize(self, audio_bytes, input_format, language, deadline,
+                      cancellation, context):
+            return TypedAsrError(
+                category=AsrErrorCategory.ROUTE_NOT_APPROVED,
+                message="model production gate not approved",
+                retryable=False,
+            )
+
+    monkeypatch.setattr(
+        "src.handlers.chat.get_asr_facade",
+        lambda: FailingFacade(),
+    )
+
+    status, body = call(audio_body(lang="zh-TW"))
+    assert status == 500
+    assert body["error"]["code"] == "INTERNAL_ERROR"
+    # 內部診斷訊息不外洩
+    assert "production gate" not in body["error"]["message"]
+
+
+def test_remote_endpoint_failure_returns_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """遠端 endpoint 呼叫失敗時，chat handler 回 500 INTERNAL_ERROR。"""
+    from src.shared.asr.types import AsrErrorCategory, TypedAsrError
+
+    class EndpointErrorFacade:
+        def recognize(self, audio_bytes, input_format, language, deadline,
+                      cancellation, context):
+            return TypedAsrError(
+                category=AsrErrorCategory.PROVIDER_UNAVAILABLE,
+                message="Endpoint temporarily unavailable",
+                retryable=True,
+            )
+
+    monkeypatch.setattr(
+        "src.handlers.chat.get_asr_facade",
+        lambda: EndpointErrorFacade(),
+    )
+
+    status, body = call(audio_body(lang="hak"))
+    assert status == 500
+    assert body["error"]["code"] == "INTERNAL_ERROR"
+
+
+def test_remote_endpoint_deadline_exceeded_returns_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """遠端 endpoint 逾時時，chat handler 回 500 INTERNAL_ERROR。"""
+    from src.shared.asr.types import AsrErrorCategory, TypedAsrError
+
+    class TimeoutFacade:
+        def recognize(self, audio_bytes, input_format, language, deadline,
+                      cancellation, context):
+            return TypedAsrError(
+                category=AsrErrorCategory.DEADLINE_EXCEEDED,
+                message="Endpoint call timed out",
+                retryable=True,
+            )
+
+    monkeypatch.setattr(
+        "src.handlers.chat.get_asr_facade",
+        lambda: TimeoutFacade(),
+    )
+
+    status, body = call(audio_body(lang="hak"))
+    assert status == 500
+    assert body["error"]["code"] == "INTERNAL_ERROR"

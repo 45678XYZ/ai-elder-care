@@ -14,8 +14,6 @@ import pytest
 
 from src.shared.asr.composition import (
     ENV_CONFIG_JSON,
-    ENV_FORMO_PROMPT_ID,
-    ENV_LOCAL_DEVICE,
     StdoutTelemetrySink,
     build_facade,
     build_provider_registry,
@@ -30,10 +28,12 @@ from src.shared.asr.config import (
     ConfigParseError,
     ModelMetadata,
     ModelProductionGate,
+    ProviderConfig,
+    ProviderKind,
     ProviderStatus,
     UsageRestriction,
 )
-from src.shared.asr.local_models import CeLocalProvider, FormoLocalProvider
+from src.shared.asr.remote_endpoints import SageMakerAsrProvider
 from src.shared.asr.types import (
     AsrErrorCategory,
     CancellationSignal,
@@ -71,8 +71,7 @@ def approve(metadata: ModelMetadata) -> ModelMetadata:
 @pytest.fixture(autouse=True)
 def _clear_env_and_cache(monkeypatch: pytest.MonkeyPatch):
     """每個測試都從乾淨的環境與空快取開始。"""
-    for key in (ENV_CONFIG_JSON, ENV_FORMO_PROMPT_ID, ENV_LOCAL_DEVICE):
-        monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv(ENV_CONFIG_JSON, raising=False)
     reset_asr_facade()
     yield
     reset_asr_facade()
@@ -97,8 +96,8 @@ def make_wav_bytes(duration_ms: int = 200) -> bytes:
 def test_default_config_declares_both_languages() -> None:
     config = default_config()
     assert set(config.routes) == {"hak", "zh-TW"}
-    assert config.routes["hak"].provider_order == ("hak_mock", "ce_local")
-    assert config.routes["zh-TW"].provider_order == ("aws_zh", "ce_local")
+    assert config.routes["hak"].provider_order == ("hak_mock", "ce_remote")
+    assert config.routes["zh-TW"].provider_order == ("ce_remote", "formo_remote")
 
 
 def test_default_config_leaves_both_models_unapproved() -> None:
@@ -108,16 +107,13 @@ def test_default_config_leaves_both_models_unapproved() -> None:
         assert metadata.is_production_allowed is False
 
 
-def test_default_config_aws_gate_is_incomplete() -> None:
-    assert default_config().aws_capability_gate.is_complete is False
-
 
 def test_default_registry_contains_no_local_models() -> None:
-    """未核准 → 連實例都不該存在。"""
+    """未核准 → 連實例都不該存在。remote-only 架構下只有 hak_mock。"""
     registry = build_provider_registry(default_config())
-    assert set(registry) == {"hak_mock", "aws_zh"}
-    assert "ce_local" not in registry
-    assert "formo_local" not in registry
+    assert set(registry) == {"hak_mock"}
+    assert "ce_remote" not in registry
+    assert "formo_remote" not in registry
 
 
 def test_disabled_provider_is_not_instantiated() -> None:
@@ -138,58 +134,25 @@ def test_approved_ce_model_is_instantiated_with_configured_capacity() -> None:
     config.model_metadata["taiwan_tongues_ce"] = approve(
         config.model_metadata["taiwan_tongues_ce"]
     )
-    config.providers["ce_local"] = type(config.providers["ce_local"])(
-        identifier="ce_local",
-        status=ProviderStatus.ENABLED,
-        metadata_ref="taiwan_tongues_ce",
-        kind=config.providers["ce_local"].kind,
-        max_concurrent=4,
-    )
 
     registry = build_provider_registry(config)
 
-    assert isinstance(registry["ce_local"], CeLocalProvider)
-    assert registry["ce_local"].slot_stats.capacity == 4
-    # 建立實例不等於載入模型：模型必須維持延遲載入。
-    assert registry["ce_local"].is_loaded is False
+    assert isinstance(registry["ce_remote"], SageMakerAsrProvider)
+    assert registry["ce_remote"].slot_stats.capacity == 4
+    # 建立實例不等於載入模型：handle 必須維持延遲載入。
+    assert registry["ce_remote"].is_loaded is False
 
 
-def test_approved_formo_model_requires_prompt_id(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """沒指定腔調就不建立——猜一個腔調會直接影響辨識結果。"""
+def test_approved_formo_model_is_instantiated() -> None:
+    """核准後 formo_remote 也能被建立。"""
     config = default_config()
     config.model_metadata["formospeech_whisper_v3"] = approve(
         config.model_metadata["formospeech_whisper_v3"]
     )
 
-    assert "formo_local" not in build_provider_registry(config)
-
-    monkeypatch.setenv(ENV_FORMO_PROMPT_ID, "htia_hailu")
     registry = build_provider_registry(config)
-    assert isinstance(registry["formo_local"], FormoLocalProvider)
-
-
-def test_invalid_formo_prompt_id_blocks_instantiation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config = default_config()
-    config.model_metadata["formospeech_whisper_v3"] = approve(
-        config.model_metadata["formospeech_whisper_v3"]
-    )
-    monkeypatch.setenv(ENV_FORMO_PROMPT_ID, "HTIA_HAILU")  # 大小寫變形
-    assert "formo_local" not in build_provider_registry(config)
-
-
-def test_local_device_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = default_config()
-    config.model_metadata["taiwan_tongues_ce"] = approve(
-        config.model_metadata["taiwan_tongues_ce"]
-    )
-    monkeypatch.setenv(ENV_LOCAL_DEVICE, "cpu")
-
-    provider = build_provider_registry(config)["ce_local"]
-    assert provider._spec.device == "cpu"
+    assert isinstance(registry["formo_remote"], SageMakerAsrProvider)
+    assert registry["formo_remote"].slot_stats.capacity == 2
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -217,7 +180,6 @@ def test_load_config_parses_env_json(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         },
         "model_metadata": {},
-        "aws_capability_gate": {},
         "formo_prompt_id_allowlist": [
             "htia_sixian",
             "htia_hailu",
@@ -258,7 +220,6 @@ def test_env_json_with_unknown_provider_reference_fails_closed(
         },
         "providers": {},
         "model_metadata": {},
-        "aws_capability_gate": {},
         "formo_prompt_id_allowlist": [
             "htia_sixian",
             "htia_hailu",
@@ -376,8 +337,7 @@ def test_telemetry_reports_failover_and_served_provider() -> None:
     """
     from src.shared.asr.config import (
         AsrConfig,
-        AwsCapabilityGate,
-        ConcurrencyPolicy,
+               ConcurrencyPolicy,
         ProviderConfig,
         ProviderKind,
         RouteConfig,
@@ -421,7 +381,6 @@ def test_telemetry_reports_failover_and_served_provider() -> None:
             ),
         },
         model_metadata={},
-        aws_capability_gate=AwsCapabilityGate.default_incomplete(),
         formo_prompt_id_allowlist=default_config().formo_prompt_id_allowlist,
         concurrency=ConcurrencyPolicy(spill_wait_ms=10),
     )
@@ -476,7 +435,7 @@ def test_registry_contains_exactly_the_two_known_models() -> None:
     }
 
 
-def test_unregistered_model_id_does_not_get_a_local_instance() -> None:
+def test_unregistered_model_id_does_not_get_a_remote_instance() -> None:
     """
     核准通過但程式不認得這個模型時，必須靜靜地不建立實例，
 
@@ -500,7 +459,7 @@ def test_unregistered_model_id_does_not_get_a_local_instance() -> None:
         production_gate=tampered.production_gate,
     )
 
-    assert "ce_local" not in build_provider_registry(config)
+    assert "ce_remote" not in build_provider_registry(config)
 
 
 def test_third_model_can_be_added_by_registering_it_without_touching_router() -> None:
@@ -515,20 +474,21 @@ def test_third_model_can_be_added_by_registering_it_without_touching_router() ->
         ModelProviderRegistration,
         build_provider_registry,
     )
+    from src.shared.asr.config import ProviderKind
 
     class ThirdPartyProvider:
-        provider_id = "third_party_local"
+        provider_id = "third_party_remote"
 
         def transcribe(self, audio, language, deadline, cancellation, context):
             return Transcript(text="第三方模型的假辨識結果")
 
-    def build_third_party(provider_id, spec, slot_pool, config):
+    def build_third_party(provider_id, spec, slot_pool):
         return ThirdPartyProvider()
 
     fake_model_id = "someone/third-party-asr"
     MODEL_PROVIDER_REGISTRY[fake_model_id] = ModelProviderRegistration(
         languages=frozenset({Language.ZH_TW}),
-        build_local=build_third_party,
+        build_remote=build_third_party,
     )
     try:
         config = default_config()
@@ -542,18 +502,17 @@ def test_third_model_can_be_added_by_registering_it_without_touching_router() ->
                 approval_state=ApprovalState.NOT_APPROVED,
             )
         )
-        config.providers["third_party_local"] = type(
-            config.providers["ce_local"]
-        )(
-            identifier="third_party_local",
+        config.providers["third_party_remote"] = ProviderConfig(
+            identifier="third_party_remote",
             status=ProviderStatus.ENABLED,
             metadata_ref="third_party",
-            kind=config.providers["ce_local"].kind,
+            kind=ProviderKind.REMOTE_MODEL,
+            endpoint_name="third-party-endpoint",
         )
 
         registry = build_provider_registry(config)
 
-        assert isinstance(registry["third_party_local"], ThirdPartyProvider)
+        assert isinstance(registry["third_party_remote"], ThirdPartyProvider)
     finally:
         # 不污染其他測試：註冊表是模組級可變狀態。
         del MODEL_PROVIDER_REGISTRY[fake_model_id]

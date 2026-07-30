@@ -15,8 +15,7 @@ from dataclasses import dataclass, field
 
 from src.shared.asr.config import (
     AsrConfig,
-    AwsCapabilityGate,
-    ProviderConfig,
+       ProviderConfig,
     ProviderStatus,
     RouteConfig,
 )
@@ -77,7 +76,6 @@ def _make_hak_config() -> AsrConfig:
             ),
         },
         model_metadata={},
-        aws_capability_gate=AwsCapabilityGate.default_incomplete(),
         formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
@@ -319,7 +317,6 @@ class TestAsrFacadeRouteNotApproved:
                 ),
             },
             model_metadata={},
-            aws_capability_gate=AwsCapabilityGate.default_incomplete(),
             formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         facade, sink, _ = _make_facade(config)

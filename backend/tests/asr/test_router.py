@@ -19,7 +19,6 @@ import pytest
 
 from src.shared.asr.config import (
     AsrConfig,
-    AwsCapabilityGate,
     CE_MODEL_METADATA,
     FORMO_MODEL_METADATA,
     ModelMetadata,
@@ -108,60 +107,72 @@ def _make_hak_enabled_config() -> AsrConfig:
             ),
         },
         model_metadata={},
-        aws_capability_gate=AwsCapabilityGate.default_incomplete(),
         formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
 
 def _make_zh_tw_config_gate_incomplete() -> AsrConfig:
-    """Config with zh-TW route enabled but gate incomplete."""
+    """Config with zh-TW route enabled but remote model unapproved."""
     return AsrConfig(
         routes={
             "zh-TW": RouteConfig(
-                route="zh-TW", provider_identifier="aws_zh", enabled=True
+                route="zh-TW", provider_identifier="ce_remote", enabled=True
             ),
         },
         providers={
-            "aws_zh": ProviderConfig(
-                identifier="aws_zh",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
-                kind=ProviderKind.AWS_MANAGED,
+                kind=ProviderKind.REMOTE_MODEL,
+                metadata_ref="ce_meta",
+                endpoint_name="ep-ce",
             ),
         },
-        model_metadata={},
-        aws_capability_gate=AwsCapabilityGate.default_incomplete(),
+        model_metadata={
+            "ce_meta": CE_MODEL_METADATA,  # 未核准
+        },
         formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
 
 def _make_zh_tw_config_gate_complete() -> AsrConfig:
-    """Config with zh-TW route enabled and gate complete."""
+    """Config with zh-TW route enabled and remote model approved."""
+    from src.shared.asr.config import ModelProductionGate
+
+    approved_gate = ModelProductionGate(
+        colab_validation_passed=True,
+        license_cleared=True,
+        access_granted=True,
+        quota_cleared=True,
+        runtime_capacity_verified=True,
+    )
+    approved_ce = ModelMetadata(
+        model_id=CE_MODEL_METADATA.model_id,
+        revision=CE_MODEL_METADATA.revision,
+        license=CE_MODEL_METADATA.license,
+        access_status=AccessStatus.OPEN,
+        usage_restriction=UsageRestriction.PRODUCTION,
+        approval_state=ApprovalState.APPROVED,
+        production_gate=approved_gate,
+    )
     return AsrConfig(
         routes={
             "zh-TW": RouteConfig(
-                route="zh-TW", provider_identifier="aws_zh", enabled=True
+                route="zh-TW", provider_identifier="ce_remote", enabled=True
             ),
         },
         providers={
-            "aws_zh": ProviderConfig(
-                identifier="aws_zh",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
-                kind=ProviderKind.AWS_MANAGED,
+                kind=ProviderKind.REMOTE_MODEL,
+                metadata_ref="ce_meta",
+                endpoint_name="ep-ce",
             ),
         },
-        model_metadata={},
-        aws_capability_gate=AwsCapabilityGate(
-            region_zh_tw_support=True,
-            service_input_output_mode=True,
-            canonical_pcm_compatibility=True,
-            timeout_behavior=True,
-            cancellation_behavior=True,
-            iam_permissions=True,
-            s3_necessity=True,
-            s3_result_handling=True,
-            s3_cleanup_requirement=True,
-            approval_record_ref="adr-001",
-        ),
+        model_metadata={
+            "ce_meta": approved_ce,
+        },
         formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
@@ -224,7 +235,6 @@ class TestRouterHakRoute:
                 ),
             },
             model_metadata={},
-            aws_capability_gate=AwsCapabilityGate.default_incomplete(),
             formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
@@ -254,7 +264,6 @@ class TestRouterHakRoute:
                 ),
             },
             model_metadata={},
-            aws_capability_gate=AwsCapabilityGate.default_incomplete(),
             formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
@@ -280,7 +289,6 @@ class TestRouterHakRoute:
                 ),
             },
             model_metadata={},
-            aws_capability_gate=AwsCapabilityGate.default_incomplete(),
             formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
@@ -298,13 +306,13 @@ class TestRouterHakRoute:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Tests: CE/Formo production route prohibition
+# Tests: CE/Formo production route prohibition (unapproved gate)
 # ─────────────────────────────────────────────────────────────────
 class TestRouterCeFormoProhibition:
-    """CE/Formo production route → route_not_approved。"""
+    """CE/Formo production route with unapproved gate → route_not_approved。"""
 
     def test_ce_model_route_prohibited(self) -> None:
-        """Route 使用 CE model → route_not_approved。"""
+        """Route 使用 CE model 但未核准 → route_not_approved。"""
         config = AsrConfig(
             routes={
                 "zh-TW": RouteConfig(
@@ -316,13 +324,13 @@ class TestRouterCeFormoProhibition:
                     identifier="ce_provider",
                     status=ProviderStatus.ENABLED,
                     metadata_ref="ce_meta",
-                    kind=ProviderKind.LOCAL_MODEL,
+                    kind=ProviderKind.REMOTE_MODEL,
+                    endpoint_name="ep-ce",
                 ),
             },
             model_metadata={
                 "ce_meta": CE_MODEL_METADATA,
             },
-            aws_capability_gate=AwsCapabilityGate.default_incomplete(),
             formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
@@ -339,7 +347,7 @@ class TestRouterCeFormoProhibition:
         assert result.category == AsrErrorCategory.ROUTE_NOT_APPROVED
 
     def test_formo_model_route_prohibited(self) -> None:
-        """Route 使用 Formo model → route_not_approved。"""
+        """Route 使用 Formo model 但未核准 → route_not_approved。"""
         config = AsrConfig(
             routes={
                 "zh-TW": RouteConfig(
@@ -351,13 +359,13 @@ class TestRouterCeFormoProhibition:
                     identifier="formo_provider",
                     status=ProviderStatus.ENABLED,
                     metadata_ref="formo_meta",
-                    kind=ProviderKind.LOCAL_MODEL,
+                    kind=ProviderKind.REMOTE_MODEL,
+                    endpoint_name="ep-formo",
                 ),
             },
             model_metadata={
                 "formo_meta": FORMO_MODEL_METADATA,
             },
-            aws_capability_gate=AwsCapabilityGate.default_incomplete(),
             formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
@@ -375,12 +383,12 @@ class TestRouterCeFormoProhibition:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Tests: zh-TW capability gate incomplete
+# Tests: zh-TW unapproved remote model
 # ─────────────────────────────────────────────────────────────────
-class TestRouterZhTwCapabilityGate:
-    """zh-TW: AWS capability gate incomplete → route_not_approved。"""
+class TestRouterZhTwUnapprovedModel:
+    """zh-TW: unapproved remote model → route_not_approved。"""
 
-    def test_gate_incomplete_returns_route_not_approved(self) -> None:
+    def test_unapproved_remote_returns_route_not_approved(self) -> None:
         config = _make_zh_tw_config_gate_incomplete()
         router = AsrRouter(config)
 
@@ -404,7 +412,13 @@ class TestRouterZhTwPreflightCancellation:
 
     def test_cancellation_triggered_returns_cancelled(self) -> None:
         config = _make_zh_tw_config_gate_complete()
-        router = AsrRouter(config)
+
+        class _Spy:
+            provider_id = "ce_remote"
+            def transcribe(self, *a, **kw):
+                raise AssertionError("should not be called")
+
+        router = AsrRouter(config, providers={"ce_remote": _Spy()})
 
         result = router.route(
             audio=_make_canonical_audio(),
@@ -427,7 +441,13 @@ class TestRouterZhTwPreflightDeadline:
 
     def test_deadline_expired_returns_deadline_exceeded(self) -> None:
         config = _make_zh_tw_config_gate_complete()
-        router = AsrRouter(config)
+
+        class _Spy:
+            provider_id = "ce_remote"
+            def transcribe(self, *a, **kw):
+                raise AssertionError("should not be called")
+
+        router = AsrRouter(config, providers={"ce_remote": _Spy()})
 
         result = router.route(
             audio=_make_canonical_audio(),
@@ -465,7 +485,7 @@ class TestRouterPrecedenceOrder:
         assert result.category == AsrErrorCategory.UNSUPPORTED_LANGUAGE
 
     def test_gate_check_precedes_cancellation(self) -> None:
-        """Gate incomplete takes precedence over cancellation."""
+        """Unapproved model takes precedence over cancellation."""
         config = _make_zh_tw_config_gate_incomplete()
         router = AsrRouter(config)
 
@@ -483,7 +503,13 @@ class TestRouterPrecedenceOrder:
     def test_cancellation_precedes_deadline(self) -> None:
         """Cancellation takes precedence over deadline."""
         config = _make_zh_tw_config_gate_complete()
-        router = AsrRouter(config)
+
+        class _Spy:
+            provider_id = "ce_remote"
+            def transcribe(self, *a, **kw):
+                raise AssertionError("should not be called")
+
+        router = AsrRouter(config, providers={"ce_remote": _Spy()})
 
         result = router.route(
             audio=_make_canonical_audio(),

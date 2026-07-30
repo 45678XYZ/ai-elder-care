@@ -8,7 +8,6 @@ from src.shared.asr import (
     ApprovalState,
     AsrConfig,
     AsrErrorCategory,
-    AwsCapabilityGate,
     CE_MODEL_METADATA,
     CancellationSignal,
     CanonicalAudio,
@@ -272,45 +271,6 @@ class TestModelMetadataConstants:
 
 
 # ─────────────────────────────────────────────────────────────────
-# AWS Capability Gate
-# ─────────────────────────────────────────────────────────────────
-class TestAwsCapabilityGate:
-    def test_default_incomplete(self) -> None:
-        gate = AwsCapabilityGate.default_incomplete()
-        assert not gate.is_complete
-
-    def test_all_true_is_complete(self) -> None:
-        gate = AwsCapabilityGate(
-            region_zh_tw_support=True,
-            service_input_output_mode=True,
-            canonical_pcm_compatibility=True,
-            timeout_behavior=True,
-            cancellation_behavior=True,
-            iam_permissions=True,
-            s3_necessity=True,
-            s3_result_handling=True,
-            s3_cleanup_requirement=True,
-            approval_record_ref="approved-2024",
-        )
-        assert gate.is_complete
-
-    def test_one_false_is_incomplete(self) -> None:
-        gate = AwsCapabilityGate(
-            region_zh_tw_support=True,
-            service_input_output_mode=True,
-            canonical_pcm_compatibility=True,
-            timeout_behavior=True,
-            cancellation_behavior=True,
-            iam_permissions=True,
-            s3_necessity=True,
-            s3_result_handling=True,
-            s3_cleanup_requirement=False,  # one missing
-            approval_record_ref="approved-2024",
-        )
-        assert not gate.is_complete
-
-
-# ─────────────────────────────────────────────────────────────────
 # Config Parser
 # ─────────────────────────────────────────────────────────────────
 class TestConfigParser:
@@ -357,18 +317,6 @@ class TestConfigParser:
                     "usage_restriction": "colab_validation_only",
                     "approval_state": "not_approved",
                 },
-            },
-            "aws_capability_gate": {
-                "region_zh_tw_support": False,
-                "service_input_output_mode": False,
-                "canonical_pcm_compatibility": False,
-                "timeout_behavior": False,
-                "cancellation_behavior": False,
-                "iam_permissions": False,
-                "s3_necessity": False,
-                "s3_result_handling": False,
-                "s3_cleanup_requirement": False,
-                "approval_record_ref": None,
             },
             "formo_prompt_id_allowlist": [
                 "htia_sixian",

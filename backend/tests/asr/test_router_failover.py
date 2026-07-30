@@ -14,8 +14,7 @@ from src.shared.asr.config import (
     AccessStatus,
     ApprovalState,
     AsrConfig,
-    AwsCapabilityGate,
-    CE_MODEL_METADATA,
+       CE_MODEL_METADATA,
     ConcurrencyPolicy,
     ModelMetadata,
     ModelProductionGate,
@@ -104,8 +103,7 @@ def build_config(
     providers: dict[str, ProviderConfig],
     metadata: dict[str, ModelMetadata] | None = None,
     language: str = "hak",
-    gate: AwsCapabilityGate | None = None,
-) -> AsrConfig:
+   ) -> AsrConfig:
     return AsrConfig(
         routes={
             language: RouteConfig(
@@ -117,7 +115,6 @@ def build_config(
         },
         providers=providers,
         model_metadata=metadata or {},
-        aws_capability_gate=gate or AwsCapabilityGate.default_incomplete(),
         formo_prompt_id_allowlist=FORMO_ALLOWLIST,
         concurrency=ConcurrencyPolicy(spill_wait_ms=10),
     )
@@ -137,46 +134,48 @@ def route(router: AsrRouter, language: Language = Language.HAK):
 # 核准後可上線
 # ─────────────────────────────────────────────────────────────────
 def test_approved_local_model_provider_is_used() -> None:
-    """production gate 逐項核准後，實體模型 provider 必須真的被選用。"""
-    spy = SpyProvider("ce_local", Transcript(text="核准後的辨識結果"))
+    """production gate 逐項核准後，實體模型 provider 必須真的被選用（remote）。"""
+    spy = SpyProvider("ce_remote", Transcript(text="核准後的辨識結果"))
     config = build_config(
-        primary="ce_local",
+        primary="ce_remote",
         providers={
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
                 metadata_ref="ce",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             )
         },
         metadata={"ce": APPROVED_CE_METADATA},
     )
-    router = AsrRouter(config, providers={"ce_local": spy})
+    router = AsrRouter(config, providers={"ce_remote": spy})
 
     outcome = route(router)
 
     assert isinstance(outcome.result, Transcript)
     assert outcome.result.text == "核准後的辨識結果"
-    assert outcome.served_provider_id == "ce_local"
+    assert outcome.served_provider_id == "ce_remote"
     assert spy.calls == 1
 
 
 def test_unapproved_local_model_provider_is_not_used() -> None:
     """未核准的模型即使有 provider 實例也不得被呼叫。"""
-    spy = SpyProvider("ce_local", Transcript(text="不該被用到"))
+    spy = SpyProvider("ce_remote", Transcript(text="不該被用到"))
     config = build_config(
-        primary="ce_local",
+        primary="ce_remote",
         providers={
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
                 metadata_ref="ce",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             )
         },
         metadata={"ce": CE_MODEL_METADATA},  # 預設 gate 全 False
     )
-    router = AsrRouter(config, providers={"ce_local": spy})
+    router = AsrRouter(config, providers={"ce_remote": spy})
 
     outcome = route(router)
 
@@ -191,23 +190,25 @@ def test_unapproved_local_model_provider_is_not_used() -> None:
 # ─────────────────────────────────────────────────────────────────
 def test_ineligible_primary_is_skipped_and_approved_fallback_is_used() -> None:
     """未核准的主力在建鏈階段就被排除，這不算執行期 failover。"""
-    unapproved = SpyProvider("formo_local", Transcript(text="不該被用到"))
-    approved = SpyProvider("ce_local", Transcript(text="備援結果"))
+    unapproved = SpyProvider("formo_remote", Transcript(text="不該被用到"))
+    approved = SpyProvider("ce_remote", Transcript(text="備援結果"))
     config = build_config(
-        primary="formo_local",
-        fallback=("ce_local",),
+        primary="formo_remote",
+        fallback=("ce_remote",),
         providers={
-            "formo_local": ProviderConfig(
-                identifier="formo_local",
+            "formo_remote": ProviderConfig(
+                identifier="formo_remote",
                 status=ProviderStatus.ENABLED,
                 metadata_ref="formo",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-formo",
             ),
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
                 metadata_ref="ce",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             ),
         },
         metadata={
@@ -216,7 +217,7 @@ def test_ineligible_primary_is_skipped_and_approved_fallback_is_used() -> None:
         },
     )
     router = AsrRouter(
-        config, providers={"formo_local": unapproved, "ce_local": approved}
+        config, providers={"formo_remote": unapproved, "ce_remote": approved}
     )
 
     outcome = route(router)
@@ -229,16 +230,17 @@ def test_ineligible_primary_is_skipped_and_approved_fallback_is_used() -> None:
 
 
 def test_disabled_provider_is_skipped() -> None:
-    disabled = SpyProvider("ce_local", Transcript(text="不該被用到"))
+    disabled = SpyProvider("ce_remote", Transcript(text="不該被用到"))
     config = build_config(
-        primary="ce_local",
+        primary="ce_remote",
         fallback=("hak_mock",),
         providers={
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.DISABLED,
                 metadata_ref="ce",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             ),
             "hak_mock": ProviderConfig(
                 identifier="hak_mock", status=ProviderStatus.ENABLED
@@ -246,7 +248,7 @@ def test_disabled_provider_is_skipped() -> None:
         },
         metadata={"ce": APPROVED_CE_METADATA},
     )
-    router = AsrRouter(config, providers={"ce_local": disabled})
+    router = AsrRouter(config, providers={"ce_remote": disabled})
 
     outcome = route(router)
 
@@ -258,38 +260,40 @@ def test_disabled_provider_is_skipped() -> None:
 def test_provider_declared_without_instance_is_ineligible() -> None:
     """設定宣告了 provider 但 composition root 沒建立實例 → 不可用。"""
     config = build_config(
-        primary="ce_local",
+        primary="ce_remote",
         providers={
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
                 metadata_ref="ce",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             )
         },
         metadata={"ce": APPROVED_CE_METADATA},
     )
-    router = AsrRouter(config)  # 未注入 ce_local 實例
+    router = AsrRouter(config)  # 未注入 ce_remote 實例
 
     outcome = route(router)
 
     assert outcome.result.category is AsrErrorCategory.ROUTE_NOT_APPROVED
 
 
-def test_local_model_kind_without_metadata_reference_is_ineligible() -> None:
-    """宣告為實體模型卻沒綁 metadata，等於沒有核准依據，一律拒絕。"""
-    spy = SpyProvider("ce_local", Transcript(text="不該被用到"))
+def test_remote_model_kind_without_metadata_reference_is_ineligible() -> None:
+    """宣告為遠端模型卻沒綁 metadata，等於沒有核准依據，一律拒絕。"""
+    spy = SpyProvider("ce_remote", Transcript(text="不該被用到"))
     config = build_config(
-        primary="ce_local",
+        primary="ce_remote",
         providers={
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             )
         },
     )
-    router = AsrRouter(config, providers={"ce_local": spy})
+    router = AsrRouter(config, providers={"ce_remote": spy})
 
     outcome = route(router)
 
@@ -298,19 +302,20 @@ def test_local_model_kind_without_metadata_reference_is_ineligible() -> None:
 
 
 def test_metadata_reference_pointing_to_missing_metadata_is_ineligible() -> None:
-    spy = SpyProvider("ce_local", Transcript(text="不該被用到"))
+    spy = SpyProvider("ce_remote", Transcript(text="不該被用到"))
     config = build_config(
-        primary="ce_local",
+        primary="ce_remote",
         providers={
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
                 metadata_ref="does_not_exist",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             )
         },
     )
-    router = AsrRouter(config, providers={"ce_local": spy})
+    router = AsrRouter(config, providers={"ce_remote": spy})
 
     outcome = route(router)
 
@@ -324,7 +329,7 @@ def test_metadata_reference_pointing_to_missing_metadata_is_ineligible() -> None
 def test_runtime_provider_failure_falls_over_to_backup() -> None:
     """主力執行後失敗 → router 改用備援，並回報 failover。"""
     failing = SpyProvider(
-        "ce_local",
+        "ce_remote",
         TypedAsrError(
             category=AsrErrorCategory.PROVIDER_UNAVAILABLE,
             message="safe",
@@ -332,14 +337,15 @@ def test_runtime_provider_failure_falls_over_to_backup() -> None:
         ),
     )
     config = build_config(
-        primary="ce_local",
+        primary="ce_remote",
         fallback=("hak_mock",),
         providers={
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
                 metadata_ref="ce",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             ),
             "hak_mock": ProviderConfig(
                 identifier="hak_mock", status=ProviderStatus.ENABLED
@@ -347,7 +353,7 @@ def test_runtime_provider_failure_falls_over_to_backup() -> None:
         },
         metadata={"ce": APPROVED_CE_METADATA},
     )
-    router = AsrRouter(config, providers={"ce_local": failing})
+    router = AsrRouter(config, providers={"ce_remote": failing})
 
     outcome = route(router)
 
@@ -361,7 +367,7 @@ def test_runtime_provider_failure_falls_over_to_backup() -> None:
 def test_route_not_approved_from_provider_does_not_fall_over() -> None:
     """provider 回報未核准時不得靠備援繞過。"""
     gated = SpyProvider(
-        "ce_local",
+        "ce_remote",
         TypedAsrError(
             category=AsrErrorCategory.ROUTE_NOT_APPROVED,
             message="safe",
@@ -370,14 +376,15 @@ def test_route_not_approved_from_provider_does_not_fall_over() -> None:
     )
     backup = SpyProvider("hak_mock_backup", Transcript(text="不該被用到"))
     config = build_config(
-        primary="ce_local",
+        primary="ce_remote",
         fallback=("hak_mock_backup",),
         providers={
-            "ce_local": ProviderConfig(
-                identifier="ce_local",
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
                 status=ProviderStatus.ENABLED,
                 metadata_ref="ce",
-                kind=ProviderKind.LOCAL_MODEL,
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
             ),
             "hak_mock_backup": ProviderConfig(
                 identifier="hak_mock_backup", status=ProviderStatus.ENABLED
@@ -386,7 +393,7 @@ def test_route_not_approved_from_provider_does_not_fall_over() -> None:
         metadata={"ce": APPROVED_CE_METADATA},
     )
     router = AsrRouter(
-        config, providers={"ce_local": gated, "hak_mock_backup": backup}
+        config, providers={"ce_remote": gated, "hak_mock_backup": backup}
     )
 
     outcome = route(router)
