@@ -54,24 +54,24 @@ class _TearableCalendarSheetState extends State<TearableCalendarSheet>
   }
 
   /// 第二個觸發點：App 留在背景、跨過午夜再回到前景。
-  /// 這一路才需要問「今天播過了沒」——同一天回到前景不該再撕一次，
-  /// 那不是進到畫面，只是切回來。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _maybePlay(onlyIfNewDay: true);
+    if (state == AppLifecycleState.resumed) _maybePlay();
   }
 
-  /// [onlyIfNewDay] 為真時，同一天內不重播。
+  /// 一天只播一次，兩個觸發點都適用。
   ///
-  /// **進到今日畫面一定播**：撕曆是這個畫面的開場，長輩每次進來都該看到今天被
-  /// 翻開。一天只播一次的規則留給「App 沒關、切回前景」那條路徑——那時候畫面
-  /// 本來就在，重撕只會讓人以為換了一天。
-  Future<void> _maybePlay({bool onlyIfNewDay = false}) async {
+  /// 撕曆的隱喻本身不允許重播：撕走的是**昨天**那一張，同一天撕第二次等於昨天
+  /// 那頁又長回來被撕一遍。而且這個畫面已經為了儀式感承擔一項代價——使用者第一眼
+  /// 看到的是昨天的日期，對認知功能退化的長輩可能造成短暫混淆（見類別說明）。
+  /// 那個代價一天付一次換「今天翻開了」的資訊還划算，同一天內重播就只剩混淆：
+  /// 他十分鐘前才看過今天是幾號。
+  Future<void> _maybePlay() async {
     if (_showing || !mounted) return;
 
     final isNewDay =
         await CalendarTearStore.instance.shouldPlayAndMark(DateTime.now());
-    if (onlyIfNewDay && !isNewDay) return;
+    if (!isNewDay) return;
     if (!mounted) return;
 
     // 使用者選了「減少動態效果」就完全不播（規劃書 P3）。
