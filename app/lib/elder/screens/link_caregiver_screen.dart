@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
@@ -83,8 +83,8 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
               const SizedBox(height: AppSpacing.md),
               Text(
                 '請家人輸入他的 ID，\n就能看到您每天的狀況。',
-                style: text.headlineSmall
-                    ?.copyWith(color: AppColors.inkSecondary),
+                style:
+                    text.headlineSmall?.copyWith(color: AppColors.inkSecondary),
               ),
               const SizedBox(height: AppSpacing.xl),
 

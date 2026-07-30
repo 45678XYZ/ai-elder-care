@@ -18,8 +18,8 @@ enum GreetingSlot {
   morning('早安', Icons.wb_twilight, 'assets/images/greeting_morning.jpg'),
   afternoon(
       '午安', Icons.wb_sunny_outlined, 'assets/images/greeting_afternoon.png'),
-  evening('晚安', Icons.nightlight_outlined,
-      'assets/images/greeting_evening.png');
+  evening(
+      '晚安', Icons.nightlight_outlined, 'assets/images/greeting_evening.png');
 
   const GreetingSlot(this.label, this.icon, this.asset);
 
