@@ -205,6 +205,11 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 | `elder_id`, `record_id`, `item_type` | String | 是 | `record_id=TURN#...`；`item_type=conversation` |
 | `conversation_id` | String | 是 | `cnv_<identifier>`；由 `elder_id + idempotency_key` 穩定產生 |
 | `conversation_time_key` | String | 是 | GSI 排序鍵 (`<created_at>#<conversation_id>`) |
+| `idempotency_key` | String | 是 | 等於 `client_request_id` |
+| `client_request_id` | String | 是 | 客戶端請求唯一 ID |
+| `request_hash` | String | 是 | 正規化請求 payload hash |
+| `request_status` | String | 是 | `processing` \| `completed` \| `failed` |
+| `request_lease_owner`, `request_lease_until` | String | 否 | `/chat` 請求租約鎖 |
 | `session_id` | String | 是 | `ses_<identifier>` |
 | `created_at` | String | 是 | 固定毫秒、`+08:00` |
 | `lang` | String | 是 | `zh-TW` \| `hak` |
@@ -218,9 +223,11 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 | `batch_extractor_version` | String | 否 | 完成本 turn 的 batch extractor 版本 |
 | `batch_extracted_at` | String | 否 | batch 完成時間 |
 
-所有對話皆為長者主動發話（長者先輸入文字或語音，AI 再合成語音回覆）。音訊欄位只存 S3 object key（`ai_respond_audio_s3_key`），不在 DynamoDB 保存公開 URL；API 每次回傳時動態簽發 15 分鐘 presigned URL。
+
+tool calling 副作用（routine create/update/deactivate/complete、safety event 寫入）由 Bedrock Agent 在 `InvokeAgent` 回應前同步完成，不寫入 turn 的 extraction 欄位。batch 只更新 `batch_extraction_status`、`batch_chunk_id`、`batch_extractor_version`、`batch_extracted_at`，並寫一般 events 或 enrich 既有 safety event。所有對話皆為長者主動發話（長者先輸入文字或語音，AI 再合成語音回覆）。音訊欄位只存 S3 object key（`ai_respond_audio_s3_key`），不在 DynamoDB 保存公開 URL；API 每次回傳時動態簽發 15 分鐘 presigned URL。
 
 #### Session metadata 欄位
+
 
 | 欄位 | 型別 | 必填 | 說明 |
 |---|---|---|---|
