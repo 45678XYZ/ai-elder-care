@@ -253,14 +253,19 @@ class _ChatScreenState extends State<ChatScreen>
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-          // 標題是「這是誰的聊天室」，不是問候語——問候語每次進來都一樣，
-          // 放在最上面等於用最大的字重複一句沒有資訊的話。時段問候移到下方
-          // 開場那一句（見 [_ConversationHint]），講完就被對話取代。
+          // 標題講「這是什麼」，不是問候語——問候語每次進來都一樣，放在最上面
+          // 等於用最大的字重複一句沒有資訊的話。時段問候移到下方開場那一句
+          // （見 [_ConversationHint]），講完就被對話取代。
           // 不放語言切換（§5.1）；不放日期（今日頁的農民曆牌面才是日期的來源）。
-          child: Text('${AppSession.instance.displayName}的溫馨聊天室',
+          //
+          // 用「聊天夥伴」而不是「聊天室」或「小助手」：「聊天室」是 BBS／MSN 年代的
+          // 空間比喻，長輩熟的是「聊天」不是「聊天室」；「助手」則把定位偏成工具，
+          // 讓人覺得要有事情才能找它——但這個畫面最重要的情境正是「沒什麼事，
+          // 就想講講話」。「夥伴」是日常詞，也守住陪伴而非任務的定位。
+          child: Text('${AppSession.instance.displayName}的聊天夥伴',
               style: text.headlineLarge),
         ),
-        // 橫線把問候語與對話區切開，讓下方看得出來是一個「聊天室」而不是同一段內容。
+        // 橫線把標題與對話區切開，讓下方看得出來是另一段內容。
         const Divider(height: 1, thickness: 1.5, color: AppColors.borderDashed),
       ],
     );
