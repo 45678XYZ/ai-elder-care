@@ -1,0 +1,694 @@
+{
+  "metadata": {
+    "title": "UCO 節點與屬性定義清冊 (Comprehensive Property Registry)",
+    "tier1_global_properties_count": 5,
+    "tier1_schema_structural_properties_count": 8,
+    "total_nodes_registered_with_properties": 43
+  },
+  "global_properties": [
+    {
+      "name": "observed_at",
+      "type": "datetime",
+      "nullable": false,
+      "description": "觀測/紀錄時間 (ISO 8601)"
+    },
+    {
+      "name": "source_utterance",
+      "type": "string",
+      "nullable": true,
+      "description": "觸發此分類的原始對話片段"
+    },
+    {
+      "name": "confidence_score",
+      "type": "float",
+      "nullable": false,
+      "description": "分類信心度 [0.0, 1.0]"
+    },
+    {
+      "name": "observer_role",
+      "type": "enum",
+      "nullable": true,
+      "description": "紀錄者角色 (照服員/長者本人/家屬/系統)"
+    },
+    {
+      "name": "severity_qualifier",
+      "type": "object",
+      "nullable": true,
+      "description": "ICF 5級制 qualifier (0-4) 與自然語言描述"
+    }
+  ],
+  "schema_structural_properties": [
+    {
+      "name": "startDate",
+      "type": "datetime",
+      "nullable": true,
+      "description": "行為/事件開始時間"
+    },
+    {
+      "name": "endDate",
+      "type": "datetime",
+      "nullable": true,
+      "description": "行為/事件結束時間"
+    },
+    {
+      "name": "duration",
+      "type": "string",
+      "nullable": true,
+      "description": "持續時間 (ISO 8601 duration如 PT30M)"
+    },
+    {
+      "name": "location",
+      "type": "string",
+      "nullable": true,
+      "description": "行為發生地點 (如客廳/浴室/醫院)"
+    },
+    {
+      "name": "agent",
+      "type": "string",
+      "nullable": true,
+      "description": "主要執行者 (如長者/照顧者)"
+    },
+    {
+      "name": "instrument",
+      "type": "string",
+      "nullable": true,
+      "description": "使用之輔具或工具 (如拐杖/血壓計)"
+    },
+    {
+      "name": "result",
+      "type": "string",
+      "nullable": true,
+      "description": "行為產出或產出結果描述"
+    },
+    {
+      "name": "actionStatus",
+      "type": "enum",
+      "nullable": true,
+      "description": "行為狀態 (ActiveActionStatus/CompletedActionStatus)"
+    }
+  ],
+  "node_properties": {
+    "UCO.BehavioralRecord.MedicationBehavior": [
+      {
+        "name": "medication_item",
+        "type": "string",
+        "nullable": true,
+        "description": "藥品名稱/藥袋標示 (如「降血壓藥/心律錠」)"
+      },
+      {
+        "name": "pill_appearance",
+        "type": "string",
+        "nullable": true,
+        "description": "藥品外型描述 (如「黃色圓形小錠」「白色長膠囊」)"
+      },
+      {
+        "name": "medication_route",
+        "type": "enum",
+        "nullable": true,
+        "description": "給藥途徑 (口服/外用藥膏/點眼藥/水劑)"
+      },
+      {
+        "name": "dosage",
+        "type": "string",
+        "nullable": true,
+        "description": "給藥劑量 (如「1錠」「2滴」)"
+      },
+      {
+        "name": "dosing_frequency",
+        "type": "string",
+        "nullable": true,
+        "description": "給藥頻率 (如「早晚飯後」「睡前1次」)"
+      },
+      {
+        "name": "prescriber_department",
+        "type": "string",
+        "nullable": true,
+        "description": "開立科別 (心臟內科/身心科/風濕免疫科)"
+      },
+      {
+        "name": "adherence_status",
+        "type": "enum",
+        "nullable": true,
+        "description": "服藥遵照度 (按時/漏吃/延遲/自行增減)"
+      }
+    ],
+    "UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication": [
+      {
+        "name": "on_time_flag",
+        "type": "boolean",
+        "nullable": true,
+        "description": "是否精確按時服藥"
+      },
+      {
+        "name": "pill_count",
+        "type": "integer",
+        "nullable": true,
+        "description": "本次服用藥丸顆數"
+      }
+    ],
+    "UCO.BehavioralRecord.MedicationBehavior.AdherenceDisruption": [
+      {
+        "name": "disruption_reason",
+        "type": "enum",
+        "nullable": true,
+        "description": "中斷或調劑原因 (忘記帶藥/自行停藥/副作用恐懼)"
+      }
+    ],
+    "UCO.BehavioralRecord.MedicationBehavior.AdverseDrugEffect": [
+      {
+        "name": "suspected_symptom",
+        "type": "string",
+        "nullable": true,
+        "description": "懷疑藥物引發之副作用症狀 (頭暈/胃刺痛/過敏紅疹)"
+      }
+    ],
+    "UCO.BehavioralRecord.MedicationBehavior.TopicalCareProcedure": [
+      {
+        "name": "topical_site",
+        "type": "string",
+        "nullable": true,
+        "description": "外用擦藥/貼布/點眼藥部位 (如右膝蓋/雙眼)"
+      }
+    ],
+    "UCO.BehavioralRecord.NutritionEatingBehavior": [
+      {
+        "name": "meal_context",
+        "type": "enum",
+        "nullable": true,
+        "description": "餐次情境 (早餐/午餐/晚餐/點心/宵夜)"
+      },
+      {
+        "name": "food_description",
+        "type": "string",
+        "nullable": true,
+        "description": "食物與菜色綜合描述"
+      },
+      {
+        "name": "portion_consumed",
+        "type": "string",
+        "nullable": true,
+        "description": "進食完成份量 (全部吃光/吃半碗/拒食)"
+      },
+      {
+        "name": "fluid_volume_ml",
+        "type": "float",
+        "nullable": true,
+        "description": "飲水或飲料體積 (毫升 ml)"
+      },
+      {
+        "name": "appetite_status",
+        "type": "enum",
+        "nullable": true,
+        "description": "整體食慾評估 (良好/下降/嘔吐)"
+      }
+    ],
+    "UCO.BehavioralRecord.NutritionEatingBehavior.MainMeal": [
+      {
+        "name": "dishes",
+        "type": "string",
+        "nullable": true,
+        "description": "詳細菜色明細"
+      },
+      {
+        "name": "vegetables_fruits",
+        "type": "string",
+        "nullable": true,
+        "description": "蔬果攝取細節"
+      },
+      {
+        "name": "soup",
+        "type": "string",
+        "nullable": true,
+        "description": "湯品類型"
+      },
+      {
+        "name": "staple_food",
+        "type": "string",
+        "nullable": true,
+        "description": "主食種類 (白飯/稀飯/麵/燕麥)"
+      }
+    ],
+    "UCO.BehavioralRecord.NutritionEatingBehavior.SnackSupplement": [
+      {
+        "name": "snack_type",
+        "type": "string",
+        "nullable": true,
+        "description": "點心類型 (餅乾/水果/紅豆餅)"
+      },
+      {
+        "name": "supplement_brand",
+        "type": "string",
+        "nullable": true,
+        "description": "營養補充品品牌 (安素/完勝)"
+      }
+    ],
+    "UCO.BehavioralRecord.NutritionEatingBehavior.WaterIntake": [
+      {
+        "name": "thickener_used",
+        "type": "boolean",
+        "nullable": true,
+        "description": "飲水是否加入流質增稠劑"
+      },
+      {
+        "name": "water_temperature",
+        "type": "enum",
+        "nullable": true,
+        "description": "水溫 (常溫/溫熱水)"
+      }
+    ],
+    "UCO.BehavioralRecord.NutritionEatingBehavior.BeverageIntake": [
+      {
+        "name": "beverage_type",
+        "type": "string",
+        "nullable": true,
+        "description": "飲料類型 (熱牛奶/烏龍茶)"
+      }
+    ],
+    "UCO.BehavioralRecord.NutritionEatingBehavior.SwallowingDifficulty": [
+      {
+        "name": "choking_trigger_texture",
+        "type": "enum",
+        "nullable": true,
+        "description": "引發嗆咳之食物質地 (薄流質/固體)"
+      },
+      {
+        "name": "coughing_frequency",
+        "type": "enum",
+        "nullable": true,
+        "description": "咳嗽頻率 (每口都嗆/偶爾)"
+      }
+    ],
+    "UCO.BehavioralRecord.NutritionEatingBehavior.AppetiteChange": [
+      {
+        "name": "nausea_flag",
+        "type": "boolean",
+        "nullable": true,
+        "description": "是否伴隨噁心嘔吐症狀"
+      }
+    ],
+    "UCO.BehavioralRecord.SleepRestBehavior": [
+      {
+        "name": "sleep_duration_hours",
+        "type": "float",
+        "nullable": true,
+        "description": "睡著總時長 (小時)"
+      },
+      {
+        "name": "sleep_location",
+        "type": "enum",
+        "nullable": true,
+        "description": "睡眠地點 (床/沙發)"
+      },
+      {
+        "name": "sleep_posture",
+        "type": "string",
+        "nullable": true,
+        "description": "睡眠姿態"
+      },
+      {
+        "name": "sleep_aids",
+        "type": "string",
+        "nullable": true,
+        "description": "助眠措施 (安眠藥/音樂/枕頭墊高)"
+      }
+    ],
+    "UCO.BehavioralRecord.SleepRestBehavior.SleepOnset": [
+      {
+        "name": "sleep_latency_minutes",
+        "type": "integer",
+        "nullable": true,
+        "description": "入睡潛伏時間 (分鐘)"
+      }
+    ],
+    "UCO.BehavioralRecord.SleepRestBehavior.SleepMaintenance": [
+      {
+        "name": "waking_reason",
+        "type": "enum",
+        "nullable": true,
+        "description": "夜間甦醒原因 (夜尿起夜/做惡夢/關節疼痛)"
+      },
+      {
+        "name": "night_waking_count",
+        "type": "integer",
+        "nullable": true,
+        "description": "夜間起夜次數"
+      }
+    ],
+    "UCO.BehavioralRecord.SleepRestBehavior.DaytimeNapping": [
+      {
+        "name": "nap_duration_minutes",
+        "type": "integer",
+        "nullable": true,
+        "description": "打盹分鐘數"
+      }
+    ],
+    "UCO.BehavioralRecord.SleepRestBehavior.SleepQualityReport": [
+      {
+        "name": "morning_fatigue_level",
+        "type": "enum",
+        "nullable": true,
+        "description": "晨起疲憊感受 (精神充沛/頭重沉重)"
+      }
+    ],
+    "UCO.BehavioralRecord.PhysicalActivityMobility": [
+      {
+        "name": "activity_nature",
+        "type": "string",
+        "nullable": true,
+        "description": "活動或移動性質"
+      },
+      {
+        "name": "assistance_level",
+        "type": "enum",
+        "nullable": true,
+        "description": "照護協助等級 (獨立/提示/部分/完全)"
+      },
+      {
+        "name": "assistive_device",
+        "type": "enum",
+        "nullable": true,
+        "description": "使用行動輔具 (單拐/助行器/輪椅)"
+      },
+      {
+        "name": "gait_stability",
+        "type": "enum",
+        "nullable": true,
+        "description": "步態穩定度 (平穩/搖晃/步態蹣跚)"
+      }
+    ],
+    "UCO.BehavioralRecord.PhysicalActivityMobility.PositionalTransfer": [
+      {
+        "name": "transfer_from_to",
+        "type": "string",
+        "nullable": true,
+        "description": "轉移起止點 (床上到輪椅/床邊站立)"
+      }
+    ],
+    "UCO.BehavioralRecord.PhysicalActivityMobility.WalkingAmbulation": [
+      {
+        "name": "distance_meters",
+        "type": "float",
+        "nullable": true,
+        "description": "行走距離 (公尺 m)"
+      }
+    ],
+    "UCO.BehavioralRecord.PhysicalActivityMobility.StructuredExercise": [
+      {
+        "name": "exercise_program",
+        "type": "string",
+        "nullable": true,
+        "description": "復健做操項目 (毛巾操/彈力帶抬腳)"
+      }
+    ],
+    "UCO.BehavioralRecord.PhysicalActivityMobility.PersonalCareADL": [
+      {
+        "name": "adl_item",
+        "type": "enum",
+        "nullable": true,
+        "description": "ADL細項 (刷牙洗臉/沐浴/穿衣)"
+      }
+    ],
+    "UCO.BehavioralRecord.CognitionOrientation": [
+      {
+        "name": "cognitive_domain",
+        "type": "enum",
+        "nullable": true,
+        "description": "受損認知範疇 (定向感/近事記憶/執行功能)"
+      },
+      {
+        "name": "decline_severity",
+        "type": "enum",
+        "nullable": true,
+        "description": "認知衰退程度 (輕微忘記/顯著重複/無法獨立)"
+      }
+    ],
+    "UCO.BehavioralRecord.CognitionOrientation.OrientationImpairment": [
+      {
+        "name": "orientation_target",
+        "type": "enum",
+        "nullable": true,
+        "description": "失常維度 (時間混淆/地點迷路/人物誤認)"
+      },
+      {
+        "name": "disorientation_manifestation",
+        "type": "string",
+        "nullable": true,
+        "description": "對話混淆表現"
+      }
+    ],
+    "UCO.BehavioralRecord.CognitionOrientation.MemoryExecutiveDeficit": [
+      {
+        "name": "impaired_task_item",
+        "type": "string",
+        "nullable": true,
+        "description": "異常執行功能項目 (忘記鑰匙/遙控器不會用)"
+      },
+      {
+        "name": "repetition_count",
+        "type": "integer",
+        "nullable": true,
+        "description": "短時間重複詢問次數"
+      }
+    ],
+    "UCO.BehavioralRecord.EmotionalMentalState": [
+      {
+        "name": "expressed_emotion",
+        "type": "string",
+        "nullable": true,
+        "description": "表達之心情描述"
+      },
+      {
+        "name": "emotion_polarity",
+        "type": "enum",
+        "nullable": true,
+        "description": "情緒極性 (正向/負向/焦慮/易怒)"
+      },
+      {
+        "name": "trigger_event",
+        "type": "string",
+        "nullable": true,
+        "description": "情緒觸發事件"
+      },
+      {
+        "name": "bpsd_symptom",
+        "type": "string",
+        "nullable": true,
+        "description": "伴隨失智症精神行為症狀"
+      }
+    ],
+    "UCO.BehavioralRecord.EmotionalMentalState.AnxiousAgitation": [
+      {
+        "name": "agitation_level",
+        "type": "enum",
+        "nullable": true,
+        "description": "躁動強度 (坐立難安/過度恐慌)"
+      }
+    ],
+    "UCO.BehavioralRecord.EmotionalMentalState.GriefLoss": [
+      {
+        "name": "loss_type",
+        "type": "enum",
+        "nullable": true,
+        "description": "喪失感來源 (喪親老伴/身體失能)"
+      }
+    ],
+    "UCO.BehavioralRecord.InterpersonalSocialBehavior": [
+      {
+        "name": "interaction_partner",
+        "type": "string",
+        "nullable": true,
+        "description": "互動對象 (子女/孫子/照服員/鄰居)"
+      },
+      {
+        "name": "communication_channel",
+        "type": "enum",
+        "nullable": true,
+        "description": "通訊管道 (面對面/電話/LINE視訊/電視)"
+      }
+    ],
+    "UCO.BehavioralRecord.InterpersonalSocialBehavior.FamilyInterpersonal": [
+      {
+        "name": "family_member_role",
+        "type": "string",
+        "nullable": true,
+        "description": "家屬角色 (大女兒/小兒子/孫子)"
+      }
+    ],
+    "UCO.BehavioralRecord.InterpersonalSocialBehavior.MediaConsumption": [
+      {
+        "name": "show_title",
+        "type": "string",
+        "nullable": true,
+        "description": "節目影音標題"
+      },
+      {
+        "name": "screen_device",
+        "type": "enum",
+        "nullable": true,
+        "description": "觀看設備 (電視/平板)"
+      }
+    ],
+    "UCO.BehavioralRecord.InterpersonalSocialBehavior.SmartphoneUsage": [
+      {
+        "name": "app_used",
+        "type": "string",
+        "nullable": true,
+        "description": "使用之 App (LINE/Facebook)"
+      },
+      {
+        "name": "screen_time_minutes",
+        "type": "integer",
+        "nullable": true,
+        "description": "螢幕使用時間 (分鐘)"
+      }
+    ],
+    "UCO.BehavioralRecord.InterpersonalSocialBehavior.LeisureRecreation": [
+      {
+        "name": "recreation_activity",
+        "type": "string",
+        "nullable": true,
+        "description": "休閒活動名稱 (卡拉OK/下棋)"
+      }
+    ],
+    "UCO.StatusOutcome.SafetyIncident": [
+      {
+        "name": "incident_nature",
+        "type": "enum",
+        "nullable": true,
+        "description": "意外事件性質 (跌倒/走失/燙傷/詐騙)"
+      },
+      {
+        "name": "incident_location",
+        "type": "string",
+        "nullable": true,
+        "description": "事故發生地點"
+      },
+      {
+        "name": "injury_severity",
+        "type": "enum",
+        "nullable": true,
+        "description": "傷害嚴重程度 (無傷害/擦傷/骨折)"
+      }
+    ],
+    "UCO.StatusOutcome.SafetyIncident.PhysicalFall": [
+      {
+        "name": "fall_cause",
+        "type": "string",
+        "nullable": true,
+        "description": "跌倒原因 (地面濕滑/絆到)"
+      },
+      {
+        "name": "near_miss_flag",
+        "type": "boolean",
+        "nullable": true,
+        "description": "是否為近跌驚險事故 (near-miss)"
+      }
+    ],
+    "UCO.StatusOutcome.SafetyIncident.ElopementWandering": [
+      {
+        "name": "wandering_location",
+        "type": "string",
+        "nullable": true,
+        "description": "走失或迷路地點"
+      }
+    ],
+    "UCO.StatusOutcome.SafetyIncident.DomesticHazard": [
+      {
+        "name": "hazard_type",
+        "type": "enum",
+        "nullable": true,
+        "description": "危害類型 (忘記關火燒焦/熱水燙傷)"
+      }
+    ],
+    "UCO.StatusOutcome.SafetyIncident.FraudScamIncident": [
+      {
+        "name": "scam_type",
+        "type": "string",
+        "nullable": true,
+        "description": "詐騙態樣 (假冒檢警/保健品詐欺)"
+      }
+    ],
+    "UCO.StatusOutcome.PhysiologicalMeasurement": [
+      {
+        "name": "measurement_type",
+        "type": "string",
+        "nullable": false,
+        "description": "量測或症狀類別 (血壓/血糖/體溫/體徵症狀)"
+      },
+      {
+        "name": "measurement_unit",
+        "type": "string",
+        "nullable": true,
+        "description": "量測單位 (mmHg, mg/dL, °C)"
+      }
+    ],
+    "UCO.StatusOutcome.PhysiologicalMeasurement.VitalSignRecord": [
+      {
+        "name": "systolic_bp",
+        "type": "float",
+        "nullable": true,
+        "description": "收縮壓 (mmHg)"
+      },
+      {
+        "name": "diastolic_bp",
+        "type": "float",
+        "nullable": true,
+        "description": "舒張壓 (mmHg)"
+      },
+      {
+        "name": "pulse_rate",
+        "type": "float",
+        "nullable": true,
+        "description": "心跳脈搏 (次/分)"
+      },
+      {
+        "name": "blood_glucose_mg_dl",
+        "type": "float",
+        "nullable": true,
+        "description": "血糖 (mg/dL)"
+      }
+    ],
+    "UCO.StatusOutcome.PhysiologicalMeasurement.PhysicalSymptomReport": [
+      {
+        "name": "symptom_body_part",
+        "type": "string",
+        "nullable": true,
+        "description": "症狀部位 (左膝蓋/胸口/頭部)"
+      },
+      {
+        "name": "symptom_description",
+        "type": "string",
+        "nullable": true,
+        "description": "症狀描述 (關節疼痛/胸悶喘不過氣)"
+      },
+      {
+        "name": "pain_score_0_10",
+        "type": "integer",
+        "nullable": true,
+        "description": "疼痛量表評分 (0-10)"
+      }
+    ],
+    "UCO.ExtendedDomain.GeneralCommerce": [
+      {
+        "name": "commerce_item",
+        "type": "string",
+        "nullable": true,
+        "description": "消費標的物"
+      },
+      {
+        "name": "transaction_amount",
+        "type": "float",
+        "nullable": true,
+        "description": "交易金額 (NTD)"
+      }
+    ],
+    "UCO.ExtendedDomain.SystemManagement": [
+      {
+        "name": "system_action",
+        "type": "string",
+        "nullable": true,
+        "description": "廣義系統操作類型"
+      }
+    ]
+  }
+}

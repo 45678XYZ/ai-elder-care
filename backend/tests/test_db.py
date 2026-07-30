@@ -2,9 +2,19 @@
 
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
+
+from botocore.exceptions import ClientError
 import pytest
 
 from src.shared import db
+
+
+def _conditional_check_failed(operation: str) -> ClientError:
+    """條件式寫入未通過時 DynamoDB 回的錯誤。"""
+    return ClientError(
+        {"Error": {"Code": "ConditionalCheckFailedException", "Message": "已存在"}},
+        operation,
+    )
 
 
 def test_convert_decimals():
@@ -89,70 +99,98 @@ def test_update_elder(mock_get_resource):
 
 
 @patch("src.shared.db.get_dynamodb_resource")
-def test_get_daily_routines_status_calculation(mock_get_resource):
-    """測試例行公事當日行程視圖與動態 status 判定 (done, pending, missed)。"""
+def test_put_routine_version_is_conditional(mock_get_resource):
+    """測試 routine 版本不可變：同一 (routine_id, version) 已存在時不覆寫。"""
     mock_table = MagicMock()
     mock_get_resource.return_value.Table.return_value = mock_table
 
-    # 模擬 routines 表資料 (包含 1 個 daily, 1 個 weekly matching, 1 個 weekly non-matching)
-    mock_routines = [
-        {
-            "routine_id": "rtn_001",
-            "elder_id": "eld_001",
-            "title": "早起吃血壓藥",
-            "schedule": {"freq": "daily", "time": "09:00"},
-            "active": True,
-        },
-        {
-            "routine_id": "rtn_002",
-            "elder_id": "eld_001",
-            "title": "晚間量血壓",
-            "schedule": {"freq": "daily", "time": "19:00"},
-            "active": True,
-        },
-    ]
-
-    # 模擬 events 表資料 (只有 rtn_001 已於 09:05 完成)
-    mock_events = [
-        {
-            "event_id": "evt_001",
-            "elder_id": "eld_001",
-            "ts": "2026-07-14T09:05:00+08:00",
-            "routine_id": "rtn_001",
-            "source": "conversation",
-        }
-    ]
-
-    def scan_side_effect(**kwargs):
-        return {"Items": mock_routines}
-
-    def query_side_effect(**kwargs):
-        return {"Items": mock_events}
-
-    mock_table.scan.side_effect = scan_side_effect
-    mock_table.query.side_effect = query_side_effect
-
-    # 假定目前時間為 2026-07-14T12:00:00+08:00 (超過 09:00 + 2h 寬限期 -> 09:00 服藥若無完成應為 missed，但 rtn_001 已完成 -> done)
-    # 19:00 量血壓尚未到期 -> pending
-    result = db.get_daily_routines(
-        elder_id="eld_001",
-        date_str="2026-07-14",
-        current_iso_ts="2026-07-14T12:00:00+08:00",
-        grace_period_hours=2.0,
+    item = {"routine_id": "rtn_001", "version": 1, "elder_id": "eld_001"}
+    assert db.put_routine_version(item) == item
+    assert (
+        mock_table.put_item.call_args.kwargs["ConditionExpression"]
+        == "attribute_not_exists(routine_id)"
     )
 
-    assert result["date"] == "2026-07-14"
-    items = result["items"]
+    mock_table.put_item.side_effect = _conditional_check_failed("PutItem")
+    with pytest.raises(db.ConditionFailedError):
+        db.put_routine_version(item)
+
+
+@patch("src.shared.db.get_dynamodb_client")
+def test_replace_current_routine_version_transaction(mock_get_client):
+    """測試改版以單一 transaction 關閉舊 current 版並寫入下一版。"""
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+
+    current = {"routine_id": "rtn_001", "version": 1, "is_current": True}
+    next_version = {
+        "routine_id": "rtn_001",
+        "version": 2,
+        "is_current": True,
+        "effective_from": "2026-07-14T10:00:00.000+08:00",
+    }
+
+    assert db.replace_current_routine_version(current, next_version) == next_version
+
+    items = mock_client.transact_write_items.call_args.kwargs["TransactItems"]
     assert len(items) == 2
+    assert items[0]["Update"]["ConditionExpression"] == "is_current = :true"
+    assert "REMOVE current_sort_key" in items[0]["Update"]["UpdateExpression"]
+    assert items[1]["Put"]["ConditionExpression"] == "attribute_not_exists(routine_id)"
+    assert items[1]["Put"]["Item"]["version"] == {"N": "2"}
 
-    # rtn_001 應為 done
-    item1 = next(i for i in items if i["routine_id"] == "rtn_001")
-    assert item1["status"] == "done"
-    assert item1["completed_by"] == "conversation"
+    # 條件不成立代表有並行修改，交由呼叫端判斷是重送或衝突
+    mock_client.transact_write_items.side_effect = ClientError(
+        {"Error": {"Code": "TransactionCanceledException", "Message": "conflict"}},
+        "TransactWriteItems",
+    )
+    with pytest.raises(db.ConditionFailedError):
+        db.replace_current_routine_version(current, next_version)
 
-    # rtn_002 應為 pending
-    item2 = next(i for i in items if i["routine_id"] == "rtn_002")
-    assert item2["status"] == "pending"
+
+@patch("src.shared.db.get_dynamodb_resource")
+def test_list_current_routines_uses_sparse_index(mock_get_resource):
+    """測試定義列表查 sparse GSI，且只取 active 前綴。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+    mock_table.query.return_value = {"Items": [{"routine_id": "rtn_001"}]}
+
+    items, next_token = db.list_current_routines("eld_001")
+
+    assert items == [{"routine_id": "rtn_001"}]
+    assert next_token is None
+    kwargs = mock_table.query.call_args.kwargs
+    assert kwargs["IndexName"] == "routines-current-by-elder"
+    assert "begins_with(current_sort_key, :prefix)" in kwargs["KeyConditionExpression"]
+    assert kwargs["ExpressionAttributeValues"][":prefix"] == "A#"
+
+
+@patch("src.shared.db.get_dynamodb_resource")
+def test_put_event_if_absent_returns_existing(mock_get_resource):
+    """測試 canonical event 冪等：已存在時回既有事件而不覆寫。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+
+    data = {
+        "elder_id": "eld_001",
+        "canonical_event_key": "routine_completion#rtn_001#2026-07-14",
+        # ts 必填：以當下時間補會讓 retry 落到不同 Slot，事件寫入就不再冪等
+        "ts": "2026-07-14T10:00:00+08:00",
+        "type": "medication",
+        "detail": "完成例行公事：吃血壓藥",
+    }
+
+    created, is_new = db.put_event_if_absent(data)
+    assert is_new is True
+    assert created["event_id"] == db.event_id_for("eld_001", data["canonical_event_key"])
+    assert created["event_time_key"].endswith(created["event_id"])
+
+    mock_table.put_item.side_effect = _conditional_check_failed("PutItem")
+    mock_table.get_item.return_value = {"Item": {"event_id": created["event_id"], "revision": 1}}
+
+    existing, is_new = db.put_event_if_absent(data)
+    assert is_new is False
+    assert existing["event_id"] == created["event_id"]
 
 
 @patch("src.shared.db.get_dynamodb_resource")
@@ -198,24 +236,35 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     mock_table.query.assert_called_once()
 
 
-@patch("src.shared.db.get_dynamodb_client")
-def test_complete_routine_with_event_transact(mock_get_client):
-    """測試 transact_write_items 連動交易寫入。"""
-    mock_client = MagicMock()
-    mock_get_client.return_value = mock_client
+@patch("src.shared.db.put_event_if_absent")
+def test_complete_routine_with_event_writes_canonical_completion(mock_put_event):
+    """completion 只有一個寫入點，canonical key 由 routine_id + routine_date 決定。
+
+    條件式寫入、跨入口收斂與 batch 禁令的完整驗證見 tests/test_events_data_layer.py。
+    """
+    mock_put_event.return_value = (
+        {"event_id": "evt_100", "ts": "2026-07-14T10:00:00.000+08:00"},
+        True,
+    )
 
     res = db.complete_routine_with_event(
         elder_id="eld_001",
         routine_id="rtn_001",
-        date_str="2026-07-14",
-        event_id="evt_100",
+        routine_date="2026-07-14",
         ts="2026-07-14T10:00:00+08:00",
-        source="manual",
+        completed_by="caregiver",
         detail="手動確認完成服藥",
         event_type="medication",
+        routine_version=2,
     )
 
     assert res["routine_id"] == "rtn_001"
     assert res["status"] == "done"
-    assert res["completed_by"] == "manual"
-    mock_client.transact_write_items.assert_called_once()
+    assert res["completed_by"] == "caregiver"
+    assert res["event_id"] == "evt_100"
+
+    payload = mock_put_event.call_args.args[0]
+    assert payload["canonical_event_key"] == "routine_completion#rtn_001#2026-07-14"
+    # version 只記錄採用的版本，不參與 identity
+    assert payload["routine_version"] == 2
+    assert "routine_version" not in payload["canonical_event_key"]

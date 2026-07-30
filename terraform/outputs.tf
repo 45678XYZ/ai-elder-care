@@ -8,8 +8,6 @@ output "cognito_user_pool_client_id" {
   value       = aws_cognito_user_pool_client.app.id
 }
 
-# TODO: api_base_url（API Gateway 部署後）
-
 output "kb_knowledge_base_id" {
   description = "Bedrock Knowledge Base ID（chat Lambda 環境變數、同步腳本用）"
   value       = aws_bedrockagent_knowledge_base.kb.id
@@ -23,4 +21,19 @@ output "kb_data_source_id" {
 output "kb_documents_bucket" {
   description = "衛教文件 S3 bucket 名稱（同步腳本上傳目標）"
   value       = aws_s3_bucket.kb_documents.bucket
+}
+
+output "api_base_url" {
+  description = "API 基底位址（App SDK 設定用）；所有端點掛在此前綴下"
+  value       = aws_api_gateway_stage.v1.invoke_url
+}
+
+output "batch_queue_url" {
+  description = "batch 派送佇列 URL；session closer 送訊息、batch extractor 消費"
+  value       = aws_sqs_queue.batch.id
+}
+
+output "concept_vector_index" {
+  description = "概念向量索引名稱；填索引內容時傳給 build_concept_vector_index.py"
+  value       = aws_s3vectors_index.concepts.index_name
 }

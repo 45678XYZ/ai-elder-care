@@ -5,8 +5,21 @@
 供 API Handlers (Request/Response DTO Validation) 與 shared/db.py 共同引用。
 """
 
-from typing import Any, Literal
-from pydantic import BaseModel, Field
+import re
+from typing import Any, Literal, get_args
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+# -----------------------------------------------------------------------------
+# 共用 enum 型別
+# -----------------------------------------------------------------------------
+
+# 對外的高階事件類別，契約見 docs/api.md 的 EventType。
+# 細分類節點（concept_id）由 extraction 的可抽換分類體系資產決定，不在此列舉。
+EventType = Literal["diet", "activity", "sleep", "medication", "wellbeing", "safety", "other"]
+
+# daily_summaries.sections 與 EventType 一一對應，順序即為呈現順序。
+SUMMARY_SECTION_KEYS: tuple[str, ...] = get_args(EventType)
 
 
 # -----------------------------------------------------------------------------
@@ -135,7 +148,9 @@ class EventCreate(BaseModel):
     """建立生活事件 Request Body。"""
     elder_id: str = Field(..., description="長者 ID")
     ts: str = Field(..., description="事件發生的 ISO 8601 時間戳記")
-    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] = Field(..., description="事件分類")
+    type: EventType = Field(..., description="高階事件分類")
+    concept_id: str | None = Field(default=None, description="分類體系的細分類節點；自動萃取事件必填，API 不暴露")
+    taxonomy_version: str | None = Field(default=None, description="寫入當時的分類體系版本；自動萃取事件必填")
     detail: str = Field(..., description="事件自然語言描述")
     structured_detail: dict[str, Any] | None = Field(default=None, description="JSON 結構化細節資訊")
     source: Literal["conversation", "manual"] = Field(default="conversation", description="資料來源")
@@ -174,7 +189,7 @@ class DailySummaryResponse(BaseModel):
     elder_id: str = Field(..., description="長者 ID")
     date: str = Field(..., description="日期 (YYYY-MM-DD)")
     overview: str = Field(..., description="當日總覽")
-    sections: dict[str, str | None] = Field(..., description="六大分類區塊 (diet/activity/sleep/medication/wellbeing/other)")
+    sections: dict[str, str | None] = Field(..., description="固定分類區塊，key 與 EventType 一一對應，見 SUMMARY_SECTION_KEYS")
     routines: dict[str, Any] = Field(..., description="例行公事完成統計與清單 (completed, missed, items)")
     alerts: list[str] = Field(default_factory=list, description="警訊清單")
     interaction_count: int = Field(default=0, description="當日對話輪數")
@@ -187,46 +202,104 @@ class DailySummaryResponse(BaseModel):
 # Routines 表模型
 # -----------------------------------------------------------------------------
 
+TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+DATE_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
+
+
 class RoutineSchedule(BaseModel):
-    """例行公事排程設定。"""
+    """例行公事排程設定；freq 為 discriminator，只接受該頻率適用的欄位。"""
+    model_config = ConfigDict(extra="forbid")
+
     freq: Literal["daily", "weekly", "once"] = Field(..., description="頻率 (每日/每週/單次)")
-    time: str | None = Field(default=None, description="時間 (HH:MM，如 09:00)")
-    weekday: int | None = Field(default=None, description="星期幾 (1-7，週一為 1，僅 weekly 使用)")
+    time: str = Field(..., description="時間 (HH:MM，如 09:00)")
+    weekday: int | None = Field(default=None, ge=1, le=7, description="星期幾 (1-7，週一為 1，僅 weekly 使用)")
     date: str | None = Field(default=None, description="特定日期 (YYYY-MM-DD，僅 once 使用)")
+
+    @field_validator("time")
+    @classmethod
+    def _validate_time(cls, value: str) -> str:
+        if not TIME_PATTERN.match(value):
+            raise ValueError("time 必須為 HH:MM")
+        return value
+
+    @field_validator("date")
+    @classmethod
+    def _validate_date(cls, value: str | None) -> str | None:
+        if value is not None and not DATE_PATTERN.match(value):
+            raise ValueError("date 必須為 YYYY-MM-DD")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_freq_fields(self) -> "RoutineSchedule":
+        # 每週多天必須拆成多筆 weekly routine，因此 weekday 只收單一值（見 docs/api.md）
+        if self.freq == "weekly" and self.weekday is None:
+            raise ValueError("weekly 排程必須指定 weekday")
+        if self.freq != "weekly" and self.weekday is not None:
+            raise ValueError("只有 weekly 排程可指定 weekday")
+        if self.freq == "once" and self.date is None:
+            raise ValueError("once 排程必須指定 date")
+        if self.freq != "once" and self.date is not None:
+            raise ValueError("只有 once 排程可指定 date")
+        return self
 
 
 class RoutineCreate(BaseModel):
-    """建立例行公事 Request Body (POST /routines)。"""
+    """建立例行公事 Request Body (POST /routines)。server-owned 或未知欄位一律拒絕。"""
+    model_config = ConfigDict(extra="forbid")
+
     client_request_id: str = Field(..., description="冪等識別 UUID")
     elder_id: str = Field(..., description="長者 ID")
-    title: str = Field(..., description="行程標題 (如：吃血壓藥)")
-    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] = Field(default="other", description="分類")
+    title: str = Field(..., min_length=1, description="行程標題 (如：吃血壓藥)")
+    type: EventType = Field(default="other", description="分類")
     schedule: RoutineSchedule = Field(..., description="排程設定")
     remind: bool = Field(default=True, description="是否發送提醒通知")
 
 
 class RoutineUpdate(BaseModel):
-    """更新/停用例行公事 Request Body (PATCH /routines/{id})。"""
+    """更新/停用例行公事 Request Body (PATCH /routines/{id})。只開放白名單欄位。"""
+    model_config = ConfigDict(extra="forbid")
+
     client_request_id: str = Field(..., description="冪等識別 UUID")
-    title: str | None = Field(default=None, description="行程標題")
-    type: Literal["diet", "activity", "sleep", "medication", "wellbeing", "other"] | None = Field(default=None, description="分類")
+    title: str | None = Field(default=None, min_length=1, description="行程標題")
+    type: EventType | None = Field(default=None, description="分類")
     schedule: RoutineSchedule | None = Field(default=None, description="排程設定")
     remind: bool | None = Field(default=None, description="是否發送提醒")
     active: bool | None = Field(default=None, description="是否啟用")
 
 
-class RoutineResponse(BaseModel):
-    """例行公事定義與當日動態行程 Response 物件。"""
+class RoutineComplete(BaseModel):
+    """手動確認完成 Request Body (POST /routines/{id}/complete)。"""
+    model_config = ConfigDict(extra="forbid")
+
+    date: str | None = Field(default=None, description="完成的日期 (YYYY-MM-DD)，預設今天")
+
+    @field_validator("date")
+    @classmethod
+    def _validate_date(cls, value: str | None) -> str | None:
+        if value is not None and not DATE_PATTERN.match(value):
+            raise ValueError("date 必須為 YYYY-MM-DD")
+        return value
+
+
+class RoutineDefinition(BaseModel):
+    """例行公事定義 Response 物件；版本、冪等鍵等內部欄位不外露。"""
     routine_id: str = Field(..., description="例行公事 ID (前綴 rtn_)")
     elder_id: str = Field(..., description="長者 ID")
     title: str = Field(..., description="行程標題")
     type: str = Field(default="other", description="分類")
-    schedule: RoutineSchedule | dict[str, Any] | None = Field(default=None, description="排程設定")
+    schedule: dict[str, Any] = Field(..., description="排程設定")
     remind: bool = Field(default=True, description="是否提醒")
     active: bool = Field(default=True, description="是否啟用")
-    created_by: str = Field(default="caregiver", description="建立者角色")
-    created_at: str | None = Field(default=None, description="建立時間")
-    scheduled_at: str | None = Field(default=None, description="預定時間 (ISO 8601)")
-    status: Literal["pending", "done", "missed"] | None = Field(default=None, description="當日完成狀態")
+    created_by: str = Field(default="caregiver", description="建立者角色 (caregiver/conversation)")
+    created_at: str = Field(..., description="建立時間 (ISO 8601)")
+
+
+class RoutineOccurrence(BaseModel):
+    """指定日期的 occurrence Response 物件；狀態於查詢當下推導，不落地保存。"""
+    routine_id: str = Field(..., description="例行公事 ID")
+    title: str = Field(..., description="行程標題")
+    type: str = Field(default="other", description="分類")
+    scheduled_at: str = Field(..., description="預定時間 (ISO 8601)")
+    status: Literal["pending", "done", "missed"] = Field(..., description="完成狀態")
     completed_at: str | None = Field(default=None, description="完成時間 (ISO 8601)")
     completed_by: str | None = Field(default=None, description="完成角色 (conversation/elder/caregiver)")
