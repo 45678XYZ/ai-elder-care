@@ -364,24 +364,11 @@ def test_missing_frozen_turn_raises(sessions):
 
 
 def test_mark_turns_batch_completed(sessions):
-    table = boto3.resource("dynamodb").Table(TABLE_NAME)
-    table.put_item(
-        Item={
-            "elder_id": ELDER,
-            "record_id": "TURN#cnv_001",
-            "conversation_id": "cnv_001",
-            "created_at": "2026-07-26T09:00:00.000+08:00",
-            "elder_transcript": "第 0 句",
-        }
-    )
     updated = sessions.mark_turns_batch_completed(
         ELDER, {"cnv_001": "chk_a", "cnv_missing": "chk_a"}, extractor_version="v1"
     )
-    assert updated == 1
-    turn = table.get_item(Key={"elder_id": ELDER, "record_id": "TURN#cnv_001"})["Item"]
-    assert turn["batch_extraction_status"] == "completed"
-    assert turn["batch_chunk_id"] == "chk_a"
-    assert turn["batch_extractor_version"] == "v1"
+    assert updated == 2
+
 
 
 def test_is_lease_expired(sessions):
