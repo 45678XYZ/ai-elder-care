@@ -14,6 +14,7 @@ import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
 import '../../shared/widgets/care_header.dart';
+import '../../shared/widgets/sign_out_button.dart';
 import '../../theme/app_theme.dart';
 
 /// S8 `/care/manage` — 長輩資料與例行公事管理。
@@ -240,6 +241,7 @@ class _EldersScreenState extends State<EldersScreen> {
                       ],
                       const SizedBox(height: AppSpacing.xl),
                       const _PolicyLink(),
+                      const SignOutButton(),
                     ],
                   );
                 },

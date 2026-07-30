@@ -9,6 +9,7 @@ import '../../shared/services/session_store.dart';
 import '../../shared/services/taiwan_holiday.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
+import '../../shared/widgets/sign_out_button.dart';
 import '../../shared/widgets/status_chip.dart';
 import '../../theme/app_theme.dart';
 import '../widgets/almanac_face.dart';
@@ -130,6 +131,11 @@ class _TodayScreenState extends State<TodayScreen> {
                     },
                   ),
                 ],
+                // 放全頁最底下：長輩要滑過所有行程才遇得到，日常使用踩不到。
+                // 這一頁本來就是長者端唯一適合擺它的地方——聊天室的三個互動額度
+                // 要留給麥克風、打字與分頁，不能再塞。
+                const SizedBox(height: AppSpacing.xl),
+                const SignOutButton(elderMode: true),
               ],
             );
           },
