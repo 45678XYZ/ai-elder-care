@@ -90,7 +90,13 @@ class ChatAudio(BaseModel):
 
 class ChatRequest(BaseModel):
     """POST /chat Request Body 模型。"""
-    client_request_id: str | None = Field(default=None, description="冪等 UUID")
+    # 必填：turn 的身分由 elder_id + client_request_id 穩定產生，沒有它就沒有冪等性，
+    # 斷線重送會把同一句話寫成兩輪對話、做兩次 routine 副作用。
+    # 不接受空字串：空值會讓同一長者的每一次請求都塌到同一個 turn，第二句話不是被判成
+    # 衝突就是直接重播第一句的回覆。
+    client_request_id: str = Field(
+        ..., min_length=1, description="冪等 UUID；同一次輸入重送沿用同值"
+    )
     session_id: str | None = Field(default=None, description="Session ID")
     elder_id: str = Field(..., description="長者 ID")
     lang: Literal["zh-TW", "hak"] = Field(..., description="對話語言 (zh-TW | hak)")
@@ -126,8 +132,8 @@ class ConversationCreate(BaseModel):
         default="success", description="系統技術處理狀態（成功 / 處理失敗）"
     )
     # 統計、每日摘要與 session close 的 snapshot 驗證都以此判斷 turn 是否為一次有效互動。
-    # 目前 /chat 只有「做完才寫入」一條路徑，寫下的 turn 必然已是終態，因此預設完成；
-    # 待 request lease 與冪等流程接上後，這個 default 必須移除，改由流程明確指定三態。
+    # `/chat` 的三態由 src/shared/turns.py 的狀態機明確指定，不經過這個預設；預設只服務
+    # 「寫入即完成」的簡單路徑（測試 seed、系統發起的紀錄），那些路徑沒有 request lease。
     request_status: Literal["processing", "completed", "failed"] = Field(
         default="completed", description="turn 處理狀態；統計與摘要只計 completed"
     )

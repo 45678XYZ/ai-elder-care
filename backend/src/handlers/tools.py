@@ -23,7 +23,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from src.shared import db
+from src.shared import db, sessions
 
 
 # -----------------------------------------------------------------------------
@@ -556,8 +556,8 @@ def handle_get_daily_summaries(params: Dict[str, Any]) -> Dict[str, Any]:
 def handle_get_recent_conversations(params: Dict[str, Any]) -> Dict[str, Any]:
     """工具九：查詢長者最近幾句對話內容，讓 AI 在 Bedrock session 過期後仍能回憶當前對話脈絡。
 
-    只回傳最新 limit 筆（預設 8 句），並僅保留 elder_transcript、ai_respond_text 與時間，
-    避免無關 metadata 浪費 LLM Context Window。
+    只回傳目前 session 內最新 limit 筆已完成的對話（預設 8 句），並僅保留 elder_transcript、
+    ai_respond_text 與時間，避免無關 metadata 浪費 LLM Context Window。
     """
     elder_id = params.get("elder_id")
     limit = int(params.get("limit", 8))
@@ -569,11 +569,11 @@ def handle_get_recent_conversations(params: Dict[str, Any]) -> Dict[str, Any]:
     limit = max(1, min(limit, 15))
 
     try:
-        conversations, _ = db.get_recent_conversations(elder_id, limit=limit)
+        conversations = sessions.get_recent_turns(elder_id, limit=limit)
 
-        # 整理為對話格式，只保留對 AI 有用的欄位
+        # 整理為對話格式，只保留對 AI 有用的欄位（已是時間正序：舊→新）
         turns = []
-        for c in reversed(conversations):  # 反轉為時間正序（舊→新）
+        for c in conversations:
             turn = {"time": c.get("created_at", "")[:16]}  # 只取 YYYY-MM-DDTHH:MM
             if c.get("elder_transcript"):
                 turn["elder"] = c["elder_transcript"]

@@ -139,6 +139,30 @@ variable "session_sweep_minutes" {
   default     = 5
 }
 
+variable "session_max_turns" {
+  description = "單一 session 可接納的 turn 數上限；不得高於 100（close 驗證與 BatchGet 的單次上限）"
+  type        = number
+  default     = 100
+}
+
+variable "session_max_inflight_turns" {
+  description = "同時處理中的 turn 數上限；預設 1 讓 turn 按接納順序提交"
+  type        = number
+  default     = 1
+}
+
+variable "session_max_input_bytes" {
+  description = "單一 session 累計輸入位元組上限；避免 session item 逼近 DynamoDB 400 KB"
+  type        = number
+  default     = 200000
+}
+
+variable "request_lease_seconds" {
+  description = "/chat turn 的 request lease 長度（秒）；必須大於 chat Lambda 的 timeout"
+  type        = number
+  default     = 60
+}
+
 variable "api_throttle_rate_limit" {
   description = "API Gateway stage 的每秒請求上限（防呆與成本上限，非效能調校）"
   type        = number

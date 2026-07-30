@@ -12,6 +12,8 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from src.extraction.temporal import TZ_TAIPEI
+
 CONVERSATIONS_TABLE = "conversations-test"
 ELDERS_TABLE = "elders-test"
 ELDER = "eld_a1b2c3d4e5f6"
@@ -319,6 +321,119 @@ def test_idle_sweep_skips_inflight_sessions(stack, caplog):
     with caplog.at_level("INFO"):
         assert closer.sweep_idle_sessions(now=_now(), sqs_client=FakeSqs()) == 0
     assert "仍有 inflight" in caplog.text
+
+
+# -- inflight 收斂 -------------------------------------------------------------
+
+
+def reserve_turn(session_id, *, conversation_id, moment, lease_seconds):
+    """在指定時間點 reserve 一個 processing turn（供收斂測試控制租約是否到期）。"""
+    from src.shared import turns
+
+    original = turns.REQUEST_LEASE_SECONDS
+    turns.REQUEST_LEASE_SECONDS = lease_seconds
+    try:
+        return turns.reserve(
+            ELDER,
+            session_id,
+            turn={
+                "conversation_id": conversation_id,
+                "idempotency_key": f"req-{conversation_id}",
+                "request_hash": "hash-1",
+                "lang": "zh-TW",
+                "input_type": "text",
+            },
+            owner="dead-invocation",
+            now=moment,
+        )
+    finally:
+        turns.REQUEST_LEASE_SECONDS = original
+
+
+def stale_session(sessions, *, conversation_id="cnv_flight", lease_seconds=60):
+    """做出一個「已閒置很久、卻還掛著 inflight」的 session。"""
+    from datetime import datetime
+
+    moment = datetime(2020, 1, 1, tzinfo=TZ_TAIPEI)
+    session_id = sessions.create_session(ELDER, now=moment)["session_id"]
+    reserve_turn(
+        session_id, conversation_id=conversation_id, moment=moment, lease_seconds=lease_seconds
+    )
+    return session_id
+
+
+def test_idle_sweep_converges_turns_whose_lease_expired(stack):
+    """Lambda 死在半路的 turn 會永遠掛著 inflight，session 也就永遠關不起來。"""
+    sessions, closer, _ = stack
+    from src.shared import turns
+
+    session_id = stale_session(sessions)
+
+    assert closer.run_sweep({"sweep": True}, sqs_client=FakeSqs())["idle_closed"] == 1
+    turn = turns.get_turn(ELDER, "cnv_flight")
+    assert turn["request_status"] == turns.STATUS_FAILED
+    assert turn["error_code"] == "REQUEST_ABANDONED"
+
+    session = sessions.get_session(ELDER, session_id)
+    assert session["state"] == sessions.STATE_CLOSED
+    assert session["inflight_turn_ids"] == []
+    # 失敗的 turn 不得進入 frozen snapshot
+    assert session["turn_ids"] == []
+
+
+def test_idle_sweep_keeps_turns_whose_lease_is_alive(stack):
+    """租約仍有效代表還有 invocation 在飛，接管會做出第二次副作用。"""
+    sessions, closer, _ = stack
+    from src.shared import turns
+
+    session_id = stale_session(sessions, lease_seconds=10**9)
+
+    assert closer.sweep_idle_sessions(now=_now(), sqs_client=FakeSqs()) == 0
+    assert turns.get_turn(ELDER, "cnv_flight")["request_status"] == turns.STATUS_PROCESSING
+    assert sessions.get_session(ELDER, session_id)["inflight_turn_count"] == 1
+
+
+def test_idle_sweep_repairs_reservations_of_terminal_turns(stack):
+    """turn 已終態、名額卻沒還回來時，收斂只要修 reservation，不改 turn。"""
+    sessions, closer, _ = stack
+    from src.shared import turns
+
+    session_id = stale_session(sessions, lease_seconds=10**9)
+    boto3.resource("dynamodb").Table(CONVERSATIONS_TABLE).update_item(
+        Key={"elder_id": ELDER, "record_id": "TURN#cnv_flight"},
+        UpdateExpression="SET request_status = :completed",
+        ExpressionAttributeValues={":completed": turns.STATUS_COMPLETED},
+    )
+
+    assert closer.run_sweep({"sweep": True}, sqs_client=FakeSqs())["idle_closed"] == 1
+    assert turns.get_turn(ELDER, "cnv_flight")["request_status"] == turns.STATUS_COMPLETED
+    assert sessions.get_session(ELDER, session_id)["state"] == sessions.STATE_CLOSED
+
+
+def test_client_close_does_not_take_over_inflight_turns(stack):
+    """接管別人的 turn 不是使用者按「結束對話」該做的事；client 一律回 409 重試。"""
+    sessions, closer, _ = stack
+    from src.shared import turns
+
+    session_id = stale_session(sessions)
+
+    response = closer.handle_close_request(
+        elder_event(session_id=session_id), sqs_client=FakeSqs()
+    )
+    assert response["statusCode"] == 409
+    assert body_of(response)["error"]["code"] == "REQUEST_IN_PROGRESS"
+    assert turns.get_turn(ELDER, "cnv_flight")["request_status"] == turns.STATUS_PROCESSING
+
+
+def test_orphan_reservation_is_kept_for_manual_handling(stack, caplog):
+    """inflight ID 讀不到 turn 是資料異常；自行清掉會凍出一份可能少了 turn 的 snapshot。"""
+    sessions, closer, _ = stack
+    seed_session(sessions, inflight=1, last_activity="2020-01-01T00:00:00.000+08:00")
+
+    with caplog.at_level("ERROR"):
+        assert closer.sweep_idle_sessions(now=_now(), sqs_client=FakeSqs()) == 0
+    assert "找不到對應 turn" in caplog.text
+    assert sessions.get_session(ELDER, SESSION)["inflight_turn_count"] == 1
 
 
 def test_expired_lease_sweep_requeues(stack):

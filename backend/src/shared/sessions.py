@@ -20,6 +20,8 @@ from typing import Any
 import hashlib
 import json
 import logging
+import os
+import secrets
 
 from botocore.exceptions import ClientError
 
@@ -32,6 +34,24 @@ logger = logging.getLogger(__name__)
 SESSION_RECORD_PREFIX = "SESSION#"
 TURN_RECORD_PREFIX = "TURN#"
 SESSIONS_BY_STATE_INDEX = "sessions-by-state"
+
+# session item 是一份會被反覆 append 的 DynamoDB item，上限存在的理由是別讓它逼近 400 KB；
+# turn 數硬性不得超過 100，因為 close 的驗證與 batch 的 BatchGet 都以單次 100 筆為界。
+SESSION_MAX_TURNS = min(int(os.environ.get("SESSION_MAX_TURNS", "100")), 100)
+SESSION_MAX_INPUT_BYTES = int(os.environ.get("SESSION_MAX_INPUT_BYTES", "200000"))
+
+# 同時在飛的 turn 數。預設 1：長者一次講一句話，也讓 commit 永遠是 inflight 佇列的頭，
+# 「按接納順序追加 turn_ids」不必額外排隊機制就成立。
+SESSION_MAX_INFLIGHT_TURNS = int(os.environ.get("SESSION_MAX_INFLIGHT_TURNS", "1"))
+
+# 超過此時間無互動的 active session 不再接受新 turn，改由 closer 收斂
+SESSION_IDLE_MINUTES = int(os.environ.get("SESSION_IDLE_MINUTES", "30"))
+
+# 找 active session 時往回看的 session 筆數；只需要涵蓋「最新幾個」即可（見 find_active_session）
+ACTIVE_SESSION_LOOKUP_LIMIT = 5
+
+# ULID 的 Crockford base32 字母表（去掉 I、L、O、U，避免與數字混淆）
+_CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 STATE_ACTIVE = "active"
 STATE_CLOSING = "closing"
@@ -117,6 +137,134 @@ def put_session(session: dict[str, Any]) -> dict[str, Any]:
     except ClientError as exc:
         raise SessionError(f"寫入 session 失敗: {exc.response['Error']['Message']}")
     return db.convert_decimals(item)
+
+
+def new_session_id(now: datetime | None = None) -> str:
+    """`ses_<ULID>`：前 48 bits 為毫秒時間、後 80 bits 隨機。
+
+    用 ULID 而非 UUID，是因為字典序即時間序——同一長者的 session 在任何以 ID 排序的地方
+    （log、匯出、人工查表）都自然照建立順序排列。
+    """
+    moment = now or _now()
+    value = (int(moment.timestamp() * 1000) << 80) | secrets.randbits(80)
+    return "ses_" + "".join(
+        _CROCKFORD_ALPHABET[(value >> shift) & 0x1F] for shift in range(125, -5, -5)
+    )
+
+
+def create_session(elder_id: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """建立新的 active session。
+
+    計數與列表欄位一律寫出初始值而不留空：接納 turn 的 transaction 以
+    `inflight_turn_count < :max` 之類的條件式成立，欄位不存在時條件永遠不成立。
+    """
+    moment = now or _now()
+    started_at = format_ts(moment)
+    session_id = new_session_id(moment)
+    return put_session(
+        {
+            "elder_id": elder_id,
+            "session_id": session_id,
+            "state": STATE_ACTIVE,
+            "started_at": started_at,
+            "last_activity_at": started_at,
+            "turn_ids": [],
+            "turn_count": 0,
+            "inflight_turn_ids": [],
+            "inflight_turn_count": 0,
+            "input_bytes": 0,
+            "recent_conversation_ids": [],
+            "batch_attempts": 0,
+            "session_state_key": STATE_KEY_ACTIVE,
+            "session_state_time_key": f"{started_at}#{elder_id}#{session_id}",
+        }
+    )
+
+
+def find_active_session(elder_id: str) -> dict[str, Any] | None:
+    """取長者目前的 active session；沒有則回 None。
+
+    在 Base table 上以 `SESSION#` 前綴倒序讀最近幾筆：`session_id` 是 ULID，字典序即建立順序，
+    最新的 session 必然排在最前面，而新 session 只在前一個不再接納時才建立，因此 active 的
+    那個一定落在最前面幾筆內。不走 `sessions-by-state`：該索引的 partition 是所有長者共用的
+    `ACTIVE`，要撈單一長者得整片掃過再過濾，也不能當成 ownership 的真理來源。
+    """
+    table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
+    try:
+        response = table.query(
+            KeyConditionExpression="elder_id = :eid AND begins_with(record_id, :prefix)",
+            ExpressionAttributeValues={":eid": elder_id, ":prefix": SESSION_RECORD_PREFIX},
+            ScanIndexForward=False,
+            Limit=ACTIVE_SESSION_LOOKUP_LIMIT,
+            ConsistentRead=True,
+        )
+    except ClientError as exc:
+        raise SessionError(f"查詢 active session 失敗: {exc.response['Error']['Message']}")
+
+    for item in response.get("Items", []):
+        if item.get("state") == STATE_ACTIVE:
+            return db.convert_decimals(item)
+    return None
+
+
+def get_recent_turns(elder_id: str, limit: int = 8) -> list[dict[str, Any]]:
+    """目前 active session 內最近幾輪「已完成」的對話，依時間正序（舊→新）。
+
+    走 session 的 `recent_conversation_ids` 再回 Base table 強一致讀取，而不是查
+    `conversations-by-time`：當輪 context 不能建立在最終一致的索引上，剛提交的上一輪很可能
+    還沒出現在索引裡，AI 就會以為那句話沒說過（規則見 docs/framework.md 的 Turn 欄位段落）。
+
+    只回 `completed`：正在飛的當前輪還沒有 AI 回覆，餵給模型只會讓它看到半截對話。
+    """
+    session = find_active_session(elder_id)
+    if session is None:
+        return []
+
+    conversation_ids = list(session.get("recent_conversation_ids") or [])[-limit:]
+    if not conversation_ids:
+        return []
+
+    keys = [
+        {"elder_id": elder_id, "record_id": f"{TURN_RECORD_PREFIX}{conversation_id}"}
+        for conversation_id in conversation_ids
+    ]
+    try:
+        found = {item["record_id"]: db.convert_decimals(item) for item in _batch_get_all(keys)}
+    except ClientError as exc:
+        raise SessionError(f"讀取近期對話失敗: {exc.response['Error']['Message']}")
+
+    recent = []
+    for conversation_id in conversation_ids:
+        turn = found.get(f"{TURN_RECORD_PREFIX}{conversation_id}")
+        if turn and turn.get("request_status") == db.TURN_STATUS_COMPLETED:
+            recent.append(turn)
+    return recent
+
+
+def is_idle(session: dict[str, Any], *, now: datetime | None = None) -> bool:
+    """距離最後一次有效活動是否已超過 idle 門檻。"""
+    last_activity = session.get("last_activity_at") or session.get("started_at")
+    if not last_activity:
+        return True
+    return parse_ts(last_activity) < (now or _now()) - timedelta(minutes=SESSION_IDLE_MINUTES)
+
+
+def can_accept(session: dict[str, Any], *, now: datetime | None = None) -> bool:
+    """session 是否還能接納下一個 turn。
+
+    容量以「已提交 + 在飛」一起計算：只看 turn_count 會讓正在飛的 turn 在 commit 時才發現
+    超限，那時副作用已經做完了。不能接納時由呼叫端改用新 session，原 session 交給 closer
+    收斂（見 docs/api.md 的 session 選擇規則）。
+    """
+    if session.get("state") != STATE_ACTIVE or is_idle(session, now=now):
+        return False
+    turn_count = int(session.get("turn_count") or 0)
+    inflight = int(session.get("inflight_turn_count") or 0)
+    return (
+        turn_count + inflight < SESSION_MAX_TURNS
+        and inflight < SESSION_MAX_INFLIGHT_TURNS
+        and int(session.get("input_bytes") or 0) < SESSION_MAX_INPUT_BYTES
+    )
 
 
 def list_sessions_by_state(
