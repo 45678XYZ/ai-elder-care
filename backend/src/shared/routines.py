@@ -117,6 +117,19 @@ def select_effective_version(
     return max(candidates, key=lambda v: (v["effective_from"], int(v["version"])))
 
 
+def routine_ids_effective_by(versions: list[dict[str, Any]], cutoff: datetime) -> set[str]:
+    """cutoff 前已有版本生效的 routine ID。
+
+    供逐日展開多天區間時，只為當日已存在的 routine 算 completion event key；尚未建立的
+    routine 不必白算一組 key 去批次讀取。
+    """
+    return {
+        version["routine_id"]
+        for version in versions
+        if datetime.fromisoformat(version["effective_from"]) <= cutoff
+    }
+
+
 def scheduled_at(date_str: str, schedule: dict[str, Any]) -> str | None:
     """該版本在指定日期的排定時間；該日無排程回 None。"""
     time_str = schedule.get("time")
