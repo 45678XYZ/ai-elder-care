@@ -67,6 +67,10 @@ def build_elder_context(elder: Mapping[str, Any] | None) -> str:
     nickname = elder.get("nickname") or elder.get("name")
     if nickname:
         lines.append(f"- 稱謂：{nickname}")
+    gender = elder.get("gender")
+    if gender:
+        gender_label = {"male": "男性", "female": "女性"}.get(gender, gender)
+        lines.append(f"- 性別：{gender_label}")
     birth_year = elder.get("birth_year")
     if birth_year:
         lines.append(f"- 出生年份：{birth_year}")
@@ -77,6 +81,7 @@ def build_elder_context(elder: Mapping[str, Any] | None) -> str:
     if habit_note:
         lines.append(f"- 生活習慣：{habit_note}")
     return "\n".join(lines) if lines else "（無長者背景資料）"
+
 
 
 def build_extraction_prompt(

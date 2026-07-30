@@ -252,12 +252,16 @@ def handle_get_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             "elder_id": elder_info.get("elder_id"),
             "name": elder_info.get("name"),
             "nickname": elder_info.get("nickname"),
+            "gender": elder_info.get("gender"),
+            "birth_year": elder_info.get("birth_year"),
             "lang_preference": elder_info.get("lang_preference"),
+            "address_region": elder_info.get("address_region"),
             "health_notes": elder_info.get("health_notes", []),
             "family": elder_info.get("family", []),
-            "preferences": elder_info.get("preferences", {})
+            "habit_note": elder_info.get("habit_note", ""),
         }
         return {"status": "success", "data": profile}
+
     except Exception as e:
         print(f"[Error] handle_get_elder_profile 失敗: {e}")
         return {"status": "error", "message": f"查詢長者檔案失敗: {str(e)}"}

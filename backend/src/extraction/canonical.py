@@ -12,7 +12,8 @@
 - **穩定確定性 `event_id` 產出**：由 `elder_id + canonical_event_key` 進行 SHA-256 雜湊產生。該識別碼與 Chunk 拆分方式、模型版本完全無關，能保證 SQS 批次作業 Retry 或 DLQ Replay 時為具備冪等性的覆蓋/去重寫入。
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -162,6 +163,24 @@ def normalize_text(value: str) -> str:
     return text
 
 
+def build_family_aliases(family: Sequence[Mapping[str, Any]] | None) -> dict[str, str]:
+    """將 `elders.family` (`[{"relation": "女兒", "name": "小芳", "note": "大女兒"}]`) 轉譯為別名映射表。"""
+    if not family:
+        return {}
+    aliases: dict[str, str] = {}
+    for member in family:
+        relation = member.get("relation")
+        if not relation:
+            continue
+        name = member.get("name")
+        if name:
+            aliases[name] = relation
+        note = member.get("note")
+        if note:
+            aliases[note] = relation
+    return aliases
+
+
 def normalize_subject(
     subject: str | None,
     lexicon: PredicateLexicon,
@@ -173,6 +192,7 @@ def normalize_subject(
     支援透過 `extra_aliases` 於執行期動態注入特定長者的專屬親友稱謂（如 `elders.family` 的暱稱映射），
     避免將個資或長者特有的家庭稱謂硬編碼於全域詞彙檔中。
     """
+
     text = normalize_text(subject or "")
     if not text:
         return DEFAULT_SUBJECT
