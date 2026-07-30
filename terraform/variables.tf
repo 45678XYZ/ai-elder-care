@@ -1,4 +1,4 @@
-variable "project_name" {
+﻿variable "project_name" {
   description = "資源命名前綴"
   type        = string
   default     = "ai-elder-care"
@@ -150,3 +150,4 @@ variable "metrics_namespace" {
   type        = string
   default     = "AiElderCare/Extraction"
 }
+

@@ -1,6 +1,6 @@
 """DynamoDB 存取層（docs/framework.md 與 docs/api.md 資料模型）。
 
-提供 5 張表的統一讀寫介面：
+提供 6 張表的統一讀寫介面：
 - elders: 長者 persona 與綁定資料
 - conversations: 對話紀錄
 - events: 結構化生活事件（「實際發生」的唯一紀錄，含例行公事完成）
@@ -849,4 +849,99 @@ def get_daily_summaries(elder_id: str, from_date: str, to_date: str) -> list[dic
         return convert_decimals(resp.get("Items", []))
     except ClientError as e:
         raise DBError(f"查詢每日摘要失敗: {e.response['Error']['Message']}")
+
+# -----------------------------------------------------------------------------
+# Memories 表操作
+# -----------------------------------------------------------------------------
+
+def get_memories(elder_id: str) -> list[dict[str, Any]]:
+    """查詢長者長期記憶。"""
+    table = get_dynamodb_resource().Table(TABLE_MEMORIES)
+    try:
+        resp = table.query(
+            KeyConditionExpression="elder_id = :eid",
+            ExpressionAttributeValues={":eid": elder_id},
+        )
+        return convert_decimals(resp.get("Items", []))
+    except ClientError as e:
+        raise DBError(f"查詢長期記憶失敗: {e.response['Error']['Message']}")
+
+
+def save_memory(memory_data: dict[str, Any]) -> dict[str, Any]:
+    """寫入/更新長期記憶。"""
+    table = get_dynamodb_resource().Table(TABLE_MEMORIES)
+    try:
+        table.put_item(Item=memory_data)
+        return convert_decimals(memory_data)
+    except ClientError as e:
+        raise DBError(f"儲存長期記憶失敗: {e.response['Error']['Message']}")
+
+
+# -----------------------------------------------------------------------------
+# Routine 高階便利函式（供 tools handler 與 daily_digest 呼叫）
+# 底層讀寫透過 list_routine_versions_by_elder / put_routine_version；
+# occurrence 狀態推導由 src/shared/routines.py 完成，不落地。
+# -----------------------------------------------------------------------------
+
+def get_daily_routines(elder_id: str, date_str: str) -> dict[str, Any]:
+    """查詢指定長者在指定日期的行程清單（含動態完成狀態）。
+
+    回傳格式：
+        { "date": "YYYY-MM-DD", "items": [ occurrence, ... ] }
+
+    occurrence 狀態由 routines.resolve_occurrences 推導，
+    completion event 透過 completion_event_key 從 events 表查詢。
+    """
+    from src.shared import routines as rtn
+
+    current = datetime.now(tz=timezone(timedelta(hours=8)))
+    upper_bound = rtn.versions_upper_bound(rtn.occurrence_cutoff(date_str, current))
+
+    # 取出當天有效的所有 routine 版本
+    versions = list_routine_versions_by_elder(elder_id, upper_bound)
+
+    # 收集對應的 completion event（用穩定 canonical key 查詢）
+    completion_event_ids = [
+        db_event_id
+        for v in versions
+        for db_event_id in [
+            event_id_for(elder_id, rtn.completion_event_key(v["routine_id"], date_str))
+        ]
+    ]
+
+    # BatchGet 取完成事件
+    completion_map: dict[str, dict[str, Any]] = {}
+    if completion_event_ids:
+        events_batch = get_events(elder_id, completion_event_ids)
+        for evt in events_batch.values():
+            rid = evt.get("routine_id")
+            if rid:
+                completion_map[rid] = evt
+
+    items = rtn.resolve_occurrences(versions, completion_map, date_str, current)
+    return {"date": date_str, "items": items}
+
+
+def create_routine(routine_item: dict[str, Any]) -> dict[str, Any]:
+    """建立新的 routine（版本 1，is_current=True）。
+
+    routine_item 應包含：routine_id、elder_id、title、type、schedule、active、created_at。
+    """
+    from src.shared import routines as rtn
+
+    now_iso = routine_item.get("created_at") or rtn.now_iso()
+    version_item = {
+        **routine_item,
+        "version": 1,
+        "is_current": True,
+        "effective_from": now_iso,
+        "current_sort_key": rtn.current_sort_key(
+            routine_item.get("active", True),
+            now_iso,
+            routine_item["routine_id"],
+        ),
+        "version_time_key": rtn.version_time_key(now_iso, routine_item["routine_id"], 1),
+    }
+    return put_routine_version(version_item)
+
 
