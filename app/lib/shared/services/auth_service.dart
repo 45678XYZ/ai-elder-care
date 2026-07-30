@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_backend.dart';
 import 'demo_auth_backend.dart';
+import 'notification_service.dart';
 import 'session_store.dart';
 
 /// 使用者角色。判定方式與後端 `backend/src/shared/auth.py` 一致：
@@ -121,14 +122,27 @@ class AuthService {
     return parsed;
   }
 
-  /// 登出：清掉 token、本機宣告的身分，以及**這個帳號**在本機留下的狀態。
+  /// 登出：清掉 token、本機宣告的身分、已排定的提醒，以及**這個帳號**在本機留下的狀態。
   ///
   /// 一起清 [AppSession] 是必要的：長者資料與「已完成首次設定」目前還存在本機，
   /// 下一個登入的人可能是別人（同一支手機借用、demo 換帳號），殘留下來他會看到
   /// 上一個人的稱呼，或被當成已經設定過而跳過建立資料。
+  ///
+  /// 提醒也必須一起取消，理由更重：本地通知排在**系統**裡，不受登入狀態影響，
+  /// App 沒開也照響。不取消的話，上一位長者的吃藥提醒會繼續在這支手機上跳出來——
+  /// 那是別人的用藥資訊。下一個人登入時 main 的 syncReminders 會重排他自己的，
+  /// 所以這裡只管清乾淨，不必補排。
   Future<void> signOut() async {
     // sub 要在清掉 token 之前取——清掉之後就問不出這次登出的是誰了。
     final sub = identity?.userId;
+
+    // 通知平台不可用（web 預覽、測試環境）不該讓人登不出去：登出的重點是清掉憑證，
+    // 而排不了提醒的平台本來也就沒有提醒會殘留。
+    try {
+      await NotificationService.instance.cancelAll();
+    } catch (_) {
+      // 沒有提醒可取消，或平台不支援；照常往下登出
+    }
 
     await backend.signOut();
     _idToken = null;
@@ -178,8 +192,8 @@ class AuthService {
     required UserRole role,
   }) async {
     final p = await SharedPreferences.getInstance();
-    await p.setString(_pendingRoleKey(email),
-        role == UserRole.elder ? 'elder' : 'caregiver');
+    await p.setString(
+        _pendingRoleKey(email), role == UserRole.elder ? 'elder' : 'caregiver');
 
     // ---- demo 專用接線（正式版由後端負責，見下方 TODO）----
     //

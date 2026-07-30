@@ -15,6 +15,11 @@ import '../models/routine.dart';
 ///
 /// 排程一律用**帶時區的時間**（台灣 +08:00）。用本地 DateTime 排，跨時區或日光節約
 /// 變動時系統會把提醒排到錯誤的時刻。
+///
+/// TODO(test): 這個類別是寫死的單例，沒有可替換的實作，所以「登出有沒有取消提醒」、
+///   「切換長輩有沒有重排」這類接線測不到——測試環境下呼叫只會拋 MissingPluginException
+///   被呼叫端的 try/catch 吃掉，斷言得到的只有「沒爆炸」。要測得到得比照
+///   [AuthService.backend] 抽一層可注入的介面出來。在那之前這兩條路徑只能在真機驗。
 class NotificationService {
   NotificationService._();
   static final NotificationService instance = NotificationService._();

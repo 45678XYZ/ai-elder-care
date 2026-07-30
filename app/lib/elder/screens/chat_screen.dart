@@ -175,6 +175,11 @@ class _ChatScreenState extends State<ChatScreen>
 
     try {
       final result = await _api.ask(question);
+      // TODO(backend): 換成 chat() 之後，回覆帶 routines_updated
+      //   （見 ChatReply.routinesUpdated、api_client.dart 的 getRoutines 說明）。
+      //   為 true 時要 unawaited(syncReminders())——長輩用講的新增行程（「提醒我三點吃藥」）
+      //   後端會寫進 routines，但本地通知是 App 自己排的，不重排就要等下次啟動才會生效。
+      //   現在的 ask() 是 RAG PoC 端點，沒有這個欄位，所以還接不上。
       if (!mounted) return;
       setState(() {
         _messages.add(_Message(isElder: false, text: result.answer));

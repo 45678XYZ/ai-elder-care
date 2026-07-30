@@ -53,6 +53,10 @@ class _EldersScreenState extends State<EldersScreen> {
     _routines
       ..clear()
       ..addAll(list);
+    // 這裡也要重排：切換長輩會走 onElderChanged → _reload → 這個函式，而提醒排在系統裡，
+    // 不換掉的話手機上留著的是上一位長輩的行程。syncRoutines 開頭就 cancelAll，
+    // 所以重排一次等於「清掉舊的 + 排上新的」，不必自己先取消。
+    unawaited(NotificationService.instance.syncRoutines(list));
     return list;
   }
 
