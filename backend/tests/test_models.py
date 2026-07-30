@@ -1,9 +1,12 @@
 """backend/src/shared/models.py Pydantic Models 單元測試。"""
 
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
 from src.shared.models import (
+    SUMMARY_SECTION_KEYS,
     ConversationCreate,
     ConversationResponse,
     DailySummaryResponse,
@@ -12,6 +15,7 @@ from src.shared.models import (
     ElderUpdate,
     EventCreate,
     EventResponse,
+    EventType,
     FamilyMember,
     RoutineComplete,
     RoutineCreate,
@@ -184,13 +188,51 @@ def test_event_models():
     assert er.type == "medication"
 
 
+def test_event_create_accepts_safety_type_and_taxonomy_fields():
+    """safety 為第七個高階類別；concept_id／taxonomy_version 為後端內部欄位。"""
+    ec = EventCreate(
+        elder_id="eld_001",
+        ts="2026-07-25T18:20:00.000+08:00",
+        type="safety",
+        concept_id="UCO.StatusOutcome.SafetyIncident.FallEvent",
+        taxonomy_version="uco-1.0.0",
+        detail="在浴室滑倒，沒有受傷",
+        canonical_event_key="2026-07-25#SLOT_1800#長者#浴室滑倒",
+    )
+    assert ec.type == "safety"
+    assert ec.concept_id == "UCO.StatusOutcome.SafetyIncident.FallEvent"
+    assert ec.taxonomy_version == "uco-1.0.0"
+
+    # concept_id／taxonomy_version 不屬於對外回應欄位
+    assert "concept_id" not in EventResponse.model_fields
+    assert "taxonomy_version" not in EventResponse.model_fields
+
+
+def test_event_create_rejects_unknown_type():
+    """未在高階類別內的值必須被擋下，避免繞過分類映射直接寫入。"""
+    with pytest.raises(ValidationError):
+        EventCreate(
+            elder_id="eld_001",
+            ts="2026-07-25T09:05:00+08:00",
+            type="fall",
+            detail="跌倒",
+        )
+
+
+def test_summary_section_keys_match_event_type():
+    """sections 的 key 集合必須等於 EventType，避免兩邊走鐘。"""
+    assert SUMMARY_SECTION_KEYS == get_args(EventType)
+    assert SUMMARY_SECTION_KEYS[-1] == "other"
+
+
 def test_daily_summary_model():
     """測試 DailySummaryResponse 模型。"""
     ds = DailySummaryResponse(
         elder_id="eld_001",
         date="2026-07-25",
         overview="今日狀態良好，有按時用藥。",
-        sections={"medication": "已服用血壓藥", "diet": "三餐正常", "activity": None, "sleep": None, "wellbeing": None, "other": None},
+        sections={key: None for key in SUMMARY_SECTION_KEYS}
+        | {"medication": "已服用血壓藥", "diet": "三餐正常"},
         routines={"completed": 1, "missed": 0, "items": []},
         alerts=[],
         generated_at="2026-07-25T20:00:00+08:00",
@@ -198,6 +240,9 @@ def test_daily_summary_model():
     assert ds.elder_id == "eld_001"
     assert ds.data_status == "complete"
     assert ds.sections["medication"] == "已服用血壓藥"
+    # sections 與 EventType 一一對應，新增高階類別時此斷言會擋住漏改的 section
+    assert set(ds.sections) == set(get_args(EventType))
+    assert "safety" in ds.sections
 
 
 def test_routine_models():

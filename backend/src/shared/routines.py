@@ -13,6 +13,7 @@ import json
 import os
 from typing import Any
 
+from src.extraction.canonical import routine_completion_key
 from src.shared.db import TZ_TAIPEI
 
 # 未完成 occurrence 超過 scheduled_at 加此寬限期才算 missed；routines、摘要與統計共用
@@ -94,8 +95,12 @@ def request_hash(payload: dict[str, Any]) -> str:
 
 
 def completion_event_key(routine_id: str, routine_date: str) -> str:
-    """occurrence 的 canonical 事件身分；對話與手動完成都收斂到同一筆 event。"""
-    return f"routine_completion#{routine_id}#{routine_date}"
+    """occurrence 的 canonical 事件身分；對話與手動完成都收斂到同一筆 event。
+
+    key 的組法只有一份實作（src/extraction/canonical.py），realtime 與 batch 兩條軌
+    各自組字串就會漂移成兩筆事件。
+    """
+    return routine_completion_key(routine_id, routine_date)
 
 
 # -----------------------------------------------------------------------------

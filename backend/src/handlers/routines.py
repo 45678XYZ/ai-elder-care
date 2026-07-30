@@ -292,7 +292,7 @@ def _complete_routine(event, routine_id: str):
             "extraction_track": "manual",
             "source": "manual",
             "ts": now,
-            # 完成事件沿用完成當下的 routine type，摘要六類才對得起來（docs/api.md）
+            # 完成事件沿用完成當下的 routine type，摘要七類才對得起來（docs/api.md）
             "type": version.get("type", "other"),
             "detail": f"完成例行公事：{version.get('title', '')}",
             "routine_id": routine_id,
