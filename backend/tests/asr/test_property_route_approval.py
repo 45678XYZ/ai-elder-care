@@ -5,8 +5,18 @@ Property-based test: 未核准路由永遠 fail closed。
 
 驗證三大情境下 Router 必須 fail-closed：
 1. zh-TW AWS capability-gate 任一缺少 → route_not_approved 且 zero transport call
-2. CE/Formo production route → route_not_approved 且 zero transport call
+2. CE/Formo 的 production gate 未逐項核准 → route_not_approved 且 zero transport call
 3. 不在 language allowlist 的值 → unsupported_language 且 zero transport call
+
+### 不變量的演進
+
+原本第 2 項是「CE/Formo 的 production route 一律禁止」——那是永久封鎖。現在改為
+「未核准即封鎖」：模型要上線必須同時具備 `usage_restriction=production`、
+`approval_state=approved` 與 5 項全數核准的 `ModelProductionGate`。
+
+這個 property 仍然涵蓋兩個模型的預設狀態（gate 全為 False），因此**預設行為依舊
+fail closed**；差別只在於現在存在一條明確、可追溯的解鎖路徑，而不是靠程式碼硬編
+死禁止。解鎖後才允許上線的驗證由 `test_router.py` 的正向案例負責。
 """
 from __future__ import annotations
 
@@ -23,6 +33,7 @@ from src.shared.asr.config import (
     FORMO_MODEL_METADATA,
     ModelMetadata,
     ProviderConfig,
+    ProviderKind,
     ProviderStatus,
     RouteConfig,
 )
@@ -155,6 +166,7 @@ def ce_or_formo_route_config(draw: st.DrawFn) -> AsrConfig:
                 identifier=provider_id,
                 status=ProviderStatus.ENABLED,
                 metadata_ref=metadata_ref,
+                kind=ProviderKind.LOCAL_MODEL,
             ),
         },
         model_metadata={
@@ -205,7 +217,9 @@ class TestPropertyRouteApproval:
             },
             providers={
                 "aws_zh": ProviderConfig(
-                    identifier="aws_zh", status=ProviderStatus.ENABLED
+                    identifier="aws_zh",
+                    status=ProviderStatus.ENABLED,
+                    kind=ProviderKind.AWS_MANAGED,
                 ),
             },
             model_metadata={},
@@ -288,7 +302,9 @@ class TestPropertyRouteApproval:
             },
             providers={
                 "aws_zh": ProviderConfig(
-                    identifier="aws_zh", status=ProviderStatus.ENABLED
+                    identifier="aws_zh",
+                    status=ProviderStatus.ENABLED,
+                    kind=ProviderKind.AWS_MANAGED,
                 ),
             },
             model_metadata={},

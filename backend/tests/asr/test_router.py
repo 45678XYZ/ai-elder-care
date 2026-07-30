@@ -27,6 +27,7 @@ from src.shared.asr.config import (
     ApprovalState,
     UsageRestriction,
     ProviderConfig,
+    ProviderKind,
     ProviderStatus,
     RouteConfig,
 )
@@ -122,7 +123,9 @@ def _make_zh_tw_config_gate_incomplete() -> AsrConfig:
         },
         providers={
             "aws_zh": ProviderConfig(
-                identifier="aws_zh", status=ProviderStatus.ENABLED
+                identifier="aws_zh",
+                status=ProviderStatus.ENABLED,
+                kind=ProviderKind.AWS_MANAGED,
             ),
         },
         model_metadata={},
@@ -141,7 +144,9 @@ def _make_zh_tw_config_gate_complete() -> AsrConfig:
         },
         providers={
             "aws_zh": ProviderConfig(
-                identifier="aws_zh", status=ProviderStatus.ENABLED
+                identifier="aws_zh",
+                status=ProviderStatus.ENABLED,
+                kind=ProviderKind.AWS_MANAGED,
             ),
         },
         model_metadata={},
@@ -311,6 +316,7 @@ class TestRouterCeFormoProhibition:
                     identifier="ce_provider",
                     status=ProviderStatus.ENABLED,
                     metadata_ref="ce_meta",
+                    kind=ProviderKind.LOCAL_MODEL,
                 ),
             },
             model_metadata={
@@ -345,6 +351,7 @@ class TestRouterCeFormoProhibition:
                     identifier="formo_provider",
                     status=ProviderStatus.ENABLED,
                     metadata_ref="formo_meta",
+                    kind=ProviderKind.LOCAL_MODEL,
                 ),
             },
             model_metadata={
