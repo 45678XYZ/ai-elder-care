@@ -275,9 +275,16 @@ class _SummaryCard extends StatelessWidget {
 }
 
 /// 摘要不完整的提示。用 icon＋文字，不只靠底色（§6）。
+///
+/// 措辭是「還沒納入」而不是「正在整理」：`pending_session_count` 把三種 session 加總
+/// 成一個數字（api.md）——長者可能**還在講**、批次排隊中、或批次**已經失敗**。
+/// 「正在整理」只有中間那種成立，另外兩種會讓照護者以為等一下就會好；失敗的那筆
+/// 不重跑永遠不會好。「還沒納入」三種都是實話，也正好是照護者要知道的那件事。
 class _PartialNotice extends StatelessWidget {
   const _PartialNotice({required this.pending});
 
+  /// 尚未納入這份摘要的 session 數。後端一律往「還沒好」的方向算（狀態不明、
+  /// 甚至查不到的 session 都計入），所以這是**上界**——實際可能更少，不會更多。
   final int pending;
 
   @override
@@ -297,7 +304,7 @@ class _PartialNotice extends StatelessWidget {
           Expanded(
             child: Text(
               pending > 0
-                  ? '還有 $pending 段對話正在整理，這份摘要尚未涵蓋今天全部內容。'
+                  ? '還有 $pending 段對話還沒納入，這份摘要尚未涵蓋今天全部內容。'
                   : '這份摘要尚未涵蓋今天全部內容。',
               style: text.bodySmall?.copyWith(color: AppColors.warnFg),
             ),
