@@ -546,10 +546,41 @@ resource "aws_cloudwatch_log_group" "api_access" {
   retention_in_days = 30
 }
 
+# API Gateway 寫 CloudWatch Logs 的角色是**帳號層級**設定（每個帳號每個區域只有一份），
+# 沒設好時 stage 的 access log 與 method_settings 的 logging_level 都會在 apply 時被拒：
+#   CloudWatch Logs role ARN must be set in account settings to enable logging
+# 這是全帳號共用的資源，若帳號內已有其他 API 設過，import 進來再管理，不要各建一份。
+resource "aws_iam_role" "api_gateway_cloudwatch" {
+  name = "${var.project_name}-apigw-cloudwatch"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "apigateway.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "api_gateway_cloudwatch" {
+  role       = aws_iam_role.api_gateway_cloudwatch.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+resource "aws_api_gateway_account" "this" {
+  cloudwatch_role_arn = aws_iam_role.api_gateway_cloudwatch.arn
+
+  depends_on = [aws_iam_role_policy_attachment.api_gateway_cloudwatch]
+}
+
 resource "aws_api_gateway_stage" "v1" {
   rest_api_id   = aws_api_gateway_rest_api.api.id
   deployment_id = aws_api_gateway_deployment.api.id
   stage_name    = "v1"
+
+  # 帳號設定要先生效，stage 才能開 access log
+  depends_on = [aws_api_gateway_account.this]
 
   # 摮??亥?銝 request body嚗??蝔輯? PII ?賢?亥?
   access_log_settings {
