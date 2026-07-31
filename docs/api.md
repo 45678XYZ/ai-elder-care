@@ -10,7 +10,7 @@
 - **時間**：ISO 8601 含時區，如 `2026-07-14T09:05:00+08:00`；日期為 `YYYY-MM-DD`；日界以台灣時間（+08:00）為準。
 - **ID 格式／前綴**：長者 ID 為 `eld_` 後接 12 個小寫十六進位字元；其餘前綴為 `rtn_`（例行公事）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）、`cg_`（照護者對外識別，見「綁定照護者」）。batch chunk ID 僅供後端追蹤，不由 API 回傳。
 - **分頁**：列表支援 `?limit=`（預設 50）與 `?next_token=`。資料超過一頁時 response 最外層帶 `next_token`；下一次請求必須原樣帶回。它是後端由資料庫游標編碼的不透明字串，前端不得解析；沒有此欄位表示已無下一頁。
-- **Hybrid 處理**：`POST /chat` 僅等待 realtime routine/safety rail，不等待 session batch。App 應在互動結束時呼叫 close；未呼叫者由 periodic idle closer 收斂。
+- **Hybrid 處理**：`POST /chat` 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event，不等待 session batch。Session 關閉採雙管道：App 可主動呼叫 close endpoint 即時關閉，EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。
 
 ### 共用 enum
 
@@ -60,10 +60,10 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 response 前只執行：
 
 1. 回覆所需的 ASR、近期上下文、既有 events/routines 查詢、AgentCore 長期記憶與 AI/TTS。
-2. 使用既有 chat 模型 structured output 加 deterministic safety rules 的 realtime rail。
-3. 需要立即生效的 routine 建立、修改、停用或完成，以及潛在高風險 wellbeing/safety signal 的事件寫入。
+2. 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event 寫入。
+3. 需要立即生效的 routine 建立、修改、停用或完成，以及潛在高風險 safety event 的事件寫入。
 
-一般生活 events 不由 realtime materialize；只在 session close 後由 batch 處理。後端 `rt_labels` 與 extraction 狀態不回傳 App。
+一般生活 events 不由 realtime materialize；只在 session close 後由 batch 處理。後端 extraction 狀態不回傳 App。
 
 #### Request
 
@@ -146,6 +146,8 @@ response 前只執行：
 ### POST /chat/sessions/{session_id}/close — 明確關閉
 
 App 在停止免手持互動、離開對話畫面或切換長者前呼叫。此 endpoint 表示停止向該 session 追加 turn、freeze immutable snapshot，並啟動離線 normal events materialization；不保證 response 時 batch 已完成。
+
+> Session 關閉採雙管道設計：前端可主動呼叫此 endpoint 即時關閉（適用於即時展示等需要快速收斂的場景），EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。兩者邏輯與條件式寫入完全一致。
 
 只有 token 對應的長者本人可呼叫。request body 可省略；傳送時必須是空 object：
 
@@ -418,7 +420,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 資料可見時間：routine completion 與潛在高風險 safety event 可在 `/chat` response 前寫入並立即查得；一般生活事件只在 session close 且 batch materialization 後出現。active 或 batch pending 的缺口不另以公開欄位列出。API 不暴露 extraction track、canonical key、revision、chunk、evidence 列表或其他 extraction internals。
 
-分類與摘要 `sections` 固定七類一一對應：`activity` 指涉及身體動作的日常活動；`wellbeing` 涵蓋身體症狀、生理量測與情緒；`safety` 涵蓋跌倒、走失、詐騙、居家危害等安全事件，與 `alerts` 語意一致；無法歸入前六類的一律為 `other`，回診、約會等行程類事件與家屬互動、看電視等非身體活動也歸 `other`，與 routine occurrence 以 `routine_id` 連結。後端另有更細的分類節點供摘要、統計與 alerts 使用，但不在此 API 暴露。分類不會截斷內容：`detail` 保留事件完整描述，摘要生成讀取 `detail` 全文而不是只看 `type`。同一 safety episode 若先 realtime、後 batch enrich，仍使用同一 `event_id`，`detail` 可以更新得更完整；需要逐字追溯時由後端依 `conversation_id` 讀 conversations，events response 不複製逐字稿。
+分類與摘要 `sections` 固定七類一一對應：`activity` 指涉及身體動作的日常活動；`wellbeing` 涵蓋身體症狀、生理量測與情緒；`safety` 涵蓋跌倒、走失、詐騙、居家危害等安全事件，與 `alerts` 語意一致；無法歸入前六類的一律為 `other`，回診、約會等行程類事件與家屬互動、看電視等非身體活動也歸 `other`，與 routine occurrence 以 `routine_id` 連結。後端另有更細的分類節點供摘要、統計與 alerts 使用，但不在此 API 暴露。分類不會截斷內容：`detail` 保留事件完整描述，摘要生成讀取 `detail` 全文而不是只看 `type`。同一 safety episode 若先 tool calling（`notify_caregiver`）、後 batch enrich，仍使用同一 `event_id`，`detail` 可以更新得更完整；需要逐字追溯時由後端依 `conversation_id` 讀 conversations，events response 不複製逐字稿。
 
 ---
 
@@ -510,7 +512,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 }
 ```
 
-`client_request_id` 與 `title` 必填，`title` 不得為空字串。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行或重送相同 scoped ID／相同 hash 同樣回 201 與既有物件，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。長者帳號呼叫回 403 `FORBIDDEN`。對話建立的 routine 由 backend realtime rail 直接寫入，不呼叫此 API。
+`client_request_id` 與 `title` 必填，`title` 不得為空字串。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行或重送相同 scoped ID／相同 hash 同樣回 201 與既有物件，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。長者帳號呼叫回 403 `FORBIDDEN`。對話建立的 routine 由 Bedrock Agent tool calling 直接寫入，不呼叫此 API。
 
 ### PATCH /routines/{routine_id} — 修改／停用（照護者）
 
@@ -574,7 +576,7 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 | 方法與路徑 | 用途 | 使用者 |
 |---|---|---|
 | `POST /chat` | realtime 對話（text/audio） | 長者 |
-| `POST /chat/sessions/{session_id}/close` | 冪等關閉 session、啟動離線 materialization | 長者本人 |
+| `POST /chat/sessions/{session_id}/close` | 明確關閉 session（雙管道：API 即時 + EventBridge 收斂） | 長者本人 |
 | `GET /elders` | 長者列表 | 兩端 |
 | `GET /elders/{id}` | 長者單筆 | 兩端 |
 | `POST /elders` | 建立長者 | 照護者 |

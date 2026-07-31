@@ -85,6 +85,50 @@ resource "aws_cloudwatch_metric_alarm" "pending_requeue" {
   alarm_actions = [aws_sns_topic.batch_alerts.arn]
 }
 
+# 排程摘要的未處理例外。generator 已把單一長者的失敗吞下並繼續（見
+# backend/src/handlers/summary_generator.py），因此這裡的 Errors 代表整批失敗，
+# 那一晚所有長者都不會有摘要。
+resource "aws_cloudwatch_metric_alarm" "summary_generator_errors" {
+  alarm_name          = "${var.project_name}-summary-generator-errors"
+  alarm_description   = "排程摘要生成整批失敗"
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = module.summary_generator.lambda_function_name
+  }
+
+  alarm_actions = [aws_sns_topic.batch_alerts.arn]
+}
+
+# 摘要長期停在 partial，代表 batch 沒收斂：照護者看到的每日紀錄會一直缺一段。
+# 用 partial 維度的生成次數當訊號，因為「該完整卻不完整」不會產生任何錯誤。
+resource "aws_cloudwatch_metric_alarm" "summary_partial_persistent" {
+  alarm_name          = "${var.project_name}-summary-partial-persistent"
+  alarm_description   = "摘要持續為 partial，batch materialization 可能卡住"
+  namespace           = var.metrics_namespace
+  metric_name         = "SummaryGenerated"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 3
+  threshold           = var.summary_partial_alarm_threshold
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    DataStatus = "partial"
+  }
+
+  alarm_actions = [aws_sns_topic.batch_alerts.arn]
+}
+
+
 # API Gateway 5XX 錯誤告警：前端收到 5XX 代表後端 Lambda 崩潰或 API GW 整合失敗
 resource "aws_cloudwatch_metric_alarm" "api_gateway_5xx" {
   alarm_name          = "${var.project_name}-api-gateway-5xx"

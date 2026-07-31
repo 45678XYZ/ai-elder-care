@@ -23,11 +23,13 @@ import logging
 
 from .canonical import (
     PredicateLexicon,
+    build_family_aliases,
     canonical_event_key,
     event_id_for,
     normalize_predicate,
     normalize_subject,
 )
+
 from .chunk_planner import (
     ChunkManifest,
     PlannedChunk,
@@ -168,6 +170,7 @@ class ExtractionPipeline:
             chunk.chunk_id,
             transcript,
             candidates,
+            taxonomy=self.taxonomy,
             model_id=self.config.model_for("classifier"),
             client=self.client,
         )
@@ -200,6 +203,7 @@ class ExtractionPipeline:
         )
 
         classification_confidence = {hit.concept_id: hit.confidence for hit in hits}
+        family_aliases = build_family_aliases(elder.get("family") if elder else None)
         events: list[CanonicalEvent] = []
         unmatched_predicates = 0
         for extracted in extraction.events:
@@ -211,6 +215,7 @@ class ExtractionPipeline:
                 reference=reference,
                 extracted=extracted,
                 classification_confidence=classification_confidence,
+                family_aliases=family_aliases,
             )
             if built is None:
                 continue
@@ -245,15 +250,17 @@ class ExtractionPipeline:
         reference: str,
         extracted,
         classification_confidence: Mapping[str, float],
+        family_aliases: Mapping[str, str] | None = None,
     ) -> tuple[CanonicalEvent, bool] | None:
         """將抽取結果轉換為具有唯一 Canonical 身分之 CanonicalEvent 實例。
 
         若謂語正規化失敗導致無可用謂語，直接丟棄該事件並發出警告（無謂語無法計算 Canonical Key 與進行去重）。
         """
         ts = resolve_observed_at(extracted.observed_at, extracted.raw_temporal_expression, reference)
-        subject = normalize_subject(extracted.subject, self.lexicon)
+        subject = normalize_subject(extracted.subject, self.lexicon, extra_aliases=family_aliases)
+
         predicate = normalize_predicate(
-            extracted.concept_id, extracted.predicate, self.lexicon, self.taxonomy
+            extracted.concept_id, extracted.predicate, self.lexicon, self.taxonomy, embedder=self.embedder
         )
         if not predicate.value:
             # 無謂語則無事件身分；寧可丟棄單一事件，也不寫入無法去重的垃圾資料
@@ -277,8 +284,15 @@ class ExtractionPipeline:
         confidence = min(confidences) if confidences else None
 
         if predicate.via_alias:
-            # 記錄別名命中狀態，作為評估是否需擴充 `predicate_lexicon.json` 正式詞彙庫之依據
             structured["predicate_alias_hit"] = True
+        elif predicate.via_fuzzy_embedding:
+            structured["predicate_fuzzy_hit"] = True
+            structured["predicate_fuzzy_sim"] = predicate.similarity_score
+        elif not predicate.matched:
+            structured["is_novel_predicate"] = True
+
+        if predicate.raw_predicate and predicate.raw_predicate != predicate.value:
+            structured["raw_predicate"] = predicate.raw_predicate
 
         if self.suspected_routine_lookup is not None:
             suspected = self.suspected_routine_lookup(extracted.concept_id, predicate.value, ts)

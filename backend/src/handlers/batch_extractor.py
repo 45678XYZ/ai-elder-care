@@ -184,17 +184,13 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         metrics.emit_batch_outcome("event_conflict", session_id=session_id)
         raise PermanentBatchError(f"事件內容互斥：{conflicts[:3]}")
 
-    sessions.mark_turns_batch_completed(
-        elder_id,
-        _chunk_by_turn(result),
-        extractor_version=config.batch_extractor_version,
-    )
     sessions.complete_batch(
         elder_id,
         session_id,
         owner=owner,
         extractor_version=config.batch_extractor_version,
     )
+
 
     logger.info(
         "batch 完成：session_id=%s events=%s metrics=%s",
@@ -271,16 +267,26 @@ def _run_extraction(
 
 
 def _to_turn(raw: dict[str, Any]) -> Turn:
-    """將對話紀錄的 Turn Item 轉換為分塊器所需要的最小資料結構。
+    """把 conversations 的 turn item 轉成分塊與萃取需要的完整對話形狀。
 
-    Speaker 判斷機制：若包含長者逐字稿 `elder_transcript` 則發言者判定為「長者」；否則判定為「AI」。
+    完整組合 ai_prompt_text (AI 1)、elder_transcript (長者) 與 ai_respond_text (AI 2)，
+    確保問答脈絡不遺失。
     """
+    parts = []
+    ai_prompt = (raw.get("ai_prompt_text") or "").strip()
     elder_text = (raw.get("elder_transcript") or "").strip()
-    ai_text = (raw.get("ai_respond_text") or raw.get("ai_prompt_text") or "").strip()
+    ai_respond = (raw.get("ai_respond_text") or "").strip()
+
+    if ai_prompt:
+        parts.append(f"AI: {ai_prompt}")
     if elder_text:
-        speaker, text = "長者", elder_text
-    else:
-        speaker, text = "AI", ai_text
+        parts.append(f"長者: {elder_text}")
+    if ai_respond:
+        parts.append(f"AI: {ai_respond}")
+
+    text = "\n".join(parts) if parts else (elder_text or ai_respond or ai_prompt or "")
+    speaker = "長者" if elder_text else "AI"
+
     return Turn(
         conversation_id=raw.get("conversation_id") or raw["record_id"].split("#", 1)[-1],
         speaker=speaker,
@@ -302,11 +308,4 @@ def _write_events(result: Any) -> tuple[int, list[str]]:
     return written, conflicts
 
 
-def _chunk_by_turn(result: Any) -> dict[str, str]:
-    """建立 Turn ID 至初建 Chunk ID 之對照表；供更新 Turn 關聯狀態。"""
-    mapping: dict[str, str] = {}
-    for outcome in result.chunk_outcomes:
-        for event in outcome.events:
-            for turn_id in event.evidence_conversation_ids:
-                mapping.setdefault(turn_id, outcome.chunk_id)
-    return mapping
+

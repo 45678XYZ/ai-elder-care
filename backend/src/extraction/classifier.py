@@ -16,6 +16,7 @@ import logging
 from src.shared import bedrock
 
 from .models import CandidateConcept, ClassificationResult, LabelHit
+from .taxonomy import Taxonomy
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ def classify_chunk(
     transcript: str,
     candidates: Sequence[CandidateConcept],
     *,
+    taxonomy: Taxonomy | None = None,
     min_confidence: float = 0.3,
     model_id: str | None = None,
     client=None,
@@ -146,10 +148,17 @@ def classify_chunk(
         if not isinstance(raw, dict):
             continue
         concept_id = raw.get("concept_id")
-        if concept_id not in allowed:
-            # 走無 Grammar 約束降級路徑時，模型仍可能回傳候選外的標籤，需二次校驗丟棄
-            logger.warning("分類回傳候選集外的節點，已丟棄：concept_id=%s", concept_id)
+        if not concept_id:
             continue
+        if concept_id not in allowed:
+            # 走降級路徑（無 grammar 硬約束）時模型仍可能回傳候選集外但合法的 Taxonomy 標籤
+            if taxonomy is not None and taxonomy.get(str(concept_id)) is not None:
+                logger.info("分類回傳候選集外但存在於 Taxonomy 的合法節點：concept_id=%s", concept_id)
+                node = taxonomy.get(str(concept_id))
+                display_names[str(concept_id)] = node.label_zh if node else str(concept_id)
+            else:
+                logger.warning("分類回傳候選集外的無效節點，已丟棄：concept_id=%s", concept_id)
+                continue
         try:
             confidence = float(raw.get("confidence", 0.0))
         except (TypeError, ValueError):

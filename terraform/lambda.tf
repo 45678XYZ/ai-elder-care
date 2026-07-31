@@ -1,4 +1,4 @@
-﻿# Lambda（Python，程式碼在 backend/src/）
+# Lambda（Python，程式碼在 backend/src/）
 #
 # functions：chat / elders / summaries / events / routines / stats / summary_generator
 #
@@ -381,12 +381,49 @@ data "aws_iam_policy_document" "extraction_data" {
       "${aws_dynamodb_table.routines.arn}/index/*",
     ]
   }
+
   statement {
-    sid       = "EldersRead"
-    effect    = "Allow"
-    actions   = ["dynamodb:GetItem"]
+    sid    = "EldersRead"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:Scan",
+    ]
+
     resources = [aws_dynamodb_table.elders.arn]
   }
+
+  # 摘要：條件式覆寫需要 PutItem，列表與重算 sweep 需要 Query／GetItem
+  statement {
+    sid    = "DailySummariesWrite"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [aws_dynamodb_table.daily_summaries.arn]
+  }
+
+  # occurrence 衍生只讀：版本清單走 routine-versions-by-elder，完成當時的定義走 GetItem
+  statement {
+    sid    = "RoutinesRead"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [
+      aws_dynamodb_table.routines.arn,
+      "${aws_dynamodb_table.routines.arn}/index/*",
+    ]
+  }
+
   statement {
     sid    = "BatchQueue"
     effect = "Allow"
@@ -525,7 +562,72 @@ module "api_events" {
   environment_variables = local.extraction_env
 }
 
+# --- 每日摘要（見 docs/feature_daily-summarization.md）---
+
+
+# 摘要相關 Lambda 共用的環境變數；模型呼叫與等待窗口都可調，不寫死在程式碼
+locals {
+  summary_env = {
+    SUMMARY_GENERATOR_VERSION   = var.summary_generator_version
+    BEDROCK_SUMMARY_MODEL_ID    = var.bedrock_summary_model_id
+    SUMMARY_ALERT_LOOKBACK_DAYS = tostring(var.summary_alert_lookback_days)
+    SUMMARY_MAX_EVENTS          = tostring(var.summary_max_events)
+    SUMMARY_WAIT_MINUTES        = tostring(var.summary_wait_minutes)
+    SUMMARY_BACKFILL_DAYS       = tostring(var.summary_backfill_days)
+    SUMMARY_SWEEP_LIMIT         = tostring(var.summary_sweep_limit)
+    ROUTINE_GRACE_MINUTES       = tostring(var.routine_grace_minutes)
+  }
+}
+
+# GET /summaries 與 POST /summaries/generate 同一支 handler（依 httpMethod 分派）。
+# POST 會同步呼叫模型，因此 timeout 比純查詢的 api_events 長。
+module "api_summaries" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
+  function_name = "${var.project_name}-api-summaries"
+  description   = "照護者端每日摘要 API"
+  handler       = "src.handlers.summaries.handler"
+  runtime       = "python3.11"
+  timeout       = var.summary_lambda_timeout
+  memory_size   = 512
+
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = merge(local.extraction_env, local.summary_env)
+}
+
+# 排程生成：nightly 與 backfill 兩種 mode 由 EventBridge 的 input 指定
+module "summary_generator" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
+  function_name = "${var.project_name}-summary-generator"
+  description   = "排程每日摘要生成器（nightly + backfill）"
+  handler       = "src.handlers.summary_generator.handler"
+  runtime       = "python3.11"
+  timeout       = var.summary_generator_timeout
+  memory_size   = 1024
+
+  create_role = false
+  lambda_role = aws_iam_role.extraction.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = merge(local.extraction_env, local.summary_env)
+}
+
 module "api_stats" {
+
   source  = "terraform-aws-modules/lambda/aws"
   version = "~> 8.0"
 

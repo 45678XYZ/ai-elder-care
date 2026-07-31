@@ -1,26 +1,27 @@
-﻿# API Gateway嚗EST嚗楝敺?蝬?/v1嚗ognito JWT authorizer嚗?
+# API Gateway（REST，路徑前綴 /v1，Cognito JWT authorizer）
+
 #
-# 頝舐 ??Lambda 撠?嚗??潸? docs/api.md 蝡舫?蝮質汗嚗?
-#   POST  /chat                                             ??chat ??
-#   POST  /chat/sessions/{session_id}/close                 ??session_closer ??
-#   GET/POST /elders?ET/PATCH /elders/{elder_id}          ??elders ??
-#   GET   /summaries?OST /summaries/generate              ??summaries嚗eature/daily-summaries 撖虫?嚗?
-#   GET   /events                                           ??events ??
-#   GET/POST /routines?ATCH /routines/{routine_id}??
-#   POST  /routines/{routine_id}/complete                   ??routines嚗??嗡??撖虫?嚗?
-#   GET   /stats                                            → stats
+# 路由 → Lambda 對應（規格見 docs/api.md 端點總覽）：
+#   POST  /chat                                             → chat ✅
+#   POST  /chat/sessions/{session_id}/close                 → session_closer ✅
+#   GET/POST /elders、GET/PATCH /elders/{elder_id}          → elders ✅
+#   GET   /summaries、POST /summaries/generate              → summaries（feature/daily-summaries 實作）
+#   GET   /events                                           → events ✅
+#   GET/POST /routines、PATCH /routines/{routine_id}、
+#   POST  /routines/{routine_id}/complete                   → routines（待其他分支實作）
+#   GET   /stats                                            → stats（待其他分支實作）
 #
-# ?芋蝯銵??芸楛?楝?梧??梁?啣嚗EST API?uthorizer?eployment?tage??
-# 摮??亥???瘚??冽迨瑼?甈∪?憒乓憓楝?梁??箏??辣鈭?
-#   1. aws_api_gateway_resource嚗楝敺?暺?
-#   2. aws_api_gateway_method嚗uthorization = "COGNITO_USER_POOLS" + authorizer_id
-#   3. aws_api_gateway_integration嚗WS_PROXY?ntegration_http_method 銝敺?POST
-#   4. aws_lambda_permission嚗ource_arn ?嗆??啗府 method嚗蒂??method ?
-#      aws_api_gateway_deployment ??triggers嚗??????圈蝵?
+# 各模組自行補自己的路由，共用地基（REST API、authorizer、deployment、stage、
+# 存取日誌、節流）在此檔一次備妥。新增路由的固定四件事：
+#   1. aws_api_gateway_resource：路徑節點
+#   2. aws_api_gateway_method：authorization = "COGNITO_USER_POOLS" + authorizer_id
+#   3. aws_api_gateway_integration：AWS_PROXY、integration_http_method 一律 POST
+#   4. aws_lambda_permission：source_arn 收斂到該 method，並把 method 加入
+#      aws_api_gateway_deployment 的 triggers，否則改動不會重新部署
 #
-# ??銝敺 handler ?批?蝝啁?摨血?瘀?閬?backend/src/shared/auth.py嚗?authorizer ?芯?霅?
-# token ??嚗?怨銝蝣圈? assert_can_access_elder 靘?elders.caregiver_ids
-# 瘙箏?嚗lose endpoint ?行???摮??甈??404???脫援瞍???
+# 授權一律在 handler 內做細粒度判斷（見 backend/src/shared/auth.py）：authorizer 只保證
+# token 有效，「這個呼叫者能不能碰這個長者」由 assert_can_access_elder 依 elders.caregiver_ids
+# 決定；close endpoint 另有「不存在與越權都回 404」的防洩漏規則。
 
 resource "aws_api_gateway_rest_api" "api" {
   name = "${var.project_name}-api"
@@ -112,6 +113,83 @@ resource "aws_lambda_permission" "get_events" {
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/events"
 }
 
+# --- GET /summaries、POST /summaries/generate（照護者每日摘要）---
+
+# 兩條路由掛同一支 Lambda，handler 內依 httpMethod 分派。
+
+resource "aws_api_gateway_resource" "summaries" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "summaries"
+}
+
+resource "aws_api_gateway_method" "get_summaries" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.summaries.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+
+  request_parameters = {
+    "method.request.querystring.elder_id"   = false
+    "method.request.querystring.from"       = false
+    "method.request.querystring.to"         = false
+    "method.request.querystring.limit"      = false
+    "method.request.querystring.next_token" = false
+  }
+}
+
+resource "aws_api_gateway_integration" "get_summaries" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  resource_id = aws_api_gateway_resource.summaries.id
+  http_method = aws_api_gateway_method.get_summaries.http_method
+
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.api_summaries.lambda_function_invoke_arn
+}
+
+resource "aws_api_gateway_resource" "summaries_generate" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.summaries.id
+  path_part   = "generate"
+}
+
+resource "aws_api_gateway_method" "generate_summary" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.summaries_generate.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "generate_summary" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  resource_id = aws_api_gateway_resource.summaries_generate.id
+  http_method = aws_api_gateway_method.generate_summary.http_method
+
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.api_summaries.lambda_function_invoke_arn
+}
+
+# 一支 Lambda 兩條路由，因此兩個 permission 各自收斂到自己的 method
+resource "aws_lambda_permission" "get_summaries" {
+  statement_id  = "AllowApiGatewayGetSummaries"
+  action        = "lambda:InvokeFunction"
+  function_name = module.api_summaries.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/summaries"
+}
+
+resource "aws_lambda_permission" "generate_summary" {
+  statement_id  = "AllowApiGatewayGenerateSummary"
+  action        = "lambda:InvokeFunction"
+  function_name = module.api_summaries.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/summaries/generate"
+}
+
 # --- GET /stats（互動與行程統計）---
 
 resource "aws_api_gateway_resource" "stats" {
@@ -149,6 +227,7 @@ resource "aws_lambda_permission" "get_stats" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/stats"
 }
+
 
 # --- POST /chat + GET|POST /elders + GET|PATCH /elders/{elder_id} ---
 
@@ -294,7 +373,8 @@ resource "aws_lambda_permission" "apigw_elder_ops" {
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/elders/*"
 }
 
-# --- POST /chat/sessions/{session_id}/close嚗?垢?Ⅱ??嚗?--
+# --- POST /chat/sessions/{session_id}/close（前端主動關閉，雙管道設計之一） ---
+# Session 關閉採雙管道：前端可主動呼叫此 endpoint 即時關閉，EventBridge 排程則負責週期性收斂。
 
 resource "aws_api_gateway_resource" "chat_sessions" {
   rest_api_id = aws_api_gateway_rest_api.api.id
@@ -368,6 +448,10 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_integration.get_elder,
       aws_api_gateway_method.patch_elder,
       aws_api_gateway_integration.patch_elder,
+      aws_api_gateway_method.get_summaries,
+      aws_api_gateway_integration.get_summaries,
+      aws_api_gateway_method.generate_summary,
+      aws_api_gateway_integration.generate_summary,
       aws_api_gateway_method.close_session,
       aws_api_gateway_integration.close_session,
       aws_api_gateway_authorizer.cognito,

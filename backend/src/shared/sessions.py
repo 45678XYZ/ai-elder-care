@@ -22,6 +22,8 @@ import json
 import logging
 import os
 import secrets
+import uuid
+
 
 from botocore.exceptions import ClientError
 
@@ -131,12 +133,56 @@ def put_session(session: dict[str, Any]) -> dict[str, Any]:
     item.setdefault("item_type", "session")
     item.setdefault("record_id", session_record_id(item["session_id"]))
     item.setdefault("schema_version", 1)
+    item.setdefault("state", STATE_ACTIVE)
+    item.setdefault("turn_ids", [])
+    item.setdefault("turn_count", len(item.get("turn_ids", [])))
+    item.setdefault("inflight_turn_ids", [])
+    item.setdefault("inflight_turn_count", len(item.get("inflight_turn_ids", [])))
+    item.setdefault("input_bytes", 0)
     table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
     try:
         table.put_item(Item=db.prepare_item(item))
     except ClientError as exc:
         raise SessionError(f"寫入 session 失敗: {exc.response['Error']['Message']}")
     return db.convert_decimals(item)
+
+
+
+def is_pending_materialization(session: dict[str, Any]) -> bool:
+    """這個 session 是否仍可能產生尚未寫入的一般事件。
+
+    摘要的 `data_status` 完全建立在這個判斷上：`active`／`closing` 還會長出新 turn；
+    `closed` 但 batch 尚未 `completed` 表示一般事件還沒 materialize。`batch_status` 缺值
+    時保守視為未完成——寧可標成 `partial` 再重算，也不要對照護者宣稱資料已完整。
+    """
+    state = session.get("state")
+    if state in (STATE_ACTIVE, STATE_CLOSING):
+        return True
+    if state == STATE_CLOSED:
+        return (session.get("batch_status") or BATCH_PENDING) != BATCH_COMPLETED
+    # 未知狀態同樣保守處理
+    return True
+
+
+def list_pending_sessions(elder_id: str, session_ids: Sequence[str]) -> list[dict[str, Any]]:
+    """對候選 session 逐一強一致讀取，回仍待 materialize 的那些。
+
+    候選來自 `conversations-by-time` GSI（最終一致），因此狀態一律回 Base table 強一致讀，
+    符合 framework 的「GSI 只用來找候選」。
+    """
+    pending: list[dict[str, Any]] = []
+    for session_id in dict.fromkeys(session_ids):
+        session = get_session(elder_id, session_id)
+        if session is None:
+            # turn 指向不存在的 session：資料不一致，保守計入待處理並記錄
+            logger.warning(
+                "turn 指向不存在的 session：elder_id=%s session_id=%s", elder_id, session_id
+            )
+            pending.append({"session_id": session_id, "state": None})
+            continue
+        if is_pending_materialization(session):
+            pending.append(session)
+    return pending
 
 
 def new_session_id(now: datetime | None = None) -> str:
@@ -265,6 +311,7 @@ def can_accept(session: dict[str, Any], *, now: datetime | None = None) -> bool:
         and inflight < SESSION_MAX_INFLIGHT_TURNS
         and int(session.get("input_bytes") or 0) < SESSION_MAX_INPUT_BYTES
     )
+
 
 
 def list_sessions_by_state(
@@ -753,43 +800,8 @@ def _batch_get_all(keys: list[dict[str, str]]) -> list[dict[str, Any]]:
     return items
 
 
-def mark_turns_batch_completed(
-    elder_id: str,
-    chunk_by_turn: dict[str, str],
-    *,
-    extractor_version: str,
-    now: datetime | None = None,
-) -> int:
-    """更新 turn 的 `batch_*` 欄位。
 
-    batch 只擁有 turn 的 batch 欄位，不得改 realtime 欄位或對話內容（ownership 分軌）。
-    """
-    moment = format_ts(now or _now())
-    table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
-    updated = 0
-    for turn_id, chunk_id in chunk_by_turn.items():
-        try:
-            table.update_item(
-                Key={"elder_id": elder_id, "record_id": f"{TURN_RECORD_PREFIX}{turn_id}"},
-                UpdateExpression=(
-                    "SET batch_extraction_status = :completed, batch_chunk_id = :chunk_id, "
-                    "batch_extractor_version = :version, batch_extracted_at = :now"
-                ),
-                ConditionExpression="attribute_exists(record_id)",
-                ExpressionAttributeValues={
-                    ":completed": BATCH_COMPLETED,
-                    ":chunk_id": chunk_id,
-                    ":version": extractor_version,
-                    ":now": moment,
-                },
-            )
-            updated += 1
-        except ClientError as exc:
-            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                logger.warning("turn 不存在，略過 batch 欄位更新：turn_id=%s", turn_id)
-                continue
-            raise SessionError(f"更新 turn batch 欄位失敗: {exc.response['Error']['Message']}")
-    return updated
+
 
 
 def is_lease_expired(session: dict[str, Any], *, now: datetime | None = None) -> bool:
@@ -798,3 +810,5 @@ def is_lease_expired(session: dict[str, Any], *, now: datetime | None = None) ->
     if not lease_until:
         return True
     return parse_ts(lease_until) < (now or _now())
+
+

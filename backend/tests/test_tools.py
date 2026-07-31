@@ -63,9 +63,11 @@ def test_handle_complete_routine_success(monkeypatch):
             "routine_id": kwargs["routine_id"],
             "status": "done",
             "completed_at": kwargs["ts"],
-            "completed_by": kwargs["source"]
+            "completed_by": kwargs.get("completed_by", "conversation")
         }
     )
+
+
 
     res = tools.handle_complete_routine({
         "elder_id": "eld_001",
@@ -138,14 +140,15 @@ def test_handle_get_elder_profile_success(monkeypatch):
             "nickname": "阿蘭嬤",
             "health_notes": ["高血壓歷史"],
             "family": [{"name": "小明", "relation": "兒子"}],
-            "preferences": {"tea": "高山烏龍茶"}
+            "habit_note": "喜歡喝高山烏龍茶、早起散步"
         }
     )
 
     res = tools.handle_get_elder_profile({"elder_id": "eld_001"})
     assert res["status"] == "success"
     assert res["data"]["name"] == "林阿蘭"
-    assert res["data"]["preferences"]["tea"] == "高山烏龍茶"
+    assert res["data"]["habit_note"] == "喜歡喝高山烏龍茶、早起散步"
+
 
 
 # =============================================================================
@@ -182,10 +185,18 @@ def _reset_emergency_state():
 
 
 def _mock_create_event(monkeypatch):
-    """共用的 db.create_event mock helper。"""
+    """共用的 db.put_event_if_absent 與 SNS mock helper。"""
     created_events = []
-    monkeypatch.setattr(db, "create_event", lambda data: created_events.append(data) or data)
+    def _fake_put(data):
+        item = dict(data)
+        item.setdefault("event_id", f"evt_{item.get('canonical_event_key', 'test')}")
+        created_events.append(item)
+        return item, True
+
+    monkeypatch.setattr(db, "put_event_if_absent", _fake_put)
+    monkeypatch.setattr(tools, "_publish_sns", lambda topic, sub, body: "msg_mock_123")
     return created_events
+
 
 
 # 情境一：emergency 初次警報 — 正常發送並建立 In-Memory 狀態鎖與 DB 事件
@@ -212,7 +223,8 @@ def test_notify_emergency_first_alert_success(monkeypatch):
     # 確認已寫入 DB events
     assert len(created_events) == 1
     assert "🚨" in created_events[0]["detail"]
-    assert created_events[0]["type"] == "wellbeing"
+    assert created_events[0]["type"] == "safety"
+
 
 
 # 情境二：emergency 冷卻期內重複呼叫 — 應被攔截 (throttled)
@@ -321,16 +333,19 @@ def test_handle_get_daily_summaries_success(monkeypatch):
     """測試 get_daily_summaries 工具：正常回傳近期摘要清單。"""
     monkeypatch.setattr(
         db,
-        "get_daily_summaries",
-        lambda eid, from_d, to_d: [
-            {
-                "date": "2026-07-29",
-                "overview": "今日身體狀況良好，按時服藥",
-                "routines": {"completed": 2, "missed": 0},
-                "data_status": "complete",
-                "sections": {"diet": "三餐正常", "medication": "血壓藥已服用"}
-            }
-        ]
+        "list_daily_summaries",
+        lambda eid, from_d, to_d: (
+            [
+                {
+                    "date": "2026-07-29",
+                    "overview": "今日身體狀況良好，按時服藥",
+                    "routines": {"completed": 2, "missed": 0},
+                    "data_status": "complete",
+                    "sections": {"diet": "三餐正常", "medication": "血壓藥已服用"}
+                }
+            ],
+            None
+        )
     )
     res = tools.handle_get_daily_summaries({"elder_id": "eld_001", "days": "1"})
     assert res["status"] == "success"
@@ -350,9 +365,10 @@ def test_handle_get_daily_summaries_days_capped(monkeypatch):
     def mock_get_summaries(eid, from_d, to_d):
         captured["from"] = from_d
         captured["to"] = to_d
-        return []
+        return [], None
 
-    monkeypatch.setattr(db, "get_daily_summaries", mock_get_summaries)
+    monkeypatch.setattr(db, "list_daily_summaries", mock_get_summaries)
+
     res = tools.handle_get_daily_summaries({"elder_id": "eld_001", "days": "99"})
     assert res["status"] == "success"
     # 7 天範圍：to - from 應為 6 天差距
