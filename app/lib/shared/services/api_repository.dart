@@ -67,6 +67,19 @@ class ApiRepository implements CareRepository {
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields) =>
       _api.updateElder(elderId, fields);
 
+  // ---- 綁定照護者 ----
+
+  @override
+  Future<CaregiverLink> linkCaregiver({
+    required String elderId,
+    required String caregiverId,
+  }) =>
+      _api.linkCaregiver(elderId: elderId, caregiverId: caregiverId);
+
+  @override
+  Future<List<Caregiver>> caregivers({required String elderId}) =>
+      _api.getCaregivers(elderId);
+
   // ---- 例行公事 ----
 
   @override

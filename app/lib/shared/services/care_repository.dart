@@ -60,6 +60,21 @@ abstract interface class CareRepository {
   /// `PATCH /elders/{id}` — 部分更新。[fields] 的可用欄位見 docs/api.md。
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields);
 
+  // ---- 綁定照護者 ----
+
+  /// `POST /elders/{id}/caregivers` — 把一位照護者綁到這位長者（長者本人呼叫）。
+  ///
+  /// 三種結果都要分得出來：新綁上（`isNew=true`）、早就綁過（`isNew=false`）、
+  /// 查無此 ID（丟 [ApiException]，code 為 `CAREGIVER_NOT_FOUND`）。
+  /// 第三種是長輩打錯字時唯一的線索，吞掉的話畫面會對著一個不存在的 ID 說連結成功。
+  Future<CaregiverLink> linkCaregiver({
+    required String elderId,
+    required String caregiverId,
+  });
+
+  /// `GET /elders/{id}/caregivers` — 已綁定的家人（已翻完所有頁，由舊到新）。
+  Future<List<Caregiver>> caregivers({required String elderId});
+
   // ---- 例行公事 ----
 
   /// `GET /routines?elder_id=` — 例行公事定義（已翻完所有頁；App 據此排本地通知）。

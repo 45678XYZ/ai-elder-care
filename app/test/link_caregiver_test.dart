@@ -1,5 +1,6 @@
 ﻿import 'package:ai_elder_care/caregiver/screens/elders_screen.dart';
 import 'package:ai_elder_care/elder/screens/link_caregiver_screen.dart';
+import 'package:ai_elder_care/shared/services/care_repository.dart';
 import 'package:ai_elder_care/shared/services/demo_data.dart';
 import 'package:ai_elder_care/shared/services/session_store.dart';
 import 'package:ai_elder_care/theme/app_theme.dart';
@@ -12,10 +13,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// 這是照護者拿長輩手機操作、且會改變帳號歸屬的流程，出錯的代價比其他畫面高：
 /// 加錯了長輩自己不會發現，所以每一種送出結果都要有看得懂的回饋。
+/// api.md 的格式：`cg_` 後接 8 個小寫十六進位字元。長輩實際會抄到的就是這種東西。
+const _id1 = 'cg_7f3a91c2';
+const _id2 = 'cg_2b8e04d5';
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    AppSession.instance.linkedCaregiverIds = const [];
+    AppSession.instance
+      ..linkedCaregivers = const []
+      ..elders = const []
+      ..selectedElderId = null;
+    // 已連結的家人現在存在資料來源裡（demo 那個實作是有狀態的），要一起重置，
+    // 否則前一個測試連結的家人會出現在下一個測試的初始清單。
+    CareRepo.overrideWith(null);
   });
 
   Future<void> pump(
@@ -40,6 +51,10 @@ void main() {
         ),
       ),
     );
+    // 進頁面會去載已連結的家人（資料來源有刻意的 400ms 延遲）。那是 Future.delayed，
+    // 不會排新的一幀，所以 pumpAndSettle 會直接返回、把 timer 留在那裡——測試結束時
+    // 框架就會判定「widget tree 已 dispose 但 timer 還在」而失敗。先推過那段時間。
+    await tester.pump(const Duration(milliseconds: 600));
     await tester.pumpAndSettle();
   }
 
@@ -54,65 +69,90 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  /// 輸入一組 ID 並按加入。
+  Future<void> submit(WidgetTester tester, String id) async {
+    await tester.enterText(find.byType(TextField), id);
+    await tester.tap(find.text('加入'));
+    await tester.pumpAndSettle();
+  }
+
   testWidgets('空白送出會說要填', (tester) async {
     await pump(tester);
     await tester.tap(find.text('加入'));
     await tester.pumpAndSettle();
 
     expect(find.text('請先輸入 ID'), findsOneWidget);
-    expect(AppSession.instance.linkedCaregiverIds, isEmpty);
+    expect(AppSession.instance.linkedCaregivers, isEmpty);
   });
 
   testWidgets('輸入後加入，會進清單也會有成功回饋', (tester) async {
     await pump(tester);
-    await tester.enterText(find.byType(TextField), 'CG12345');
-    await tester.tap(find.text('加入'));
-    await tester.pumpAndSettle();
+    await submit(tester, _id1);
 
-    expect(AppSession.instance.linkedCaregiverIds, ['CG12345']);
-    expect(find.text('連結成功'), findsOneWidget);
-    // 清單裡看得到，且輸入框已清空可以再加下一位。
-    expect(find.text('CG12345'), findsOneWidget);
+    final linked = AppSession.instance.linkedCaregivers.single;
+    expect(linked.caregiverId, _id1);
+    // 回饋要帶名字：長輩才知道連上的是誰，而不是一串看不懂的碼。
+    expect(find.text('已經連結 ${linked.name}'), findsOneWidget);
     expect(find.text('已經連結的家人'), findsOneWidget);
+    // 清單同時顯示名字與 ID
+    expect(find.text(_id1), findsOneWidget);
   });
 
   testWidgets('可以連結多位家人', (tester) async {
     await pump(tester);
-    for (final id in ['CG00001', 'CG00002']) {
-      await tester.enterText(find.byType(TextField), id);
-      await tester.tap(find.text('加入'));
-      await tester.pumpAndSettle();
-    }
+    await submit(tester, _id1);
+    await submit(tester, _id2);
 
-    expect(AppSession.instance.linkedCaregiverIds, ['CG00001', 'CG00002']);
+    expect(
+      AppSession.instance.linkedCaregivers.map((c) => c.caregiverId),
+      [_id1, _id2],
+    );
   });
 
   testWidgets('同一個 ID 不會重複加，而且要講清楚為什麼', (tester) async {
     await pump(tester);
-    for (var i = 0; i < 2; i++) {
-      await tester.enterText(find.byType(TextField), 'CG12345');
-      await tester.tap(find.text('加入'));
-      await tester.pumpAndSettle();
-    }
+    await submit(tester, _id1);
+    await submit(tester, _id1);
 
-    expect(AppSession.instance.linkedCaregiverIds, ['CG12345']);
-    expect(find.text('這個 ID 已經連結過了'), findsOneWidget);
+    expect(AppSession.instance.linkedCaregivers.length, 1);
+    expect(find.textContaining('已經連結過了'), findsOneWidget);
   });
 
-  testWidgets('ID 前後空白不算數', (tester) async {
+  testWidgets('ID 前後空白與大小寫不算數', (tester) async {
+    // api.md：比對時大小寫不敏感、前後空白忽略。長輩從訊息裡複製常會多帶空白。
     await pump(tester);
-    await tester.enterText(find.byType(TextField), '  CG12345  ');
-    await tester.tap(find.text('加入'));
+    await submit(tester, '  CG_7F3A91C2  ');
+
+    expect(AppSession.instance.linkedCaregivers.single.caregiverId, _id1);
+  });
+
+  testWidgets('打錯的 ID 要說找不到，不能假裝連結成功', (tester) async {
+    // 原本任何字串都會被當成有效 ID：長輩少抄一碼，畫面照樣說連結成功，
+    // 而那位家人永遠收不到資料——錯了自己也不會發現，是這一頁最貴的失敗。
+    await pump(tester);
+    await submit(tester, 'cg_1234');
+
+    expect(AppSession.instance.linkedCaregivers, isEmpty);
+    expect(find.textContaining('找不到這個 ID'), findsOneWidget);
+  });
+
+  testWidgets('底線不會被輸入框吃掉', (tester) async {
+    // ID 的格式是 cg_ 開頭；過濾掉底線的話，長輩照著抄也永遠連不上。
+    await pump(tester);
+    await tester.enterText(find.byType(TextField), _id1);
     await tester.pumpAndSettle();
 
-    expect(AppSession.instance.linkedCaregiverIds, ['CG12345']);
+    expect(tester.widget<TextField>(find.byType(TextField)).controller?.text,
+        _id1);
   });
 
   testWidgets('已連結的家人重開頁面還在', (tester) async {
-    AppSession.instance.linkedCaregiverIds = const ['CG99999'];
     await pump(tester);
+    await submit(tester, _id1);
 
-    expect(find.text('CG99999'), findsOneWidget);
+    // 重建畫面：清單來自資料來源，不是這個 State 自己記的。
+    await pump(tester);
+    expect(find.text(_id1), findsOneWidget);
   });
 
   // 綁定的另一半（api.md「綁定照護者」步驟 1）：照護者得先在自己的 App 看到 ID，

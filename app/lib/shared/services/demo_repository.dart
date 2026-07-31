@@ -7,6 +7,8 @@ import '../models/life_event.dart';
 import '../models/routine.dart';
 import '../models/stats.dart';
 import 'api_client.dart';
+import 'api_error_codes.dart';
+import 'api_exception.dart';
 import 'care_repository.dart';
 import 'demo_data.dart';
 
@@ -181,6 +183,52 @@ class DemoRepository implements CareRepository {
     list[i] = updated;
     return Future.delayed(DemoData.latency, () => updated);
   }
+
+  // ---- 綁定照護者 ----
+
+  /// demo 沒有帳號系統可查，改用**格式**判斷 ID 是否存在：`cg_` 後接 8 個十六進位
+  /// 字元（api.md 的格式）。不合格式就當查無此人。
+  ///
+  /// 這條規則抓得到真正常見的錯誤——少打一碼、把 `cg_` 漏掉、把 0 打成 O——
+  /// 而那正是長輩抄 ID 時會發生的事。格式對但不存在的 ID 在 demo 裡驗不出來，
+  /// 那要等真的帳號系統。
+  static final _caregiverIdPattern = RegExp(r'^cg_[0-9a-f]{8}$');
+
+  @override
+  Future<CaregiverLink> linkCaregiver({
+    required String elderId,
+    required String caregiverId,
+  }) async {
+    // 大小寫不敏感、前後空白忽略（api.md）。
+    final id = caregiverId.trim().toLowerCase();
+    if (!_caregiverIdPattern.hasMatch(id)) {
+      throw const ApiException('找不到這個 ID',
+          statusCode: 404, code: ApiErrorCodes.caregiverNotFound);
+    }
+
+    final existing = _caregivers.where((c) => c.caregiverId == id).firstOrNull;
+    if (existing != null) {
+      // 已綁定：linked_at 不刷新（api.md），所以原樣回傳。
+      return (caregiver: existing, isNew: false);
+    }
+
+    final linked = Caregiver(
+      caregiverId: id,
+      // 真後端從 Cognito 取顯示名稱；demo 沒有帳號可查，用 ID 尾碼湊一個看得出是誰的字樣。
+      name: '家人 ${id.substring(id.length - 4)}',
+      linkedAt: DateTime.now(),
+    );
+    _caregivers.add(linked);
+    return Future.delayed(
+        DemoData.latency, () => (caregiver: linked, isNew: true));
+  }
+
+  @override
+  Future<List<Caregiver>> caregivers({required String elderId}) async =>
+      List.of(_caregivers);
+
+  /// 已綁定的家人。與其他 demo 狀態一樣只活在記憶體裡，重開 App 就回到未連結。
+  final List<Caregiver> _caregivers = [];
 
   // ---- 例行公事 ----
 

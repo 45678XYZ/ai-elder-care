@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/models/caregiver.dart';
+import '../../shared/services/api_error_codes.dart';
+import '../../shared/services/api_exception.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/form_widgets.dart';
 import '../../theme/app_theme.dart';
@@ -36,6 +39,24 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
     super.dispose();
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _loadLinked();
+  }
+
+  /// 已連結的家人來自後端（`GET /elders/{id}/caregivers`），進頁面時載一次。
+  ///
+  /// 失敗不擋畫面：連結的入口本身還是要能用，清單載不出來頂多是少看到已連結的那幾位。
+  Future<void> _loadLinked() async {
+    try {
+      await AppSession.instance.ensureCaregiversLoaded();
+    } catch (_) {
+      // 清單載不出來就先空著
+    }
+    if (mounted) setState(() {});
+  }
+
   Future<void> _submit() async {
     final id = _ctrl.text.trim();
     if (id.isEmpty) {
@@ -48,26 +69,38 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
       _feedback = null;
     });
 
-    final added = await AppSession.instance.linkCaregiver(id);
+    // 三種結果，三句不同的話。原本只有兩種（加進去了／已經有了），任何字串都會被
+    // 當成有效 ID——長輩少抄一碼，畫面照樣說「連結成功」，而那位家人永遠收不到資料。
+    _Feedback result;
+    try {
+      final link = await AppSession.instance.linkCaregiver(id);
+      result = link.isNew
+          ? _Feedback.success('已經連結 ${link.caregiver.name}')
+          : _Feedback.error('${link.caregiver.name} 已經連結過了');
+    } on ApiException catch (e) {
+      result = _Feedback.error(
+        e.code == ApiErrorCodes.caregiverNotFound
+            // 這是最可能發生的錯，而且長輩自己修得好，所以要講得具體。
+            ? '找不到這個 ID，請再確認一次'
+            : '連結沒有成功，請稍後再試一次',
+      );
+    }
 
     if (!mounted) return;
+    final ok = !result.isError;
     setState(() {
       _busy = false;
-      if (added) {
-        _ctrl.clear();
-        _feedback = const _Feedback.success('連結成功');
-      } else {
-        _feedback = const _Feedback.error('這個 ID 已經連結過了');
-      }
+      if (ok) _ctrl.clear();
+      _feedback = result;
     });
     // 成功後收鍵盤，讓長輩看得到剛加進清單的那一筆。
-    if (added) _focus.unfocus();
+    if (ok) _focus.unfocus();
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final linked = AppSession.instance.linkedCaregiverIds;
+    final linked = AppSession.instance.linkedCaregivers;
 
     return Scaffold(
       body: SafeArea(
@@ -96,8 +129,11 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
                 enabled: !_busy,
                 letterSpacing: 2,
                 inputFormatters: [
-                  // 只留英數與連字號，避免長輩誤觸空白或標點。
-                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-]')),
+                  // 只留英數與底線，避免長輩誤觸空白或標點。
+                  //
+                  // 底線非留不可：ID 的格式是 `cg_` 後接 8 個十六進位字元（api.md），
+                  // 過濾掉底線的話長輩照著抄也會被吃成 `cg7f3a91c2`，怎麼打都連不上。
+                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_]')),
                 ],
                 onSubmitted: (_) => _submit(),
               ),
@@ -115,7 +151,7 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
                 const SizedBox(height: AppSpacing.xl),
                 Text('已經連結的家人', style: text.headlineSmall),
                 const SizedBox(height: AppSpacing.md),
-                for (final id in linked) _LinkedRow(caregiverId: id),
+                for (final c in linked) _LinkedRow(caregiver: c),
               ],
             ],
           ),
@@ -126,10 +162,13 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
 }
 
 /// 已連結的一筆。唯讀，不可點。
+///
+/// 顯示名字而不是 ID：`cg_7f3a91c2` 對長輩沒有任何意義，看到「陳志明」才知道
+/// 連上的是誰、有沒有連錯人。ID 用小字附在下面，家人要對照時看得到。
 class _LinkedRow extends StatelessWidget {
-  const _LinkedRow({required this.caregiverId});
+  const _LinkedRow({required this.caregiver});
 
-  final String caregiverId;
+  final Caregiver caregiver;
 
   @override
   Widget build(BuildContext context) {
@@ -147,8 +186,20 @@ class _LinkedRow extends StatelessWidget {
           const Icon(Icons.check_circle, size: 32, color: AppColors.successFg),
           const SizedBox(width: AppSpacing.md),
           Expanded(
-            child: Text(caregiverId,
-                style: text.headlineSmall?.copyWith(letterSpacing: 1)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(caregiver.name, style: text.headlineSmall),
+                const SizedBox(height: 2),
+                Text(
+                  caregiver.caregiverId,
+                  style: text.bodyMedium?.copyWith(
+                    color: AppColors.inkSecondary,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

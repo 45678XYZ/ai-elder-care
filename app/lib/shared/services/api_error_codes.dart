@@ -31,6 +31,12 @@ class ApiErrorCodes {
   /// 避免洩漏 session 是否存在），所以收到時不代表一定是「打錯 ID」。
   static const String sessionNotFound = 'SESSION_NOT_FOUND';
 
+  /// 綁定照護者時查無此 ID（不存在，或那個帳號不是照護者）。
+  ///
+  /// 與 [elderNotFound] 不同，這個碼**可以**直接告訴使用者是 ID 打錯了：
+  /// 照護者 ID 本來就是拿來給人抄寫的，不存在這回事沒有洩漏疑慮。
+  static const String caregiverNotFound = 'CAREGIVER_NOT_FOUND';
+
   // ---- 409 ----
 
   /// 同一請求仍在處理中（turn lease 未到期，或 session 尚未收斂）。

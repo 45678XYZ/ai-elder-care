@@ -113,6 +113,17 @@ class _FakeRepo implements CareRepository {
       (await elders()).single;
 
   @override
+  Future<CaregiverLink> linkCaregiver({
+    required String elderId,
+    required String caregiverId,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<List<Caregiver>> caregivers({required String elderId}) async =>
+      const [];
+
+  @override
   Future<List<Routine>> routines({required String elderId}) async => const [];
 
   @override

@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/caregiver.dart';
 import '../models/elder.dart';
+import 'api_error_codes.dart';
+import 'api_exception.dart';
 import 'care_repository.dart';
 
 /// App 執行期的長者情境（Demo 用）。
@@ -59,7 +61,6 @@ class AppSession {
   static String _nicknameKey(String a) => 'elder_nickname_$a';
   static String _langKey(String a) => 'elder_lang_$a';
   static String _selectedElderKey(String a) => 'selected_elder_id_$a';
-  static String _linkedCaregiversKey(String a) => 'linked_caregiver_ids_$a';
 
   String elderName = '';
   String elderNickname = '';
@@ -89,13 +90,17 @@ class AppSession {
   /// 目前在看哪一位長者；所有照護者畫面的 `elder_id` 都取自這裡。
   String? selectedElderId;
 
-  /// 已連結到這個長者帳號的照護者 ID。長者端「連結家人」頁的資料來源。
+  /// 已連結到這位長者的照護者。長者端「連結家人」頁的資料來源。
   ///
-  /// 可以有多位（子女各自一組），所以是清單而非單一值。
-  List<String> linkedCaregiverIds = const [];
+  /// 可以有多位（子女各自一組），所以是清單而非單一值。存的是完整的
+  /// [Caregiver] 而不只是 ID——長輩畫面上要看得出「這是誰」，一串 `cg_7f3a91c2`
+  /// 對長輩沒有任何意義（api.md 也因此讓綁定 response 帶 `name`）。
+  ///
+  /// 真實來源是 `GET /elders/{id}/caregivers`，這裡只是快取，見 [ensureCaregiversLoaded]。
+  List<Caregiver> linkedCaregivers = const [];
 
   /// 這台長者手機是否已經有家人連結。決定今天頁要不要顯示連結入口。
-  bool get hasLinkedCaregiver => linkedCaregiverIds.isNotEmpty;
+  bool get hasLinkedCaregiver => linkedCaregivers.isNotEmpty;
 
   /// 目前選定的長者物件；清單還沒載入或該 id 已不存在時為 null。
   Elder? get selectedElder {
@@ -167,7 +172,7 @@ class AppSession {
       elderNickname = '';
       lang = 'zh-TW';
       selectedElderId = null;
-      linkedCaregiverIds = const [];
+      linkedCaregivers = const [];
       return;
     }
     setupDone = p.getBool(_setupDoneKey(accountId)) ?? false;
@@ -175,8 +180,9 @@ class AppSession {
     elderNickname = p.getString(_nicknameKey(accountId)) ?? '';
     lang = p.getString(_langKey(accountId)) ?? 'zh-TW';
     selectedElderId = p.getString(_selectedElderKey(accountId));
-    linkedCaregiverIds =
-        p.getStringList(_linkedCaregiversKey(accountId)) ?? const [];
+    // 已連結的家人不從本機讀：那份資料的真實來源是後端，見 [ensureCaregiversLoaded]。
+    // 換帳號時一律清空，等畫面自己去載——留著上一個帳號的家人清單是資料外洩。
+    linkedCaregivers = const [];
   }
 
   /// 確保 [me] 已載入並回傳；未登入時回 null（沒有帳號可以問「我是誰」）。
@@ -192,17 +198,34 @@ class AppSession {
     return me = await CareRepo.instance.me(sub: sub);
   }
 
-  /// 連結一位照護者到這個長者帳號。已連結過的回 false，讓畫面能給出不同回饋。
-  Future<bool> linkCaregiver(String caregiverId) async {
-    final id = caregiverId.trim();
-    if (id.isEmpty || linkedCaregiverIds.contains(id)) return false;
-    linkedCaregiverIds = [...linkedCaregiverIds, id];
-    final account = _accountId;
-    // 未登入時只留在記憶體：沒有 sub 就沒有帳號可以掛（同 saveSetup 的理由）。
-    if (account == null) return true;
-    final p = await SharedPreferences.getInstance();
-    await p.setStringList(_linkedCaregiversKey(account), linkedCaregiverIds);
-    return true;
+  /// 連結一位照護者到這位長者。回傳的 `isNew` 為 false 表示早就綁過了。
+  ///
+  /// 查無此 ID 會丟 [ApiException]（code `CAREGIVER_NOT_FOUND`），由畫面接住——
+  /// 那是長輩打錯字時唯一的線索，不能在這裡吞掉變成「連結成功」。
+  Future<CaregiverLink> linkCaregiver(String caregiverId) async {
+    final elderId = selectedElderId;
+    if (elderId == null) {
+      throw const ApiException('還不知道要連結到哪位長輩',
+          code: ApiErrorCodes.elderNotFound);
+    }
+    final result = await CareRepo.instance
+        .linkCaregiver(elderId: elderId, caregiverId: caregiverId);
+    if (result.isNew) {
+      linkedCaregivers = [...linkedCaregivers, result.caregiver];
+    }
+    return result;
+  }
+
+  /// 確保已連結的家人清單載入過；已有資料就直接返回。
+  ///
+  /// 不做持久化：真實來源是後端（`GET /elders/{id}/caregivers`），本機存一份只會
+  /// 在「家人在另一台裝置綁定」時對不上。未接後端時由 demo 資料來源代答。
+  Future<void> ensureCaregiversLoaded() async {
+    if (linkedCaregivers.isNotEmpty) return;
+    await ensureEldersLoaded();
+    final elderId = selectedElderId;
+    if (elderId == null) return;
+    linkedCaregivers = await CareRepo.instance.caregivers(elderId: elderId);
   }
 
   /// 確保長者清單已載入；已有資料就直接返回。
@@ -341,7 +364,7 @@ class AppSession {
     me = null;
     elders = const [];
     selectedElderId = null;
-    linkedCaregiverIds = const [];
+    linkedCaregivers = const [];
     _accountId = null;
   }
 }

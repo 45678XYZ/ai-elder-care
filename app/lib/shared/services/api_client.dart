@@ -167,6 +167,38 @@ class ApiClient {
     return Elder.fromJson(json);
   }
 
+  // ---- 綁定照護者 ----
+
+  /// `POST /elders/{id}/caregivers` — 把一位照護者綁到這位長者（長者本人呼叫）。
+  ///
+  /// 回傳的 [CaregiverLink.isNew] 區分兩種成功：201 是這次才綁上的、200 是早就綁過了。
+  /// 兩者都算成功，但畫面要說不同的話——長輩才知道剛才那一下到底有沒有作用。
+  ///
+  /// 靠「長者＋照護者」天然冪等，不需要 `client_request_id`：重送走同一條路。
+  /// 查無此 ID 回 404 `CAREGIVER_NOT_FOUND`（打錯字就是這個）；`elder_id` 不存在或
+  /// 不屬於本人一律回 404 `ELDER_NOT_FOUND`，不以 403 區分，避免洩漏某位長者是否存在。
+  Future<CaregiverLink> linkCaregiver({
+    required String elderId,
+    required String caregiverId,
+  }) async {
+    final (json, status) = await _requestWithStatus(
+      'POST',
+      '/elders/$elderId/caregivers',
+      body: {'caregiver_id': caregiverId},
+    );
+    return (caregiver: Caregiver.fromJson(json), isNew: status == 201);
+  }
+
+  /// `GET /elders/{id}/caregivers` — 已綁定的家人（已翻完所有頁）。
+  ///
+  /// 按 `linked_at` 由舊到新。長者本人與已綁定的照護者都讀得到。
+  Future<List<Caregiver>> getCaregivers(String elderId) =>
+      _drain((token) async {
+        final json = await _request('GET', '/elders/$elderId/caregivers',
+            query: _pageQuery(nextToken: token));
+        return ApiPage.fromJson(json, Caregiver.fromJson);
+      });
+
   // ---- 每日摘要（照護者）----
 
   /// `GET /summaries` — 每日摘要列表（一頁）。[from]/[to] 為日期，含首尾，預設最近 7 天。
@@ -322,6 +354,18 @@ class ApiClient {
     String path, {
     Map<String, String>? query,
     Object? body,
+  }) async =>
+      (await _requestWithStatus(method, path, query: query, body: body)).$1;
+
+  /// 同 [_request]，但連狀態碼一起給。
+  ///
+  /// 只有綁定照護者用得到：那個端點用 201／200 區分「這次才綁上」與「早就綁過了」，
+  /// body 兩者相同，不看狀態碼就分不出來（api.md）。其餘端點看 body 就夠，走 [_request]。
+  Future<(Map<String, dynamic>, int)> _requestWithStatus(
+    String method,
+    String path, {
+    Map<String, String>? query,
+    Object? body,
   }) async {
     var uri = Uri.parse('$_baseUrl/v1$path');
     if (query != null && query.isNotEmpty) {
@@ -357,8 +401,8 @@ class ApiClient {
         code: _errorCode(res),
       );
     }
-    if (res.body.isEmpty) return const <String, dynamic>{};
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    if (res.body.isEmpty) return (const <String, dynamic>{}, res.statusCode);
+    return (jsonDecode(res.body) as Map<String, dynamic>, res.statusCode);
   }
 
   /// 組請求 header；有 token 才帶 Authorization。
