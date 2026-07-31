@@ -1,6 +1,6 @@
 # Bedrock Agent 智慧工具箱 (Action Groups / Tools) 規格說明書
 
-本文件定義供 **Amazon Bedrock Agent (Claude 3.5)** 自動調用的後端工具（Action Groups / Tools）。當長者在語音對話中提到與「例行公事（用藥、量血壓等）」或「新建行程（約會、看醫生）」相關的意圖時，Agent 會自動選擇並呼叫對應的工具。
+本文件定義供 **Amazon Bedrock Agent (Claude 5)** 自動調用的後端工具（Action Groups / Tools）。當長者在語音對話中提到與「例行公事（用藥、量血壓等）」或「新建行程（約會、看醫生）」相關的意圖時，Agent 會自動選擇並呼叫對應的工具。
 
 所有工具的執行邏輯均透過一個共用的 **Tools Lambda** (或直接在 `chat` 專案中調用) 進行，並直接讀寫 DynamoDB 的 `routines` 與 `events` 表。
 
