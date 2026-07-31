@@ -129,7 +129,7 @@ def transcribe_audio(audio_bytes: bytes, audio_format: str, lang: str) -> str:
     return "小助手，我今天已經吃過血壓藥了。"
 
 
-def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
+def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool, bool]:
     """呼叫 AWS Bedrock AgentCore (Claude 5 Sonnet) 進行對話推導。
     
     Args:
@@ -137,12 +137,13 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
         transcript (str): 長者輸入的對話文字。
 
     Returns:
-        Tuple[str, bool]: (reply_text, routines_updated)
+        Tuple[str, bool, bool]: (reply_text, routines_updated, safety_alert_triggered)
     """
     if not BEDROCK_AGENT_ID:
         # 本地開發與未配置 Agent ID 時的保底回覆
         return (
             f"【模擬大腦回覆】收到您的訊息：「{transcript}」。已經幫您確認紀錄囉，請記得多喝水、按時休息！",
+            False,
             False
         )
 
@@ -166,6 +167,7 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
 
         reply_text = ""
         routines_updated = False
+        safety_alert_triggered = False
 
         # 讀取 completion 事件串流
         for event in response.get("completion", []):
@@ -176,13 +178,15 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool]:
             # 檢查 Response Trace 是否觸發了 routines 相關工具或通知工具
             if "trace" in event:
                 trace_str = str(event["trace"])
-                if "complete_routine" in trace_str or "create_routine" in trace_str or "notify_caregiver" in trace_str:
+                if "complete_routine" in trace_str or "create_routine" in trace_str:
                     routines_updated = True
+                if "notify_caregiver" in trace_str:
+                    safety_alert_triggered = True
 
         if not reply_text:
             reply_text = "抱歉，我剛才沒有聽清，您可以再說一次嗎？"
 
-        return reply_text, routines_updated
+        return reply_text, routines_updated, safety_alert_triggered
 
     except ClientError as e:
         print(f"[Error] Bedrock Agent invoke failed: {e.response['Error']['Message']}")
@@ -271,7 +275,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # 4. 副作用區：turn 已是 processing，之後每一條路徑都必須把它收成終態
         try:
-            transcript, reply_text, routines_updated, audio_key = run_turn(
+            transcript, reply_text, routines_updated, safety_alert_triggered, audio_key = run_turn(
                 req, audio_bytes, conversation_id
             )
         except TurnFailure as failure:
@@ -288,6 +292,14 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # 5. 以單一 transaction 提交終態結果並把本輪追加進 session
         try:
+            rt_labels = []
+            if routines_updated:
+                rt_labels.append("routine")
+            if safety_alert_triggered:
+                rt_labels.append("safety_alert")
+            if not rt_labels:
+                rt_labels.append("none")
+
             committed = turns.commit(
                 req.elder_id,
                 conversation_id,
@@ -298,6 +310,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     "ai_respond_text": reply_text,
                     "ai_respond_audio_s3_key": audio_key,
                     "routines_updated": routines_updated,
+                    "rt_labels": rt_labels,
                 },
             )
         except turns.TurnError:
@@ -439,8 +452,8 @@ def requested_session(req: ChatRequest) -> Dict[str, Any] | None:
 
 def run_turn(
     req: ChatRequest, audio_bytes: bytes, conversation_id: str
-) -> Tuple[str, str, bool, str | None]:
-    """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, audio key)。
+) -> Tuple[str, str, bool, bool, str | None]:
+    """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, safety_alert_triggered, audio key)。
 
     音檔存不進 S3 時 audio key 為 None，本輪仍然成立：回覆內容與已提交的 routine 副作用都是
     真的，把整輪判成失敗只會逼長者再講一次，反而可能讓對話產生的 routine 被重複建立。
@@ -457,7 +470,7 @@ def run_turn(
             raise TurnFailure(500, "TRANSCRIPTION_FAILED", "語音轉寫服務暫時無法使用")
 
     try:
-        reply_text, routines_updated = invoke_agent_brain(req.elder_id, transcript)
+        reply_text, routines_updated, safety_alert_triggered = invoke_agent_brain(req.elder_id, transcript)
     except Exception:
         raise TurnFailure(500, "BEDROCK_ERROR", "呼叫對話大腦失敗")
 
@@ -466,7 +479,7 @@ def run_turn(
     except Exception:
         raise TurnFailure(500, "TTS_FAILED", "語音合成失敗")
 
-    return transcript, reply_text, routines_updated, upload_audio_to_s3(
+    return transcript, reply_text, routines_updated, safety_alert_triggered, upload_audio_to_s3(
         audio_reply, conversation_id
     )
 

@@ -1,136 +1,136 @@
-# Bedrock Agent 智慧工具箱 (Action Groups / Tools) 規格說明書
+# Bedrock Agent ?�慧工具�?(Action Groups / Tools) 規格說�???
 
-本文件定義供 **Amazon Bedrock Agent (Claude 3.5)** 自動調用的後端工具（Action Groups / Tools）。當長者在語音對話中提到與「例行公事（用藥、量血壓等）」或「新建行程（約會、看醫生）」相關的意圖時，Agent 會自動選擇並呼叫對應的工具。
+?��?件�?義�? **Amazon Bedrock Agent (Claude 3.5)** ?��?調用?��?端工?��?Action Groups / Tools）。當?�者在語音對話中�??��??��?行公事�??�藥?��?血壓�?）」�??�新建�?程�?約�??��??��?）」相?��??��??��?Agent ?�自?�選?�並?�叫對�??�工?��?
 
-所有工具的執行邏輯均透過一個共用的 **Tools Lambda** (或直接在 `chat` 專案中調用) 進行，並直接讀寫 DynamoDB 的 `routines` 與 `events` 表。
+?�?�工?��??��??�輯?�透�?一?�共?��? **Tools Lambda** (?�直?�在 `chat` 專�?中調?? ?��?，並?�接讀�?DynamoDB ??`routines` ??`events` 表�?
 
 ---
 
-## 1. 工具清單與 LLM 調用契機
+## 1. 工具清單??LLM 調用契�?
 
-| 工具名稱 (Tool Name) | 功能描述 (Description for LLM) | 調用契機 (Triggering Intent) |
+| 工具?�稱 (Tool Name) | ?�能?�述 (Description for LLM) | 調用契�? (Triggering Intent) |
 |---|---|---|
-| `get_today_routines` | 取得長者指定日期的例行行程與完成狀態。 | 長者問：「我今天還要吃什麼藥？」或 AI 需要主動關懷今日行程時。 |
-| `complete_routine` | 將特定行程標記為已完成，並記錄生活事件。 | 長者說：「我吃過血壓藥了」或「我剛量完血糖了」。 |
-| `create_routine` | 幫長者建立一個新的例行行程或單次提醒。 | 長者說：「幫我記下週一早上九點要看醫生」或「我明天下午要散步」。 |
-| `get_recent_events` | 查詢長者近期的生活事件與健康記錄歷史。 | 長者問：「我這週有滑倒過嗎？」或「我昨天晚餐吃了什麼？」。 |
-| `get_elder_profile` | 查詢長者的個人暱稱、喜好偏好、健康注意事項與家屬成員。 | 長者問：「你知道我女兒叫什麼名字嗎？」或 AI 主動進行親切對話時。 |
-| `remind_pending_routines` | 查詢長者今日尚未完成的待辦行程並回傳提醒事項。 | 長者問：「我還有什麼事情沒做嗎？」或 AI 需要主動進行行程提醒時。 |
-| `notify_caregiver` | 發送 AWS SNS 即時緊急警報、例行行程報告或健康摘要至照護者。 | 長者反映跌倒、胸痛、頭暈等緊急狀況，或需推播日報時。 |
+| `get_today_routines` | ?��??�者�?定日?��?例�?行�??��??��??��?| ?�者�?：「�?今天?��??��?麼藥？」�? AI ?�要主?��??��??��?程�???|
+| `complete_routine` | 將特定�?程�?記為已�??��?並�??��?活�?件�?| ?�者說：「�??��?血壓藥了」�??��??��?完�?糖�??��?|
+| `create_routine` | 幫長?�建立�??�新?��?行�?程�??�次?��???| ?�者說：「幫?��?下週�??��?九�?要�??��??��??��??�天下�?要散步」�?|
+| `get_recent_events` | ?�詢?�者�??��??�活事件?�健康�??�歷?��?| ?�者�?：「�??�週�?滑倒�??��??��??��??�天?��??��?什麼�??��?|
+| `get_elder_profile` | ?�詢?�者�??�人?�稱?��?好�?好、健康注?��??��?家屬?�員??| ?�者�?：「�??��??�女?�叫什麼�?字�?？」�? AI 主�??��?親�?對話?��?|
+| `remind_pending_routines` | ?�詢?�者�??��??��??��?待辦行�?並�??��??��??��?| ?�者�?：「�??��?什麼�??��??��?？」�? AI ?�要主?�進�?行�??��??��?|
+| `notify_caregiver` | ?��?AWS SNS ?��?緊急警?�、�?行�?程報?��??�康?��??�照護者�?| ?�者�??��??�、胸?�、頭?��?緊急�?況�??��??�播?�報?��?|
 
 ---
 
-## 2. 各工具規格與參數架構 (JSON Schema)
+## 2. ?�工?��??��??�數?��? (JSON Schema)
 
-### 2.7 `notify_caregiver` (發送照護者通知)
-*   **LLM 描述**：`Send immediate SNS alert to the caregiver when the elder experiences emergencies (falls, chest pain, dizziness) or needs routine/summary reports.`
-*   **輸入參數 (Input Parameters)**：
+### 2.7 `notify_caregiver` (?�送照護者通知)
+*   **LLM ?�述**：`Send immediate SNS alert to the caregiver when the elder experiences emergencies (falls, chest pain, dizziness) or needs routine/summary reports.`
+*   **輸入?�數 (Input Parameters)**�?
     ```json
     {
       "type": "object",
       "properties": {
         "elder_id": {
           "type": "string",
-          "description": "長者的唯一識別 ID，例如 eld_001"
+          "description": "?�者�??��?識別 ID，�?�?eld_001"
         },
         "category": {
           "type": "string",
           "enum": ["emergency", "routine", "summary"],
-          "description": "通知類別：emergency (跌倒不適緊急警報), routine (行程完成狀態), summary (每日健康摘要)"
+          "description": "?�知類別：emergency (跌倒�??��??�警??, routine (行�?完�??�??, summary (每日?�康?��?)"
         },
         "message": {
           "type": "string",
-          "description": "要推播給照護者的詳細訊息內容"
+          "description": "要推?�給?�護?��?詳細訊息?�容"
         }
       },
       "required": ["elder_id", "category", "message"]
     }
     ```
-*   **回傳資料 (Output JSON)**：
+*   **?�傳資�? (Output JSON)**�?
     ```json
     {
       "status": "success",
       "elder_id": "eld_001",
       "category": "emergency",
       "message_id": "95a12345-6789-0123-4567-890123456789",
-      "detail": "已成功發送 emergency 通知給照護者"
+      "detail": "已�??�發??emergency ?�知給照護�?
     }
     ```
 
 ---
 
-## 3. 對話引導與工具調用實例
+## 3. 對話引�??�工?�調?�實�?
 
-以下展示 Bedrock Agent 如何在與長者的對話中流暢調用上述工具：
+以�?展示 Bedrock Agent 如�??��??�者�?對話中�??�調?��?述工?��?
 
-### 實例 A：長者詢問行程 ➔ 調用 `get_today_routines`
-*   **長者**：「我今天吃過血壓藥了嗎？」
-*   **Agent (Claude)**：*(判定意圖為查詢今日用藥狀態)*
-    *   **呼叫工具**：`get_today_routines(elder_id="eld_001", date="2026-07-20")`
-    *   **工具回傳**：回傳吃血壓藥 `rtn_001` 的 `status: pending`。
-*   **Agent 回覆**：「阿蘭嬤，我看你今天的血壓藥還沒有吃喔！現在已經十點了，要記得趕快吃藥喔。」
+### 實�? A：長?�詢?��?�???調用 `get_today_routines`
+*   **?��?*：「�?今天?��?血壓藥了�?？�?
+*   **Agent (Claude)**�?(?��??��??�查詢�??�用?��???*
+    *   **?�叫工具**：`get_today_routines(elder_id="eld_001", date="2026-07-20")`
+    *   **工具?�傳**：�??��?血壓藥 `rtn_001` ??`status: pending`??
+*   **Agent ?��?**：「阿?�嬤，�??��?今天?��?壓藥?��??��??��??�在已�??��?了�?要�?得�?快�??��??��?
 
-### 實例 B：長者口頭完成行程 ➔ 調用 `complete_routine`
-*   **長者**：「好啦，我現在把血壓藥吞下去了。」
-*   **Agent (Claude)**：*(判定意圖為完成今日用藥)*
-    *   **呼叫工具**：`complete_routine(elder_id="eld_001", routine_id="rtn_001", date="2026-07-20", completed_by="conversation")`
-    *   **工具回傳**：`{ "status": "success", "routine_id": "rtn_001" }`
-*   **Agent 回覆**：「太棒了！有按時吃藥身體才會健健康康。我已經幫你把這個行程記下來了喔。」
+### 實�? B：長?�口?��??��?�???調用 `complete_routine`
+*   **?��?*：「好?��??�現?��?血壓藥?��??��??��?
+*   **Agent (Claude)**�?(?��??��??��??��??�用??*
+    *   **?�叫工具**：`complete_routine(elder_id="eld_001", routine_id="rtn_001", date="2026-07-20", completed_by="conversation")`
+    *   **工具?�傳**：`{ "status": "success", "routine_id": "rtn_001" }`
+*   **Agent ?��?**：「太棒�?！�??��??�藥身�??��??�健康康?��?已�?幫�??�這個�?程�?下�?了�??��?
 
-### 實例 C：長者新增未來行程 ➔ 調用 `create_routine`
-*   **長者**：「明天下午三點，阿明要帶我去看心臟科醫生。」
-*   **Agent (Claude)**：*(判定意圖為建立新的單次行程)*
-    *   **呼叫工具**：`create_routine(elder_id="eld_001", title="看心臟科", type="other", schedule={"freq": "once", "date": "2026-07-21", "time": "15:00"})`
-    *   **工具回傳**：`{ "status": "success", "routine_id": "rtn_003" }`
-*   **Agent 回覆**：「阿蘭嬤，我已經幫你記下來了！明天下午三點去看心臟科醫生，到時候我會再提醒你。」
+### 實�? C：長?�新增未來�?�???調用 `create_routine`
+*   **?��?*：「�?天�??��?點�??��?要帶?�去?��??��??��??��?
+*   **Agent (Claude)**�?(?��??��??�建立新?�單次�?�?*
+    *   **?�叫工具**：`create_routine(elder_id="eld_001", title="?��??��?", type="other", schedule={"freq": "once", "date": "2026-07-21", "time": "15:00"})`
+    *   **工具?�傳**：`{ "status": "success", "routine_id": "rtn_003" }`
+*   **Agent ?��?**：「阿?�嬤，�?已�?幫�?記�?來�?！�?天�??��?點去?��??��??��?，到?�候�??��??��?你。�?
 
-### 實例 D：長者反映跌倒緊急狀況 ➔ 調用 `notify_caregiver`
-*   **長者**：「小助手，我剛剛在浴室不小心摔倒了，腳好痛站不起來...」
-*   **Agent (Claude)**：*(判定意圖為跌倒極度緊急狀況)*
-    *   **呼叫工具**：`notify_caregiver(elder_id="eld_001", category="emergency", message="長者反映在浴室跌倒，腳部劇痛站立困難。")`
-    *   **工具回傳**：`{ "status": "success", "category": "emergency", "message_id": "msg_998877" }`
-*   **Agent 回覆**：「阿蘭嬤！請您先坐在原地千萬不要急著站起來。我已經立刻發送緊急警報通知志明了，他很快就會關心您！」
+### 實�? D：長?��??��??��??��?�???調用 `notify_caregiver`
+*   **?��?*：「�??��?，�??��??�浴室�?小�??�倒�?，腳好�?站�?起�?...??
+*   **Agent (Claude)**�?(?��??��??��??�極度�??��?�?*
+    *   **?�叫工具**：`notify_caregiver(elder_id="eld_001", category="emergency", message="?�者�??�在浴室跌倒�??�部?��?站�??�難??)`
+    *   **工具?�傳**：`{ "status": "success", "category": "emergency", "message_id": "msg_998877" }`
+*   **Agent ?��?**：「阿?�嬤！�??��??�在?�地?�萬不�??��?站起來。�?已�?立刻?�送�??�警?�通知志�?了�?他�?快就?��?心您！�?
 
 ---
 
-## 2. 各工具規格與參數架構 (JSON Schema)
+## 2. ?�工?��??��??�數?��? (JSON Schema)
 
-為了讓 Bedrock Agent 能夠精準辨識與生成參數，各工具的 API 規格定義如下：
+?��?�?Bedrock Agent ?��?精�?辨�??��??��??��??�工?��? API 規格定義如�?�?
 
-### 2.1 `get_today_routines` (查詢今日行程)
-*   **LLM 描述**：`Retrieve a list of scheduled routines and their completion status for a specific elder on a given date.`
-*   **輸入參數 (Input Parameters)**：
+### 2.1 `get_today_routines` (?�詢今日行�?)
+*   **LLM ?�述**：`Retrieve a list of scheduled routines and their completion status for a specific elder on a given date.`
+*   **輸入?�數 (Input Parameters)**�?
     ```json
     {
       "type": "object",
       "properties": {
         "elder_id": {
           "type": "string",
-          "description": "長者的唯一識別 ID，例如 eld_001"
+          "description": "?�者�??��?識別 ID，�?�?eld_001"
         },
         "date": {
           "type": "string",
-          "description": "查詢的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
+          "description": "?�詢?�日?��??��???YYYY-MM-DD，�?�?2026-07-20"
         }
       },
       "required": ["elder_id", "date"]
     }
     ```
-*   **回傳資料 (Output JSON)**：
+*   **?�傳資�? (Output JSON)**�?
     ```json
     {
       "date": "2026-07-20",
       "items": [
         {
           "routine_id": "rtn_001",
-          "title": "吃血壓藥",
+          "title": "?��?壓藥",
           "type": "medication",
           "scheduled_at": "2026-07-20T09:00:00+08:00",
           "status": "pending"
         },
         {
           "routine_id": "rtn_002",
-          "title": "量血壓",
+          "title": "?��?�?,
           "type": "other",
           "scheduled_at": "2026-07-20T19:00:00+08:00",
           "status": "done",
@@ -142,35 +142,35 @@
 
 ---
 
-### 2.2 `complete_routine` (確認完成行程)
-*   **LLM 描述**：`Mark a specific routine as completed and log a life event for the elder.`
-*   **輸入參數 (Input Parameters)**：
+### 2.2 `complete_routine` (確�?完�?行�?)
+*   **LLM ?�述**：`Mark a specific routine as completed and log a life event for the elder.`
+*   **輸入?�數 (Input Parameters)**�?
     ```json
     {
       "type": "object",
       "properties": {
         "elder_id": {
           "type": "string",
-          "description": "長者的唯一識別 ID，例如 eld_001"
+          "description": "?�者�??��?識別 ID，�?�?eld_001"
         },
         "routine_id": {
           "type": "string",
-          "description": "要完成的行程 ID，例如 rtn_001"
+          "description": "要�??��?行�? ID，�?�?rtn_001"
         },
         "date": {
           "type": "string",
-          "description": "完成的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
+          "description": "完�??�日?��??��???YYYY-MM-DD，�?�?2026-07-20"
         },
         "completed_by": {
           "type": "string",
           "enum": ["conversation", "elder", "caregiver"],
-          "description": "完成此行程的角色，口語回報一律填 conversation"
+          "description": "完�?此�?程�?角色，口語�??��?律填 conversation"
         }
       },
       "required": ["elder_id", "routine_id", "date", "completed_by"]
     }
     ```
-*   **回傳資料 (Output JSON)**：
+*   **?�傳資�? (Output JSON)**�?
     ```json
     {
       "status": "success",
@@ -182,25 +182,25 @@
 
 ---
 
-### 2.3 `create_routine` (建立新行程)
-*   **LLM 描述**：`Create a new scheduled routine (either one-time or recurring) for the elder.`
-*   **輸入參數 (Input Parameters)**：
+### 2.3 `create_routine` (建�??��?�?
+*   **LLM ?�述**：`Create a new scheduled routine (either one-time or recurring) for the elder.`
+*   **輸入?�數 (Input Parameters)**�?
     ```json
     {
       "type": "object",
       "properties": {
         "elder_id": {
           "type": "string",
-          "description": "長者的唯一識別 ID，例如 eld_001"
+          "description": "?�者�??��?識別 ID，�?�?eld_001"
         },
         "title": {
           "type": "string",
-          "description": "行程的標題或內容，例如：吃血壓藥、看心臟科、跟兒子散步"
+          "description": "行�??��?題�??�容，�?如�??��?壓藥?��?心�?科、�??��???��"
         },
         "type": {
           "type": "string",
           "enum": ["diet", "activity", "sleep", "medication", "wellbeing", "other"],
-          "description": "行程類型分類"
+          "description": "行�?類�??��?"
         },
         "schedule": {
           "type": "object",
@@ -208,21 +208,21 @@
             "freq": {
               "type": "string",
               "enum": ["daily", "weekly", "once"],
-              "description": "頻率：每日、每週、單次"
+              "description": "?��?：�??�、�??�、單�?
             },
             "date": {
               "type": "string",
-              "description": "如果是單次(once)行程，必須提供日期 YYYY-MM-DD；每日或每週則免"
+              "description": "如�??�單�?once)行�?，�??��?供日??YYYY-MM-DD；�??��?每週�???
             },
             "time": {
               "type": "string",
-              "description": "行程時間，格式為 HH:MM，例如 15:30"
+              "description": "行�??��?，格式為 HH:MM，�?�?15:30"
             },
             "weekday": {
               "type": "integer",
               "minimum": 1,
               "maximum": 7,
-              "description": "如果是每週(weekly)行程，必須提供星期幾（1=週一，7=週日）"
+              "description": "如�??��???weekly)行�?，�??��?供�??�幾�?=?��?�?=?�日�?
             }
           },
           "required": ["freq", "time"]
@@ -231,38 +231,38 @@
       "required": ["elder_id", "title", "type", "schedule"]
     }
     ```
-*   **回傳資料 (Output JSON)**：
+*   **?�傳資�? (Output JSON)**�?
     ```json
     {
       "status": "success",
       "routine_id": "rtn_003",
-      "title": "看醫生",
+      "title": "?�醫??,
       "scheduled_at": "2026-07-21T15:00:00+08:00"
     }
     ```
 
 ---
 
-### 2.4 `get_recent_events` (查詢生活事件歷史)
-*   **LLM 描述**：`Retrieve recent life events, activities, and recorded health signals for the elder.`
-*   **輸入參數 (Input Parameters)**：
+### 2.4 `get_recent_events` (?�詢?�活事件歷史)
+*   **LLM ?�述**：`Retrieve recent life events, activities, and recorded health signals for the elder.`
+*   **輸入?�數 (Input Parameters)**�?
     ```json
     {
       "type": "object",
       "properties": {
         "elder_id": {
           "type": "string",
-          "description": "長者的唯一識別 ID，例如 eld_001"
+          "description": "?�者�??��?識別 ID，�?�?eld_001"
         },
         "event_type": {
           "type": "string",
-          "description": "可選的事件類型過濾，例如：routine_completion, wellbeing, activity, family, diet, other"
+          "description": "?�選?��?件�??��?濾�?例�?：routine_completion, wellbeing, activity, family, diet, other"
         }
       },
       "required": ["elder_id"]
     }
     ```
-*   **回傳資料 (Output JSON)**：
+*   **?�傳資�? (Output JSON)**�?
     ```json
     {
       "status": "success",
@@ -272,7 +272,7 @@
           "event_id": "evt_001",
           "elder_id": "eld_001",
           "type": "routine_completion",
-          "detail": "完成吃血壓藥",
+          "detail": "完�??��?壓藥",
           "ts": "2026-07-20T09:05:00+08:00"
         }
       ]
@@ -281,58 +281,58 @@
 
 ---
 
-### 2.5 `get_elder_profile` (查詢長者喜好與個人檔案)
-*   **LLM 描述**：`Retrieve personal preferences, hobbies, health notes, and family members of the elder.`
-*   **輸入參數 (Input Parameters)**：
+### 2.5 `get_elder_profile` (?�詢?�者�?好�??�人檔�?)
+*   **LLM ?�述**：`Retrieve personal preferences, hobbies, health notes, and family members of the elder.`
+*   **輸入?�數 (Input Parameters)**�?
     ```json
     {
       "type": "object",
       "properties": {
         "elder_id": {
           "type": "string",
-          "description": "長者的唯一識別 ID，例如 eld_001"
+          "description": "?�者�??��?識別 ID，�?�?eld_001"
         }
       },
       "required": ["elder_id"]
     }
     ```
-*   **回傳資料 (Output JSON)**：
+*   **?�傳資�? (Output JSON)**�?
     ```json
     {
       "status": "success",
       "data": {
         "elder_id": "eld_001",
-        "name": "林阿蘭",
-        "nickname": "阿蘭嬤",
-        "health_notes": ["有高血壓歷史", "左膝關節不適"],
-        "family": [{"name": "小明", "relation": "兒子"}],
-        "preferences": {"tea": "高山烏龍茶", "music": "鄧麗君經典金曲"}
+        "name": "?�阿??,
+        "nickname": "?�蘭�?,
+        "health_notes": ["?��?血壓歷??, "左�??��?不適"],
+        "family": [{"name": "小�?", "relation": "?��?"}],
+        "preferences": {"tea": "高山?��???, "music": "?��??��??��???}
       }
     }
     ```
 
 ---
 
-### 2.6 `remind_pending_routines` (主動提醒待辦行程)
-*   **LLM 描述**：`Check and retrieve pending scheduled routines for the elder to generate warm reminders.`
-*   **輸入參數 (Input Parameters)**：
+### 2.6 `remind_pending_routines` (主�??��?待辦行�?)
+*   **LLM ?�述**：`Check and retrieve pending scheduled routines for the elder to generate warm reminders.`
+*   **輸入?�數 (Input Parameters)**�?
     ```json
     {
       "type": "object",
       "properties": {
         "elder_id": {
           "type": "string",
-          "description": "長者的唯一識別 ID，例如 eld_001"
+          "description": "?�者�??��?識別 ID，�?�?eld_001"
         },
         "date": {
           "type": "string",
-          "description": "查詢的日期，格式為 YYYY-MM-DD"
+          "description": "?�詢?�日?��??��???YYYY-MM-DD"
         }
       },
       "required": ["elder_id"]
     }
     ```
-*   **回傳資料 (Output JSON)**：
+*   **?�傳資�? (Output JSON)**�?
     ```json
     {
       "status": "success",
@@ -341,7 +341,7 @@
       "pending_routines": [
         {
           "routine_id": "rtn_001",
-          "title": "吃晚間血壓藥",
+          "title": "?��??��?壓藥",
           "scheduled_at": "2026-07-20T19:00:00+08:00",
           "status": "pending"
         }
@@ -351,27 +351,91 @@
 
 ---
 
-## 3. 對話引導與工具調用實例
+## 3. 對話引�??�工?�調?�實�?
 
-以下展示 Bedrock Agent 如何在與長者的對話中流暢調用上述工具：
+以�?展示 Bedrock Agent 如�??��??�者�?對話中�??�調?��?述工?��?
 
-### 實例 A：長者詢問行程 ➔ 調用 `get_today_routines`
-*   **長者**：「我今天吃過血壓藥了嗎？」
-*   **Agent (Claude)**：*(判定意圖為查詢今日用藥狀態)*
-    *   **呼叫工具**：`get_today_routines(elder_id="eld_001", date="2026-07-20")`
-    *   **工具回傳**：回傳吃血壓藥 `rtn_001` 的 `status: pending`。
-*   **Agent 回覆**：「阿蘭嬤，我看你今天的血壓藥還沒有吃喔！現在已經十點了，要記得趕快吃藥喔。」
+### 實�? A：長?�詢?��?�???調用 `get_today_routines`
+*   **?��?*：「�?今天?��?血壓藥了�?？�?
+*   **Agent (Claude)**�?(?��??��??�查詢�??�用?��???*
+    *   **?�叫工具**：`get_today_routines(elder_id="eld_001", date="2026-07-20")`
+    *   **工具?�傳**：�??��?血壓藥 `rtn_001` ??`status: pending`??
+*   **Agent ?��?**：「阿?�嬤，�??��?今天?��?壓藥?��??��??��??�在已�??��?了�?要�?得�?快�??��??��?
 
-### 實例 B：長者口頭完成行程 ➔ 調用 `complete_routine`
-*   **長者**：「好啦，我現在把血壓藥吞下去了。」
-*   **Agent (Claude)**：*(判定意圖為完成今日用藥)*
-    *   **呼叫工具**：`complete_routine(elder_id="eld_001", routine_id="rtn_001", date="2026-07-20", completed_by="conversation")`
-    *   **工具回傳**：`{ "status": "success", "routine_id": "rtn_001" }`
-*   **Agent 回覆**：「太棒了！有按時吃藥身體才會健健康康。我已經幫你把這個行程記下來了喔。」
+### 實�? B：長?�口?��??��?�???調用 `complete_routine`
+*   **?��?*：「好?��??�現?��?血壓藥?��??��??��?
+*   **Agent (Claude)**�?(?��??��??��??��??�用??*
+    *   **?�叫工具**：`complete_routine(elder_id="eld_001", routine_id="rtn_001", date="2026-07-20", completed_by="conversation")`
+    *   **工具?�傳**：`{ "status": "success", "routine_id": "rtn_001" }`
+*   **Agent ?��?**：「太棒�?！�??��??�藥身�??��??�健康康?��?已�?幫�??�這個�?程�?下�?了�??��?
 
-### 實例 C：長者新增未來行程 ➔ 調用 `create_routine`
-*   **長者**：「明天下午三點，阿明要帶我去看心臟科醫生。」
-*   **Agent (Claude)**：*(判定意圖為建立新的單次行程)*
-    *   **呼叫工具**：`create_routine(elder_id="eld_001", title="看心臟科", type="other", schedule={"freq": "once", "date": "2026-07-21", "time": "15:00"})`
-    *   **工具回傳**：`{ "status": "success", "routine_id": "rtn_003" }`
-*   **Agent 回覆**：「阿蘭嬤，我已經幫你記下來了！明天下午三點去看心臟科醫生，到時候我會再提醒你。」
+### 實�? C：長?�新增未來�?�???調用 `create_routine`
+*   **?��?*：「�?天�??��?點�??��?要帶?�去?��??��??��??��?
+*   **Agent (Claude)**�?(?��??��??�建立新?�單次�?�?*
+    *   **?�叫工具**：`create_routine(elder_id="eld_001", title="?��??��?", type="other", schedule={"freq": "once", "date": "2026-07-21", "time": "15:00"})`
+    *   **工具?�傳**：`{ "status": "success", "routine_id": "rtn_003" }`
+*   **Agent ?��?**：「阿?�嬤，�?已�?幫�?記�?來�?！�?天�??��?點去?��??��??��?，到?�候�??��??��?你。�?
+
+
+
+### 2.8 `update_routine` (更新例行行程)
+*   **LLM 描述**：`Update an existing scheduled routine (e.g., change time, title, or frequency) for the elder.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": { "type": "string" },
+        "routine_id": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string" },
+        "time": { "type": "string" },
+        "freq": { "type": "string" },
+        "date": { "type": "string" },
+        "remind": { "type": "boolean" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["elder_id", "routine_id"]
+    }
+    ```
+
+### 2.9 `deactivate_routine` (停用例行行程)
+*   **LLM 描述**：`Deactivate or cancel an existing scheduled routine for the elder.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": { "type": "string" },
+        "routine_id": { "type": "string" }
+      },
+      "required": ["elder_id", "routine_id"]
+    }
+    ```
+
+### 2.10 `get_daily_summaries` (查詢每日健康摘要)
+*   **LLM 描述**：`Retrieve recent daily health summaries for the elder.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": { "type": "string" },
+        "days": { "type": "integer" }
+      },
+      "required": ["elder_id"]
+    }
+    ```
+
+### 2.11 `get_recent_conversations` (查詢對話紀錄)
+*   **LLM 描述**：`Retrieve recent conversation history between the elder and the agent.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": { "type": "string" }
+      },
+      "required": ["elder_id"]
+    }
+    ```
