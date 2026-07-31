@@ -162,11 +162,9 @@ def reserve(
         "source": "elder_initiated",
         "user_status": "replied",
         "routines_updated": False,
-        "rt_extraction_status": "pending",
-        "rt_extraction_attempts": 0,
-        "batch_extraction_status": "pending",
         "schema_version": 1,
         **turn,
+
         "elder_id": elder_id,
         "record_id": turn_record_id(conversation_id),
         "conversation_time_key": f"{created_at}#{conversation_id}",
@@ -327,10 +325,9 @@ def commit(
             "request_status": STATUS_COMPLETED,
             "system_status": "success",
             "ai_responded_at": completed_at,
-            "rt_extraction_status": STATUS_COMPLETED,
-            "rt_extracted_at": completed_at,
         }
     )
+
     turn_values.update(
         db.to_attribute_values({":processing": STATUS_PROCESSING, ":owner": owner})
     )
