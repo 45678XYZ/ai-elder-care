@@ -1,12 +1,428 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
-/// 照護者模式——每日摘要列表。
+import '../../shared/models/daily_summary.dart';
+import '../../shared/models/api_page.dart';
+import '../../shared/services/care_repository.dart';
+import '../../shared/services/session_store.dart';
+import '../../shared/widgets/app_card.dart';
+import '../../shared/widgets/async_view.dart';
+import '../../shared/widgets/care_header.dart';
+import '../../shared/widgets/status_chip.dart';
+import '../../theme/app_theme.dart';
+
+/// S5 `/care/summary` — 照護者每日摘要。
 ///
-/// GET /summaries（固定六類 sections，null 顯示「今日對話未提及」）；
-/// 另提供手動觸發 POST /summaries/generate。
-class SummariesScreen extends StatelessWidget {
+/// `GET /summaries`：固定七類 sections，null 也要出現而不是留白——「沒提到」本身是資訊，
+/// 跟「沒資料」不一樣。但這句話只在摘要完整時成立，partial 時要換成「尚未整理到」
+/// （見 [_SectionRow._emptyText]）。
+///
+/// 另外處理 api.md 的 hybrid 特性：摘要可能是 `partial`（當日還有對話沒整理完），
+/// 這件事一定要讓照護者看見，否則會把半份摘要當成一整天的全貌。
+class SummariesScreen extends StatefulWidget {
   const SummariesScreen({super.key});
 
   @override
-  Widget build(BuildContext context) => const Placeholder(); // TODO
+  State<SummariesScreen> createState() => _SummariesScreenState();
+}
+
+class _SummariesScreenState extends State<SummariesScreen> {
+  late Future<ApiPage<DailySummary>> _future;
+  bool _generating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  void _load() {
+    _future = _fetch();
+  }
+
+  Future<ApiPage<DailySummary>> _fetch() async {
+    await AppSession.instance.ensureEldersLoaded();
+    return CareRepo.instance
+        .summaries(elderId: AppSession.instance.selectedElderId!);
+  }
+
+  void _reload() => setState(_load);
+
+  /// 手動生成（Demo 用）。§13：>300ms 要有可見 loading，成功要有明確回饋。
+  ///
+  /// 生成完重拉列表而不是直接把回傳的那筆塞進畫面：`POST /summaries/generate` 回的是
+  /// 單一物件，而這一頁顯示的是最近幾天的列表，重拉才能保證兩者一致。
+  Future<void> _generate() async {
+    setState(() => _generating = true);
+    try {
+      await CareRepo.instance
+          .generateSummary(elderId: AppSession.instance.selectedElderId!);
+      if (!mounted) return;
+      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: AppColors.barDark,
+          content: Text('已重新產生今日摘要', style: TextStyle(color: AppColors.onDark)),
+        ),
+      );
+    } catch (e) {
+      // 生成失敗要講出來：不講的話照護者會以為畫面上這份就是剛生成的最新結果。
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.barDark,
+          content: Text('產生摘要失敗：$e',
+              style: const TextStyle(color: AppColors.onDark)),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.app,
+      body: SafeArea(
+        child: Column(
+          children: [
+            CareHeader(
+              title: '每日摘要',
+              subtitle: '每天一份，內容取自長輩的對話',
+              onElderChanged: (_) => _reload(),
+              trailing: _GenerateButton(
+                busy: _generating,
+                onPressed: _generating ? null : _generate,
+              ),
+            ),
+            Expanded(
+              child: AsyncView<ApiPage<DailySummary>>(
+                future: _future,
+                onRetry: _reload,
+                isEmpty: (p) => p.items.isEmpty,
+                emptyIcon: Icons.wb_sunny_outlined,
+                emptyText: '還沒有摘要\n長輩開始對話後，每天會自動整理一份',
+                builder: (context, page) => ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  itemCount: page.items.length,
+                  itemBuilder: (context, i) => Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+                    child: _SummaryCard(
+                      key: ValueKey(page.items[i].date),
+                      summary: page.items[i],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GenerateButton extends StatelessWidget {
+  const _GenerateButton({required this.busy, required this.onPressed});
+
+  final bool busy;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 48, // >=48dp
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: busy
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: AppColors.accent),
+              )
+            : const Icon(Icons.refresh, size: 18),
+        label: Text(busy ? '產生中' : '重新產生',
+            style: Theme.of(context).textTheme.labelSmall),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.ink,
+          side: const BorderSide(color: AppColors.border),
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(AppRadius.field),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 單日摘要卡：日期塊 → 完整度 → 總覽 → 警訊 → 七類 → 例行公事。
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({super.key, required this.summary});
+
+  final DailySummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      radius: AppRadius.cardLarge,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Wrap 而非 Row：字級放大到兩倍時日期塊與次數並排會超出卡片寬度，
+          // 換行讓兩者各佔一行，不必犧牲任何一邊的內容（不做 ellipsis）。
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                // 摘要日期塊：底 #f3ecdd、圓角 12（design-system/pages/caregiver-mode.md）
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: const BoxDecoration(
+                    color: AppColors.app,
+                    borderRadius: BorderRadius.all(AppRadius.field),
+                  ),
+                  child:
+                      Text(_dateLabel(summary.date), style: text.labelMedium),
+                ),
+                Text('${summary.interactionCount} 次對話',
+                    style: text.bodySmall
+                        ?.copyWith(color: AppColors.inkSecondary)),
+              ],
+            ),
+          ),
+
+          // partial：hybrid 架構下這份摘要還沒涵蓋整天，必須明說
+          if (summary.isPartial) ...[
+            const SizedBox(height: AppSpacing.md),
+            _PartialNotice(pending: summary.pendingSessionCount),
+          ],
+
+          if (summary.overview != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            Text(summary.overview!, style: text.bodyLarge),
+          ],
+
+          if (summary.alerts.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.md),
+            for (final a in summary.alerts)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                child: _AlertRow(a),
+              ),
+          ],
+
+          const SizedBox(height: AppSpacing.lg),
+          const SectionHeader('生活紀錄'),
+          const SizedBox(height: AppSpacing.sm),
+          AppCard.nested(
+            child: Column(
+              children: [
+                for (final e in _sectionEntries(summary.sections))
+                  _SectionRow(
+                    category: e.$1,
+                    content: e.$2,
+                    isPartial: summary.isPartial,
+                  ),
+              ],
+            ),
+          ),
+
+          if (summary.routines.items.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.lg),
+            SectionHeader(
+              '例行公事',
+              trailing: Text(
+                '完成 ${summary.routines.completed}・未完成 ${summary.routines.missed}',
+                style: text.bodySmall?.copyWith(color: AppColors.inkSecondary),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                for (final r in summary.routines.items)
+                  _RoutinePill(title: r.title, status: r.status),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 七類固定全列，null 也要出現——「沒提到」本身就是給照護者的資訊
+  /// （摘要不完整時那句話要換成別的，見 [_SectionRow._emptyText]）。
+  /// 順序照 api.md 的 `EventType`。
+  List<(EventCategory, String?)> _sectionEntries(SummarySections s) => [
+        (EventCategory.diet, s.diet),
+        (EventCategory.activity, s.activity),
+        (EventCategory.sleep, s.sleep),
+        (EventCategory.medication, s.medication),
+        (EventCategory.wellbeing, s.wellbeing),
+        (EventCategory.safety, s.safety),
+        (EventCategory.other, s.other),
+      ];
+
+  static String _dateLabel(String iso) {
+    final parts = iso.split('-');
+    if (parts.length != 3) return iso;
+    return '${int.tryParse(parts[1]) ?? parts[1]} 月 ${int.tryParse(parts[2]) ?? parts[2]} 日';
+  }
+}
+
+/// 摘要不完整的提示。用 icon＋文字，不只靠底色（§6）。
+///
+/// 措辭是「還沒納入」而不是「正在整理」：`pending_session_count` 把三種 session 加總
+/// 成一個數字（api.md）——長者可能**還在講**、批次排隊中、或批次**已經失敗**。
+/// 「正在整理」只有中間那種成立，另外兩種會讓照護者以為等一下就會好；失敗的那筆
+/// 不重跑永遠不會好。「還沒納入」三種都是實話，也正好是照護者要知道的那件事。
+class _PartialNotice extends StatelessWidget {
+  const _PartialNotice({required this.pending});
+
+  /// 尚未納入這份摘要的 session 數。後端一律往「還沒好」的方向算（狀態不明、
+  /// 甚至查不到的 session 都計入），所以這是**上界**——實際可能更少，不會更多。
+  final int pending;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: const BoxDecoration(
+        color: AppColors.warnBg,
+        borderRadius: BorderRadius.all(AppRadius.field),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.hourglass_bottom, size: 18, color: AppColors.warnFg),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              pending > 0
+                  ? '還有 $pending 段對話還沒納入，這份摘要尚未涵蓋今天全部內容。'
+                  : '這份摘要尚未涵蓋今天全部內容。',
+              style: text.bodySmall?.copyWith(color: AppColors.warnFg),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AlertRow extends StatelessWidget {
+  const _AlertRow(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.priority_high, size: 18, color: AppColors.warnFg),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Text(message,
+              style: text.bodyMedium?.copyWith(color: AppColors.warnFg)),
+        ),
+      ],
+    );
+  }
+}
+
+class _SectionRow extends StatelessWidget {
+  const _SectionRow({
+    required this.category,
+    required this.content,
+    required this.isPartial,
+  });
+
+  final EventCategory category;
+  final String? content;
+
+  /// 這份摘要是否尚未涵蓋當日全部對話，決定空值那句話怎麼寫。
+  final bool isPartial;
+
+  /// 空值文案。
+  ///
+  /// 摘要完整時「未提及」是一句斷言，而且它本身就是資訊——長輩今天沒講到睡得如何，
+  /// 照護者是該知道的。但摘要 partial 時那句話不成立：還沒納入的那幾段對話裡可能
+  /// 正好講了這一類，只是還沒整理到。把「還沒整理到」寫成「長輩沒提到」，是拿
+  /// 不知道的事當成知道的事講。
+  ///
+  /// 這與頂部的 [_PartialNotice] 是同一件事的兩半：頭上已經說了這份不完整，
+  /// 往下每一行卻還在斷言「沒提到」，兩者互相矛盾。
+  String get _emptyText => isPartial ? '尚未整理到這一類' : '今日對話未提及';
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final empty = content == null || content!.trim().isEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 固定寬度標籤欄，讓七類的內容左緣對齊；用 Wrap 之外的最小可預測排版
+          SizedBox(
+            width: 56,
+            child: Text(category.label,
+                style: text.labelSmall?.copyWith(color: category.fg)),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              empty ? _emptyText : content!,
+              style: text.bodyMedium?.copyWith(
+                color: empty ? AppColors.chevron : AppColors.ink,
+                fontStyle: empty ? FontStyle.italic : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RoutinePill extends StatelessWidget {
+  const _RoutinePill({required this.title, required this.status});
+
+  final String title;
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = RoutineStatusStyle.from(status);
+    final text = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: s.bg,
+        borderRadius: const BorderRadius.all(AppRadius.pill),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(s.icon, size: 15, color: s.fg),
+          const SizedBox(width: 5),
+          Text(title, style: text.bodySmall?.copyWith(color: s.fg)),
+        ],
+      ),
+    );
+  }
 }
