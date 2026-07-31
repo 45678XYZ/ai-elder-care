@@ -178,7 +178,7 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool, bool]
             # 檢查 Response Trace 是否觸發了 routines 相關工具或通知工具
             if "trace" in event:
                 trace_str = str(event["trace"])
-                if "complete_routine" in trace_str or "create_routine" in trace_str:
+                if any(tool in trace_str for tool in ("complete_routine", "create_routine", "update_routine", "deactivate_routine")):
                     routines_updated = True
                 if "notify_caregiver" in trace_str:
                     safety_alert_triggered = True
