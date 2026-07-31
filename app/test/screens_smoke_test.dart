@@ -284,12 +284,20 @@ void main() {
     testWidgets('七類固定全列，沒提到的顯示提示而不是留白', (tester) async {
       await pumpTall(tester, const SummariesScreen());
 
-      // 假資料今天的 other 為 null
+      // 假資料裡完整的那兩天有 null 分類（safety／activity／other）
       expect(find.text('今日對話未提及'), findsWidgets);
       // 七類的標籤每天都要出現，包含新增的安全類（三天摘要 → 每個標籤三次）
       for (final c in EventCategory.values) {
         expect(find.text(c.label), findsNWidgets(3));
       }
+    });
+
+    testWidgets('摘要不完整時，空的分類不說「未提及」', (tester) async {
+      await pumpTall(tester, const SummariesScreen());
+
+      // 「未提及」是一句斷言，只有摘要完整時才成立；還有對話沒納入時，那一類
+      // 可能正好在沒整理到的段落裡。假資料今天那筆是 partial 且 other 為 null。
+      expect(find.text('尚未整理到這一類'), findsWidgets);
     });
 
     testWidgets('partial 摘要要明講尚未涵蓋整天', (tester) async {

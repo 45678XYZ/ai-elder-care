@@ -12,8 +12,9 @@ import '../../theme/app_theme.dart';
 
 /// S5 `/care/summary` — 照護者每日摘要。
 ///
-/// `GET /summaries`：固定七類 sections，null 顯示「今日對話未提及」而不是留白——
-/// 「沒提到」本身是資訊，跟「沒資料」不一樣。
+/// `GET /summaries`：固定七類 sections，null 也要出現而不是留白——「沒提到」本身是資訊，
+/// 跟「沒資料」不一樣。但這句話只在摘要完整時成立，partial 時要換成「尚未整理到」
+/// （見 [_SectionRow._emptyText]）。
 ///
 /// 另外處理 api.md 的 hybrid 特性：摘要可能是 `partial`（當日還有對話沒整理完），
 /// 這件事一定要讓照護者看見，否則會把半份摘要當成一整天的全貌。
@@ -226,7 +227,11 @@ class _SummaryCard extends StatelessWidget {
             child: Column(
               children: [
                 for (final e in _sectionEntries(summary.sections))
-                  _SectionRow(category: e.$1, content: e.$2),
+                  _SectionRow(
+                    category: e.$1,
+                    content: e.$2,
+                    isPartial: summary.isPartial,
+                  ),
               ],
             ),
           ),
@@ -255,7 +260,8 @@ class _SummaryCard extends StatelessWidget {
     );
   }
 
-  /// 七類固定全列，null 也要出現——「今日對話未提及」本身就是給照護者的資訊。
+  /// 七類固定全列，null 也要出現——「沒提到」本身就是給照護者的資訊
+  /// （摘要不完整時那句話要換成別的，見 [_SectionRow._emptyText]）。
   /// 順序照 api.md 的 `EventType`。
   List<(EventCategory, String?)> _sectionEntries(SummarySections s) => [
         (EventCategory.diet, s.diet),
@@ -338,10 +344,28 @@ class _AlertRow extends StatelessWidget {
 }
 
 class _SectionRow extends StatelessWidget {
-  const _SectionRow({required this.category, required this.content});
+  const _SectionRow({
+    required this.category,
+    required this.content,
+    required this.isPartial,
+  });
 
   final EventCategory category;
   final String? content;
+
+  /// 這份摘要是否尚未涵蓋當日全部對話，決定空值那句話怎麼寫。
+  final bool isPartial;
+
+  /// 空值文案。
+  ///
+  /// 摘要完整時「未提及」是一句斷言，而且它本身就是資訊——長輩今天沒講到睡得如何，
+  /// 照護者是該知道的。但摘要 partial 時那句話不成立：還沒納入的那幾段對話裡可能
+  /// 正好講了這一類，只是還沒整理到。把「還沒整理到」寫成「長輩沒提到」，是拿
+  /// 不知道的事當成知道的事講。
+  ///
+  /// 這與頂部的 [_PartialNotice] 是同一件事的兩半：頭上已經說了這份不完整，
+  /// 往下每一行卻還在斷言「沒提到」，兩者互相矛盾。
+  String get _emptyText => isPartial ? '尚未整理到這一類' : '今日對話未提及';
 
   @override
   Widget build(BuildContext context) {
@@ -362,7 +386,7 @@ class _SectionRow extends StatelessWidget {
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Text(
-              empty ? '今日對話未提及' : content!,
+              empty ? _emptyText : content!,
               style: text.bodyMedium?.copyWith(
                 color: empty ? AppColors.chevron : AppColors.ink,
                 fontStyle: empty ? FontStyle.italic : null,
