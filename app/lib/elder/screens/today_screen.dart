@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../shared/models/routine.dart';
 import '../../shared/services/care_repository.dart';
 import '../../shared/services/lunar_date.dart';
+import '../../shared/services/routine_sync.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/services/taiwan_holiday.dart';
 import '../../shared/widgets/app_card.dart';
@@ -43,6 +44,26 @@ class _TodayScreenState extends State<TodayScreen> {
   void initState() {
     super.initState();
     _load();
+    // 兩個 tab 掛在 StatefulNavigationShell 底下，切走再切回來這個 State 是留著的、
+    // initState 不會重跑。長輩在聊天頁講完「藥吃了」而行程被標成完成時，就是靠這個
+    // 監聽把畫面換掉——否則切回來看到的還是切走前那份。
+    RoutineSync.revision.addListener(_onRoutinesChanged);
+  }
+
+  @override
+  void dispose() {
+    RoutineSync.revision.removeListener(_onRoutinesChanged);
+    super.dispose();
+  }
+
+  void _onRoutinesChanged() {
+    if (!mounted) return;
+    setState(() {
+      // 樂觀更新的那份要清掉：重拉之後狀態以資料來源為準，留著會蓋住真實狀態
+      // （例如後端其實沒記成功，畫面卻永遠顯示已完成）。
+      _justCompleted.clear();
+      _load();
+    });
   }
 
   void _load() {

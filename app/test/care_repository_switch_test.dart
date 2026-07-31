@@ -3,6 +3,7 @@ import 'package:ai_elder_care/caregiver/screens/timeline_screen.dart'
     show TimelineScreen, filterBarKey;
 import 'package:ai_elder_care/shared/models/api_page.dart';
 import 'package:ai_elder_care/shared/models/caregiver.dart';
+import 'package:ai_elder_care/shared/models/chat_reply.dart';
 import 'package:ai_elder_care/shared/models/daily_summary.dart';
 import 'package:ai_elder_care/shared/models/elder.dart';
 import 'package:ai_elder_care/shared/models/life_event.dart';
@@ -84,6 +85,17 @@ void main() {
 class _FakeRepo implements CareRepository {
   /// 每次查事件用的 `type`，依序記下來——用來驗證換分類真的重查了。
   final eventTypeQueries = <String?>[];
+
+  @override
+  Future<ChatReply> chat({
+    required String elderId,
+    required String lang,
+    required String text,
+  }) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> closeChat() async {}
 
   @override
   Future<Caregiver> me({required String sub}) async =>

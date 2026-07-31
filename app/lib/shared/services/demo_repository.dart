@@ -1,10 +1,12 @@
 import '../models/api_page.dart';
 import '../models/caregiver.dart';
+import '../models/chat_reply.dart';
 import '../models/daily_summary.dart';
 import '../models/elder.dart';
 import '../models/life_event.dart';
 import '../models/routine.dart';
 import '../models/stats.dart';
+import 'api_client.dart';
 import 'care_repository.dart';
 import 'demo_data.dart';
 
@@ -20,9 +22,132 @@ import 'demo_data.dart';
 ///
 /// TODO: 正式資料齊備後整檔連同 [DemoData] 移除。
 class DemoRepository implements CareRepository {
+  /// [api] 只有 [chat] 用得到（打本機 RAG PoC 取回覆文字）；測試可注入假的 HTTP client。
+  DemoRepository({ApiClient? api}) : _api = api ?? ApiClient();
+
   /// 第一次取用時從 [DemoData] 灌入，之後的寫入都改這一份。
   List<Elder>? _elders;
   List<Routine>? _routines;
+  List<RoutineOccurrence>? _occurrences;
+
+  /// [_occurrences] 是哪一天的。跨日時整份換掉。
+  String? _occurrenceDate;
+
+  /// demo 模式下回覆內容仍然來自本機 RAG PoC 的 `/ask`——那是真的模型回答，
+  /// 換成罐頭字串等於把 demo 最有價值的一段變成假的。
+  final ApiClient _api;
+
+  // ---- 對話 ----
+
+  /// 回覆文字來自本機 RAG PoC 的 `/ask`（真的模型回答）；`routines_updated` 則由
+  /// **本地關鍵字比對**推出來，見 [_matchCompletedRoutine]。
+  ///
+  /// ⚠️ **這裡的行程完成判定不是 AI 判斷的。** 正式路徑是後端 Bedrock Agent tool
+  /// calling 在回話之前就把完成寫進資料庫（api.md）；這條只是讓「講完話 → 今日畫面
+  /// 自己打勾」那段 App 端的路能在沒有後端時開發與驗證。
+  ///
+  /// 上台展示時若跑的是 demo 資料（`USE_BACKEND=false`），**不可以說那個勾是 AI 判斷的**
+  /// ——要展示那件事就得接真後端。demo-plan.md 也把 Act 2 列為唯一不能造假的部分。
+  @override
+  Future<ChatReply> chat({
+    required String elderId,
+    required String lang,
+    required String text,
+  }) async {
+    // 行程比對先做，而且不受回覆文字影響：RAG PoC 沒開的時候，這條路仍然要能走完
+    // ——不然「講完話 → 今日畫面自己打勾」在沒有任何後端的預覽環境裡永遠測不到。
+    final matched = await _matchCompletedRoutine(text);
+    final replyText = await _demoReplyText(text, matched);
+    return ChatReply(
+      conversationId: 'cnv_demo${DateTime.now().millisecondsSinceEpoch}',
+      sessionId: _demoSessionId ??=
+          'ses_demo${DateTime.now().millisecondsSinceEpoch}',
+      transcript: text,
+      replyText: replyText,
+      // demo 沒有 TTS 音檔；畫面在網址為空時退回裝置端 TTS。
+      replyAudioUrl: '',
+      routinesUpdated: matched != null,
+    );
+  }
+
+  @override
+  Future<void> closeChat() async => _demoSessionId = null;
+
+  /// demo 的回覆文字：認出行程完成就回確認，否則問本機 RAG PoC，連不上才用罐頭句子。
+  ///
+  /// **比對到行程時不問 PoC**：PoC 是衛教知識庫問答，它不知道有行程這回事，對
+  /// 「我早餐吃飽了」只會回「根據目前的資料庫，我找不到這個問題的答案」。那會湊出一個
+  /// 自相矛盾的畫面——嘴上說找不到答案，今日行程卻已經打勾了。正式後端沒有這個問題
+  /// （tool calling 的結果本來就會反映在回話裡），所以這裡讓 demo 這條路也自洽。
+  ///
+  /// 罐頭退路則是給「PoC 根本沒開」的情況：畫面的免手持迴圈靠「唸完回覆才接續聆聽」
+  /// 串起來，回覆拿不到整條就斷掉。它只是為了讓路走得完，**不代表 AI 說了這句話**，
+  /// 所以那句話自己會講明。
+  Future<String> _demoReplyText(String text, RoutineOccurrence? matched) async {
+    if (matched != null) return '好，「${matched.title}」我幫你記下來了。';
+    try {
+      final answer = await _api.ask(text);
+      if (answer.answer.trim().isNotEmpty) return answer.answer;
+    } catch (_) {
+      // 落到下面的罐頭回覆
+    }
+    return '我聽到了。（示範資料：目前沒有連上對話後端，這句話不是 AI 產生的）';
+  }
+
+  /// 這句話有沒有講到某筆還沒完成的行程「做完了」。
+  ///
+  /// 粗糙但夠用的兩段判斷：句子裡要有完成語氣詞，而且要跟某筆行程的標題有至少兩個字
+  /// 連續重疊（「血壓藥吃了」對上「吃血壓藥」的「血壓藥」）。兩個字是刻意的下限——
+  /// 一個字會讓「吃飯了」誤中「吃血壓藥」。
+  ///
+  /// **取重疊最長的那一筆，而且比完才看完成狀態**，不是掃到第一個夠格的就收。
+  /// demo 資料裡「吃血壓藥」與「量血壓」同時存在，先到先得會這樣錯：「吃血壓藥」
+  /// 已完成 → 跳過 → 往下撞到「量血壓」也含「血壓」→ 打錯勾。而 demo 分鏡裡吃藥與
+  /// 量血壓正好是分開的兩件事，這一錯台上就看得到。改成先選最像的那筆，若它已經完成
+  /// 就什麼都不做——長輩再說一次「藥吃了」，答案本來就該是「已經記過了」。
+  ///
+  /// 這是 demo 用的鷹架，不是要模仿後端的判定邏輯（真的那套在 Bedrock Agent 那邊）。
+  Future<RoutineOccurrence?> _matchCompletedRoutine(String text) async {
+    const doneWords = ['了', '好', '完', '過'];
+    if (!doneWords.any(text.contains)) return null;
+
+    final items = await _mutableOccurrences(_occurrenceDate ?? _todayKey());
+    RoutineOccurrence? best;
+    var bestRun = 0;
+    for (final o in items) {
+      final run = _longestCommonRun(text, o.title);
+      if (run < 2) continue; // 至少要兩個字才算數
+      // 重疊一樣長時偏向還沒完成的那筆：「血壓量好了」對「吃血壓藥」與「量血壓」
+      // 都只重疊「血壓」，而長輩顯然是在講還沒做的那件。
+      final better = best == null ||
+          run > bestRun ||
+          (run == bestRun && best.status == 'done' && o.status != 'done');
+      if (better) {
+        bestRun = run;
+        best = o;
+      }
+    }
+    if (best == null || best.status == 'done') return null;
+    // completed_by 是 conversation：這筆是對話裡認出來的，不是誰按的。
+    return _markDone(best.routineId, by: 'conversation');
+  }
+
+  /// [a] 與 [b] 最長共同連續子字串的長度。
+  static int _longestCommonRun(String a, String b) {
+    var best = 0;
+    for (var i = 0; i < b.length; i++) {
+      for (var len = b.length - i; len > best; len--) {
+        if (a.contains(b.substring(i, i + len))) {
+          best = len;
+          break;
+        }
+      }
+    }
+    return best;
+  }
+
+  /// demo 的 session id，[closeChat] 之後換一個新的。
+  String? _demoSessionId;
 
   @override
   Future<Caregiver> me({required String sub}) => DemoData.me(sub: sub);
@@ -124,15 +249,21 @@ class DemoRepository implements CareRepository {
   Future<DailyRoutineView> dailyRoutines({
     required String elderId,
     required String date,
-  }) =>
-      DemoData.dailyRoutines(date);
+  }) async {
+    final items = await _mutableOccurrences(date);
+    return DailyRoutineView(date: date, items: List.of(items));
+  }
 
   @override
   Future<RoutineOccurrence> completeRoutine(
     RoutineOccurrence occurrence, {
     String? date,
-  }) =>
-      DemoData.completeRoutine(occurrence);
+  }) async {
+    // completed_by 是 elder：這條路是長者自己在今日畫面按下確認的。
+    // 對話裡由 AI 判定完成的那條走 [chat]，記的是 conversation。
+    final done = await _markDone(occurrence.routineId, by: 'elder');
+    return done ?? await DemoData.completeRoutine(occurrence);
+  }
 
   /// 取可寫的行程清單（必要時先灌初始資料）。
   Future<List<Routine>> _mutableRoutines(String? elderId) async {
@@ -141,6 +272,47 @@ class DemoRepository implements CareRepository {
     }
     return _routines!;
   }
+
+  /// 取可寫的當日 occurrence（必要時先灌初始資料）。
+  ///
+  /// 跨日換一份：demo 開著過午夜的機會不高，但拿昨天的清單當今天用會直接讓
+  /// 今日畫面顯示錯的日期資料，成本遠高於多存一個字串。
+  Future<List<RoutineOccurrence>> _mutableOccurrences(String date) async {
+    if (_occurrences == null || _occurrenceDate != date) {
+      final view = await DemoData.dailyRoutines(date);
+      _occurrences = List.of(view.items);
+      _occurrenceDate = date;
+    }
+    return _occurrences!;
+  }
+
+  /// 把某筆 occurrence 標成完成；找不到（或已完成）回 null。
+  Future<RoutineOccurrence?> _markDone(String routineId,
+      {required String by}) async {
+    final date = _occurrenceDate ?? _todayKey();
+    final items = await _mutableOccurrences(date);
+    final i = items.indexWhere((o) => o.routineId == routineId);
+    if (i < 0) return null;
+
+    final done = RoutineOccurrence(
+      routineId: items[i].routineId,
+      title: items[i].title,
+      type: items[i].type,
+      scheduledAt: items[i].scheduledAt,
+      status: 'done',
+      completedAt: DateTime.now(),
+      completedBy: by,
+    );
+    items[i] = done;
+    return done;
+  }
+
+  static String _todayKey() {
+    final n = DateTime.now();
+    return '${n.year}-${_two(n.month)}-${_two(n.day)}';
+  }
+
+  static String _two(int v) => v.toString().padLeft(2, '0');
 
   // ---- 摘要、事件、統計（唯讀，直接轉給 DemoData）----
 

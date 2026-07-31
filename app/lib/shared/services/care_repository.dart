@@ -1,12 +1,14 @@
 import '../config/api_config.dart';
 import '../models/api_page.dart';
 import '../models/caregiver.dart';
+import '../models/chat_reply.dart';
 import '../models/daily_summary.dart';
 import '../models/elder.dart';
 import '../models/life_event.dart';
 import '../models/routine.dart';
 import '../models/stats.dart';
 import 'api_repository.dart';
+import 'chat_session.dart';
 import 'demo_repository.dart';
 
 /// 畫面取資料的唯一入口——底下可能是真後端（[ApiRepository]）或 demo 假資料
@@ -20,6 +22,28 @@ import 'demo_repository.dart';
 /// 方法簽章一律貼著 docs/api.md 的端點（參數名、`elder_id` 必填與否、分頁游標），
 /// 不為了讓 demo 好寫而自創形狀——不然真接上時這一層本身又要改一次。
 abstract interface class CareRepository {
+  // ---- 對話（長者模式）----
+
+  /// `POST /chat` — 送一句話並取得 AI 回覆。
+  ///
+  /// `session_id` 與 `client_request_id` 由實作代管（見 [ChatSession]）：冪等鍵重送必須
+  /// 沿用同一個值，那條規則不該散落在畫面裡。
+  ///
+  /// 回應的 [ChatReply.routinesUpdated] 為 true 時，呼叫端要走 `RoutineSync.refresh()`
+  /// ——長輩用講的完成或新增行程，後端會寫進 routines，但本地通知與畫面是 App 自己的，
+  /// 不重整就看不到。
+  Future<ChatReply> chat({
+    required String elderId,
+    required String lang,
+    required String text,
+  });
+
+  /// `POST /chat/sessions/{id}/close` — 結束目前對話 session。
+  ///
+  /// 停止免手持互動、離開對話畫面或切換長者前呼叫；會凍結快照並啟動離線事件整理。
+  /// 沒有進行中的 session 時什麼都不做。
+  Future<void> closeChat();
+
   // ---- 呼叫者身分 ----
 
   /// `GET /me` — 照護者自己的身分。

@@ -3,9 +3,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../shared/services/api_client.dart';
+import '../../shared/models/chat_reply.dart';
 import '../../shared/services/api_exception.dart';
 import '../../shared/services/audio_service.dart';
+import '../../shared/services/care_repository.dart';
+import '../../shared/services/routine_sync.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/services/speech_service.dart';
 import '../../theme/app_theme.dart';
@@ -16,9 +18,12 @@ enum _Phase { idle, listening, thinking, speaking }
 
 /// S3 `/elder/chat` — 長者模式語音陪伴主畫面。
 ///
-/// 免手持迴圈：裝置端 ASR 聆聽（zh-TW）→ 送 `ask()`（現在）／`chat()`（之後）→ 裝置端 TTS
-/// 唸出回覆 → 唸完自動再聆聽（見 docs/framework.md）。此為第一版華語迴圈，接 RAG PoC 的
-/// `/ask`；正式後端上線後把 `ask()` 換成 `chat()`、TTS 換成播 reply_audio_url。
+/// 免手持迴圈：裝置端 ASR 聆聽（zh-TW）→ 送 `CareRepo.chat()` → 唸出回覆 →
+/// 唸完自動再聆聽（見 docs/framework.md）。回覆優先播後端合成的 `reply_audio_url`，
+/// 沒有才退回裝置端 TTS（見 [_speakReply]）。
+///
+/// 回覆帶 `routines_updated=true` 時走 [RoutineSync.refresh]：長輩用講的完成或新增行程，
+/// 後端會寫進 routines，但今日畫面與本地通知是 App 自己的，不重整就看不到。
 ///
 /// 長者規格：內文 >=24sp、觸控 >=60dp、可互動元素 <=3、語音有打字備援（§5）。
 /// 客語（isHakka）裝置端 ASR 不支援，需改走錄音送後端——目前 TODO，先沿用華語迴圈。
@@ -31,7 +36,6 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen>
     with SingleTickerProviderStateMixin {
-  final _api = ApiClient();
   final _speech = SpeechService();
   final _audio = AudioService();
 
@@ -90,7 +94,10 @@ class _ChatScreenState extends State<ChatScreen>
     _pulse.dispose();
     _speech.cancel();
     _audio.dispose();
-    _api.dispose();
+    // 離開對話畫面要關 session：凍結對話快照並啟動離線事件整理（api.md）。
+    // 不 await——dispose 不能是 async，而這件事本來就不必擋住畫面收掉；
+    // 萬一沒送到，後端的 idle closer 最終也會收斂它。
+    unawaited(CareRepo.instance.closeChat());
     super.dispose();
   }
 
@@ -185,21 +192,28 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollToBottom();
 
     try {
-      final result = await _api.ask(question);
-      // TODO(backend): 換成 chat() 之後，回覆帶 routines_updated
-      //   （見 ChatReply.routinesUpdated、api_client.dart 的 getRoutines 說明）。
-      //   為 true 時要 unawaited(syncReminders())——長輩用講的新增行程（「提醒我三點吃藥」）
-      //   後端會寫進 routines，但本地通知是 App 自己排的，不重排就要等下次啟動才會生效。
-      //   現在的 ask() 是 RAG PoC 端點，沒有這個欄位，所以還接不上。
+      final reply = await CareRepo.instance.chat(
+        elderId: AppSession.instance.selectedElderId ?? '',
+        lang: AppSession.instance.isHakka ? 'hak' : 'zh-TW',
+        text: question,
+      );
+
+      // 長輩用講的完成或新增了行程。重整不等回應也不擋這一輪對話——它只是背景把
+      // 今日畫面與本地通知換成新的（見 RoutineSync），對話本身不該為它停下來。
+      //
+      // 放在 seq 檢查之前是刻意的：這個副作用**已經發生在後端了**，使用者中途按停止
+      // 不會讓它回復。不重整的話，行程明明完成了，今日畫面卻還是舊的。
+      if (reply.routinesUpdated) unawaited(RoutineSync.refresh());
+
       // 使用者在等待期間按了停止（或又開了新的一輪）：這份回應已經沒人要了。
       // 不顯示、不唸、不改階段——那一輪的停止動作已經把畫面收成 idle。
       if (!mounted || seq != _turnSeq) return;
       setState(() {
-        _messages.add(_Message(isElder: false, text: result.answer));
+        _messages.add(_Message(isElder: false, text: reply.replyText));
         _setPhase(_Phase.speaking);
       });
       _scrollToBottom();
-      await _audio.speak(result.answer);
+      await _speakReply(reply);
     } on ApiException catch (_) {
       if (!mounted || seq != _turnSeq) return;
       setState(() => _conversationActive = false); // 出錯就停迴圈，避免一直重打
@@ -209,6 +223,23 @@ class _ChatScreenState extends State<ChatScreen>
     if (!mounted || seq != _turnSeq) return;
     setState(() => _setPhase(_Phase.idle));
     if (continueLoop && _conversationActive) _listenTurn();
+  }
+
+  /// 唸出回覆：優先播後端合成的音檔，沒有或播不出來就退回裝置端 TTS。
+  ///
+  /// 後端那把聲音才是長輩該聽到的（客語裝置端 TTS 根本唸不出來），但 presigned URL
+  /// 有時效、也可能載不動。這種時候寧可用裝置端唸出同一段文字，也不要讓長輩對著
+  /// 一個安靜的畫面等——免手持迴圈是靠「唸完自動再聆聽」串起來的，沒有聲音等於斷掉。
+  Future<void> _speakReply(ChatReply reply) async {
+    if (reply.replyAudioUrl.isNotEmpty) {
+      try {
+        await _audio.playUrl(reply.replyAudioUrl);
+        return;
+      } catch (_) {
+        // 落到下面的裝置端 TTS
+      }
+    }
+    await _audio.speak(reply.replyText);
   }
 
   // ---- 打字備援 ----

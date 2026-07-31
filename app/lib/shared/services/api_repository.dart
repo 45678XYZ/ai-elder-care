@@ -1,5 +1,6 @@
 import '../models/api_page.dart';
 import '../models/caregiver.dart';
+import '../models/chat_reply.dart';
 import '../models/daily_summary.dart';
 import '../models/elder.dart';
 import '../models/life_event.dart';
@@ -8,6 +9,7 @@ import '../models/stats.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 import 'care_repository.dart';
+import 'chat_session.dart';
 
 /// [CareRepository] 的真後端實作——把介面轉成 docs/api.md 的端點呼叫。
 ///
@@ -23,6 +25,35 @@ class ApiRepository implements CareRepository {
             ApiClient(tokenProvider: () async => AuthService.instance.idToken);
 
   final ApiClient _api;
+
+  /// 目前這位長者的對話 session。切換長者要換一個（session 屬於特定長者，混用會 403）。
+  ChatSession? _chat;
+
+  // ---- 對話 ----
+
+  @override
+  Future<ChatReply> chat({
+    required String elderId,
+    required String lang,
+    required String text,
+  }) async {
+    var chat = _chat;
+    // 換了長者或換了語言就重建：session 綁長者，lang 則決定後端 ASR/TTS 走哪一條，
+    // 兩者都是建構時決定的，沿用舊的等於把新的一句話送進上一位長輩的 session。
+    if (chat == null || chat.elderId != elderId || chat.lang != lang) {
+      await closeChat();
+      chat = _chat = ChatSession(api: _api, elderId: elderId, lang: lang);
+    }
+    return chat.send(text: text);
+  }
+
+  @override
+  Future<void> closeChat() async {
+    final chat = _chat;
+    if (chat == null) return;
+    _chat = null;
+    await chat.close();
+  }
 
   @override
   Future<Caregiver> me({required String sub}) => _api.getMe();
