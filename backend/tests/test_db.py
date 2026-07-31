@@ -98,6 +98,124 @@ def test_update_elder(mock_get_resource):
     mock_table.update_item.assert_called_once()
 
 
+# -----------------------------------------------------------------------------
+# health_notes：來源標示與併發安全
+# -----------------------------------------------------------------------------
+
+@patch("src.shared.db.get_dynamodb_resource")
+def test_create_elder_normalizes_health_notes(mock_get_resource):
+    """建立時把 health_notes 補成物件；舊格式的純字串一律當成照護者填的。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+
+    created = db.create_elder({
+        "name": "陳阿蘭",
+        "health_notes": ["高血壓", {"text": "膝關節退化", "source": "agent"}],
+    })
+
+    notes = created["health_notes"]
+    assert [n["text"] for n in notes] == ["高血壓", "膝關節退化"]
+    assert notes[0]["source"] == "caregiver"
+    assert notes[1]["source"] == "agent"
+    # note_id 與 created_at 一律補齊，刪除單筆時才有穩定的指定方式
+    assert all(n["note_id"].startswith("hn_") for n in notes)
+    assert all(n["created_at"] for n in notes)
+    assert len({n["note_id"] for n in notes}) == 2
+
+
+@patch("src.shared.db.get_dynamodb_resource")
+def test_append_health_note_is_atomic(mock_get_resource):
+    """append 走 list_append，不做 read-modify-write，才不會蓋掉併發寫入。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+    mock_table.update_item.return_value = {
+        "Attributes": {"elder_id": "eld_001", "health_notes": []}
+    }
+
+    db.append_health_note("eld_001", {"text": "最近膝蓋痛", "source": "agent"})
+
+    kwargs = mock_table.update_item.call_args.kwargs
+    assert "list_append" in kwargs["UpdateExpression"]
+    appended = kwargs["ExpressionAttributeValues"][":new"]
+    assert len(appended) == 1
+    assert appended[0]["text"] == "最近膝蓋痛"
+    assert appended[0]["source"] == "agent"
+    assert appended[0]["note_id"].startswith("hn_")
+
+
+@patch("src.shared.db.get_dynamodb_resource")
+def test_append_health_note_missing_elder(mock_get_resource):
+    """條件式寫入擋下不存在的長者，轉成 DBError。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+    mock_table.update_item.side_effect = _conditional_check_failed("UpdateItem")
+
+    with pytest.raises(db.DBError):
+        db.append_health_note("eld_404", {"text": "高血壓", "source": "caregiver"})
+
+
+@patch("src.shared.db.get_elder")
+@patch("src.shared.db.get_dynamodb_resource")
+def test_remove_health_note_by_id(mock_get_resource, mock_get_elder):
+    """依 note_id 刪除，並以「該位置仍是這一筆」為條件寫入。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+    mock_get_elder.return_value = {
+        "elder_id": "eld_001",
+        "health_notes": [
+            {"note_id": "hn_a", "text": "高血壓", "source": "caregiver"},
+            {"note_id": "hn_b", "text": "最近膝蓋痛", "source": "agent"},
+        ],
+    }
+    mock_table.update_item.return_value = {"Attributes": {"elder_id": "eld_001"}}
+
+    db.remove_health_note("eld_001", "hn_b")
+
+    kwargs = mock_table.update_item.call_args.kwargs
+    assert "REMOVE #hn[1]" in kwargs["UpdateExpression"]
+    assert kwargs["ConditionExpression"] == "#hn[1].#nid = :nid"
+    assert kwargs["ExpressionAttributeValues"][":nid"] == "hn_b"
+
+
+@patch("src.shared.db.get_elder")
+@patch("src.shared.db.get_dynamodb_resource")
+def test_remove_health_note_not_found(mock_get_resource, mock_get_elder):
+    """找不到那一筆時回 None，讓 handler 回 404 而不是 500。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+    mock_get_elder.return_value = {"elder_id": "eld_001", "health_notes": []}
+
+    assert db.remove_health_note("eld_001", "hn_missing") is None
+    mock_table.update_item.assert_not_called()
+
+
+@patch("src.shared.db.get_elder")
+@patch("src.shared.db.get_dynamodb_resource")
+def test_remove_health_note_retries_when_index_moved(mock_get_resource, mock_get_elder):
+    """併發 append 把位置推移時重讀重試，不會誤刪別人那一筆。"""
+    mock_table = MagicMock()
+    mock_get_resource.return_value.Table.return_value = mock_table
+
+    # 第一次讀到的位置在 index 0，寫入時條件不成立；重讀後變成 index 1
+    mock_get_elder.side_effect = [
+        {"health_notes": [{"note_id": "hn_b", "text": "最近膝蓋痛"}]},
+        {"health_notes": [
+            {"note_id": "hn_a", "text": "高血壓"},
+            {"note_id": "hn_b", "text": "最近膝蓋痛"},
+        ]},
+    ]
+    mock_table.update_item.side_effect = [
+        _conditional_check_failed("UpdateItem"),
+        {"Attributes": {"elder_id": "eld_001"}},
+    ]
+
+    result = db.remove_health_note("eld_001", "hn_b")
+
+    assert result["elder_id"] == "eld_001"
+    assert mock_table.update_item.call_count == 2
+    assert "REMOVE #hn[1]" in mock_table.update_item.call_args.kwargs["UpdateExpression"]
+
+
 @patch("src.shared.db.get_dynamodb_resource")
 def test_put_routine_version_is_conditional(mock_get_resource):
     """測試 routine 版本不可變：同一 (routine_id, version) 已存在時不覆寫。"""

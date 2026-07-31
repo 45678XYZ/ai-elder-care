@@ -1,4 +1,4 @@
-"""src.handlers.tools 單元測試：Action Group 7 大工具 handler 邏輯驗證。
+"""src.handlers.tools 單元測試：12 個工具 handler 邏輯與分派驗證。
 
 涵蓋項目：
 - 工具一至六：正常成功路徑與缺少必填參數的錯誤路徑
@@ -7,10 +7,9 @@
   - critical_escalation 強制繞過冷卻
   - mitigation 設為「⚠️ 待家屬確認」（不轉綠燈）
   - 無未結案警報時忽略 mitigation（防止誤報平安）
-- Lambda handler 完整 Bedrock 傳入格式轉發流程
+- Lambda handler 的 {tool, params} 分派流程（呼叫端為 AgentCore Runtime）
 """
 
-import json
 import time
 
 import pytest
@@ -149,6 +148,106 @@ def test_handle_get_elder_profile_success(monkeypatch):
     assert res["data"]["name"] == "林阿蘭"
     assert res["data"]["habit_note"] == "喜歡喝高山烏龍茶、早起散步"
 
+
+# =============================================================================
+# 工具 5.1：update_elder_profile
+# =============================================================================
+
+def _fake_elder_store(monkeypatch):
+    """把 db 的長者讀寫換成一份記憶體資料，回傳那份資料供斷言。
+
+    健康註記走 append_health_note（原子 append），與 update_elder 是兩條不同的路，
+    測試得把兩條都接起來才反映真實流程。
+    """
+    stored = {
+        "elder_id": "eld_001",
+        "nickname": "阿蘭嬤",
+        "health_notes": [{"note_id": "hn_old", "text": "高血壓歷史", "source": "caregiver"}],
+        "habit_note": "喜歡喝高山烏龍茶",
+    }
+
+    def mock_append(eid, note):
+        stored["health_notes"] = stored["health_notes"] + [
+            {"note_id": "hn_new", "text": note["text"], "source": note["source"]}
+        ]
+        return dict(stored)
+
+    def mock_update(eid, patch):
+        stored.update(patch)
+        return dict(stored)
+
+    monkeypatch.setattr(db, "get_elder", lambda eid: dict(stored))
+    monkeypatch.setattr(db, "append_health_note", mock_append)
+    monkeypatch.setattr(db, "update_elder", mock_update)
+    return stored
+
+
+def test_handle_update_elder_profile_success(monkeypatch):
+    """測試 update_elder_profile 工具處理函式。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "nickname": "超級阿蘭嬤",
+        "health_note_to_add": "對阿司匹林過敏",
+        "habit_note_to_append": "不喜歡吃香菜"
+    })
+
+    assert res["status"] == "success"
+    assert res["data"]["nickname"] == "超級阿蘭嬤"
+    # 回給模型的是攤平後的文字，不含 note_id
+    assert "對阿司匹林過敏" in res["data"]["health_notes"]
+    assert "高血壓歷史" in res["data"]["health_notes"]
+    assert "不喜歡吃香菜" in res["data"]["habit_note"]
+    assert "喜歡喝高山烏龍茶" in res["data"]["habit_note"]
+
+    # 落地的那一筆要標成 agent，照護者才分得出這是 AI 從談話裡聽來的
+    added = [n for n in stored["health_notes"] if n["text"] == "對阿司匹林過敏"]
+    assert len(added) == 1
+    assert added[0]["source"] == "agent"
+
+
+def test_handle_update_elder_profile_health_note_uses_atomic_append(monkeypatch):
+    """健康註記不得走 update_elder 整份覆寫，否則會蓋掉併發寫入的內容。"""
+    _fake_elder_store(monkeypatch)
+
+    patched_fields = []
+    original_update = db.update_elder
+    monkeypatch.setattr(
+        db, "update_elder",
+        lambda eid, patch: (patched_fields.extend(patch.keys()), original_update(eid, patch))[1]
+    )
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "health_note_to_add": "膝蓋退化",
+    })
+
+    assert res["status"] == "success"
+    assert "health_notes" not in patched_fields
+
+
+def test_handle_update_elder_profile_skips_duplicate_health_note(monkeypatch):
+    """已經有的註記不重複加；此時沒有任何欄位可更新。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "health_note_to_add": "高血壓歷史",
+    })
+
+    assert res["status"] == "error"
+    assert len(stored["health_notes"]) == 1
+
+
+def test_handle_get_elder_profile_flattens_health_notes(monkeypatch):
+    """給模型的檔案只帶文字，note_id 這種內部識別碼不進 prompt。"""
+    _fake_elder_store(monkeypatch)
+
+    res = tools.handle_get_elder_profile({"elder_id": "eld_001"})
+
+    assert res["status"] == "success"
+    assert res["data"]["health_notes"] == ["高血壓歷史"]
 
 
 # =============================================================================
@@ -378,11 +477,11 @@ def test_handle_get_daily_summaries_days_capped(monkeypatch):
 
 
 # =============================================================================
-# Lambda handler 完整 Bedrock 傳入格式轉發流程
+# Lambda handler 完整轉發流程（呼叫端為 AgentCore Runtime）
 # =============================================================================
 
 def test_tools_lambda_handler_flow(monkeypatch):
-    """測試完整 Bedrock Action Group Lambda handler 轉發流程。"""
+    """測試 {tool, params} 傳入格式能分派到對應 handler 並直接回 JSON 結果。"""
     monkeypatch.setattr(
         db,
         "get_daily_routines",
@@ -390,36 +489,19 @@ def test_tools_lambda_handler_flow(monkeypatch):
     )
 
     event = {
-        "messageVersion": "1.0",
-        "actionGroup": "ElderCareRoutinesTools",
-        "function": "get_today_routines",
-        "sessionId": "eld_001",
-        "parameters": [
-            {"name": "date", "type": "string", "value": "2026-07-28"}
-        ]
+        "tool": "get_today_routines",
+        "params": {"elder_id": "eld_001", "date": "2026-07-28"},
     }
 
     resp = tools.handler(event, None)
-    assert resp["messageVersion"] == "1.0"
-    assert resp["response"]["actionGroup"] == "ElderCareRoutinesTools"
-    assert resp["response"]["function"] == "get_today_routines"
-
-    body_text = resp["response"]["functionResponse"]["responseBody"]["TEXT"]["body"]
-    body_json = json.loads(body_text)
-    assert body_json["status"] == "success"
+    assert resp["status"] == "success"
+    assert resp["data"]["date"] == "2026-07-28"
 
 
 def test_tools_lambda_handler_unknown_function():
     """測試傳入未知工具名稱時，回傳 error 而非崩潰。"""
-    event = {
-        "messageVersion": "1.0",
-        "actionGroup": "ElderCareRoutinesTools",
-        "function": "nonexistent_function",
-        "parameters": []
-    }
+    event = {"tool": "nonexistent_function", "params": {}}
 
     resp = tools.handler(event, None)
-    body_text = resp["response"]["functionResponse"]["responseBody"]["TEXT"]["body"]
-    body_json = json.loads(body_text)
-    assert body_json["status"] == "error"
-    assert "nonexistent_function" in body_json["message"]
+    assert resp["status"] == "error"
+    assert "nonexistent_function" in resp["message"]

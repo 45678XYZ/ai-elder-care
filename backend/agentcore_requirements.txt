@@ -1,0 +1,9 @@
+# AgentCore Runtime 部署包的執行期依賴（由 terraform/agentcore.tf 的 pip_requirements 打包）
+#
+# 與 requirements.txt 分開：langgraph 這一串只有對話大腦用得到，混進去會讓其餘 5 支
+# Lambda 的部署包一起變大。
+bedrock-agentcore
+langgraph
+langchain-aws
+langgraph-checkpoint-aws
+pydantic>=2.0

@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 # cross-Region inference profile（`global.` 前綴）：台灣沒有 Bedrock 區域，global CRIS
 # 會把請求路由到可服務的區域，可用性與吞吐都比綁單一區域好。
 #
-# 想固定區域時把前綴換掉即可，例如 `us.anthropic.claude-opus-4-6-v1:0`；
+# 想固定區域時把前綴換掉即可，例如 `us.anthropic.claude-opus-5`；
 # 想省成本時換 Sonnet／Haiku。一律由環境變數決定，程式不寫死。
-DEFAULT_MODEL_ID = "global.anthropic.claude-opus-4-6-v1:0"
+DEFAULT_MODEL_ID = "global.anthropic.claude-opus-5"
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID)
 
 # 呼叫層的重試次數（含首次）；boto3 內建重試只處理連線層，模型層的節流另外算

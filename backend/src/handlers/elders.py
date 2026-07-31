@@ -41,6 +41,21 @@ def get_path_elder_id(event: Dict[str, Any]) -> str | None:
     return path_params.get("elder_id") or path_params.get("id")
 
 
+def get_path_note_id(event: Dict[str, Any]) -> str | None:
+    """從 pathParameters 提取 health note 的 note_id。"""
+    path_params = event.get("pathParameters") or {}
+    return path_params.get("note_id")
+
+
+def is_health_notes_path(event: Dict[str, Any]) -> bool:
+    """判斷這個請求打的是 /elders/{elder_id}/health_notes 子資源。"""
+    path = event.get("path") or event.get("rawPath") or ""
+    if "health_notes" in path:
+        return True
+    # 部分測試與 REST API 事件不帶完整 path，改看 pathParameters 是否出現 note_id
+    return get_path_note_id(event) is not None
+
+
 def _serialize_elder(elder_dict: Dict[str, Any]) -> Dict[str, Any]:
     """使用 ElderResponse 過濾洗滌要回傳給前端的長者資料。"""
     return ElderResponse.model_validate(elder_dict).model_dump(exclude_none=True)
@@ -151,10 +166,79 @@ def handle_patch_elder(event: Dict[str, Any]) -> Dict[str, Any]:
         return responses.error(500, "INTERNAL_ERROR", f"更新長者資料失敗: {str(e)}")
 
 
+def handle_post_health_note(event: Dict[str, Any]) -> Dict[str, Any]:
+    """POST /elders/{elder_id}/health_notes — 新增單筆健康註記 (僅限照護者)
+
+    與 `PATCH /elders` 送整份 health_notes 的差別在於這裡是原子 append：
+    照護者新增的同時 AI 也可能在對話中補一筆，整份覆寫會讓其中一邊消失。
+    """
+    target_elder_id = get_path_elder_id(event)
+    if not target_elder_id:
+        return responses.error(400, "INVALID_PARAMETER", "未指定 elder_id")
+
+    try:
+        auth.assert_can_access_elder(event, target_elder_id)
+        caller = auth.get_caller(event)
+    except auth.AuthError as auth_err:
+        return auth_err.response
+
+    if caller.role != auth.ROLE_CAREGIVER:
+        return responses.error(403, "FORBIDDEN", "只有照護者帳號可修改長者資料")
+
+    body = parse_body(event)
+    text = (body.get("text") or "").strip()
+    if not text:
+        return responses.error(400, "INVALID_PARAMETER", "health note 的 text 不得為空")
+
+    # source 不接受 client 指定：這個端點只給照護者用，AI 補的那條路走 update_elder_profile
+    # 工具。開放 client 自稱 agent 的話，來源標示就失去它存在的意義。
+    if "source" in body:
+        return responses.error(400, "INVALID_PARAMETER", "不得直接指定 source")
+
+    try:
+        updated = db.append_health_note(target_elder_id, {"text": text, "source": "caregiver"})
+        return responses.json_response(201, _serialize_elder(updated))
+    except Exception as e:
+        return responses.error(500, "INTERNAL_ERROR", f"新增健康註記失敗: {str(e)}")
+
+
+def handle_delete_health_note(event: Dict[str, Any]) -> Dict[str, Any]:
+    """DELETE /elders/{elder_id}/health_notes/{note_id} — 刪除單筆健康註記 (僅限照護者)"""
+    target_elder_id = get_path_elder_id(event)
+    note_id = get_path_note_id(event)
+    if not target_elder_id or not note_id:
+        return responses.error(400, "INVALID_PARAMETER", "未指定 elder_id 或 note_id")
+
+    try:
+        auth.assert_can_access_elder(event, target_elder_id)
+        caller = auth.get_caller(event)
+    except auth.AuthError as auth_err:
+        return auth_err.response
+
+    if caller.role != auth.ROLE_CAREGIVER:
+        return responses.error(403, "FORBIDDEN", "只有照護者帳號可修改長者資料")
+
+    try:
+        updated = db.remove_health_note(target_elder_id, note_id)
+    except Exception as e:
+        return responses.error(500, "INTERNAL_ERROR", f"刪除健康註記失敗: {str(e)}")
+
+    if updated is None:
+        return responses.error(404, "HEALTH_NOTE_NOT_FOUND", "找不到該筆健康註記")
+    return responses.json_response(200, _serialize_elder(updated))
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """GET/POST/PATCH /elders 長者資料 Lambda 主進入點。"""
     try:
         method = get_http_method(event)
+
+        if is_health_notes_path(event):
+            if method == "POST":
+                return handle_post_health_note(event)
+            elif method == "DELETE":
+                return handle_delete_health_note(event)
+            return responses.error(405, "METHOD_NOT_ALLOWED", f"不支援的 HTTP 方法: {method}")
 
         if method == "GET":
             return handle_get_elders(event)

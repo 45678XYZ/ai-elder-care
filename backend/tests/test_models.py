@@ -17,12 +17,14 @@ from src.shared.models import (
     EventResponse,
     EventType,
     FamilyMember,
+    HealthNote,
     RoutineComplete,
     RoutineCreate,
     RoutineDefinition,
     RoutineOccurrence,
     RoutineSchedule,
     RoutineUpdate,
+    health_note_texts,
 )
 
 
@@ -94,6 +96,52 @@ def test_elder_response_model():
     assert er.elder_id == "eld_abc123"
     assert er.created_at == "2026-07-24T15:00:00+08:00"
     assert er.health_notes == []
+
+
+
+def test_health_note_model_defaults():
+    """測試 HealthNote 的預設值：未指定來源時視為照護者填寫。"""
+    hn = HealthNote(text="高血壓")
+    assert hn.text == "高血壓"
+    assert hn.source == "caregiver"
+    assert hn.note_id.startswith("hn_")
+    assert hn.created_at is None
+
+    # note_id 每筆不同，刪除單筆時才指得準
+    assert HealthNote(text="高血壓").note_id != hn.note_id
+
+    with pytest.raises(ValidationError):
+        HealthNote(text="高血壓", source="不存在的來源")
+
+
+def test_health_notes_accept_legacy_strings():
+    """舊契約的純字串陣列仍要讀得動，不必先做資料遷移。"""
+    ec = ElderCreate(name="陳阿蘭", health_notes=["高血壓", "膝關節退化"])
+    assert [n.text for n in ec.health_notes] == ["高血壓", "膝關節退化"]
+    # 舊資料都是照護者建檔時填的，預設成 caregiver 與事實相符
+    assert all(n.source == "caregiver" for n in ec.health_notes)
+
+    er = ElderResponse(
+        elder_id="eld_abc123",
+        name="王大同",
+        created_at="2026-07-24T15:00:00+08:00",
+        health_notes=["高血壓"],
+    )
+    assert er.health_notes[0].text == "高血壓"
+
+    eu = ElderUpdate(health_notes=[{"text": "最近膝蓋痛", "source": "agent"}])
+    assert eu.health_notes[0].source == "agent"
+
+
+def test_health_note_texts_flattens_both_formats():
+    """攤平給 prompt 用：物件取 text，舊字串原樣通過，空值剔除。"""
+    notes = [
+        {"note_id": "hn_a", "text": "高血壓", "source": "caregiver"},
+        "膝關節退化",
+        {"note_id": "hn_c", "text": "", "source": "agent"},
+    ]
+    assert health_note_texts(notes) == ["高血壓", "膝關節退化"]
+    assert health_note_texts(None) == []
 
 
 def test_conversation_item_model():

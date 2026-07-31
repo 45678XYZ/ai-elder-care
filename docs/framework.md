@@ -10,7 +10,7 @@
 - **語言策略：中文先行、客語第二階段**
 - **Flutter 端做薄，智慧邏輯放 AWS 後端（Python Lambda）**
 - **IaC：Terraform**
-- **對話處理採 Hybrid realtime/batch**：`POST /chat` 透過 Bedrock Agent tool calling 同步處理 routine 建立、修改、停用、完成，以及潛在高風險 safety events；session 關閉後才由 batch 補齊一般生活事件
+- **對話處理採 Hybrid realtime/batch**：`POST /chat` 透過 AgentCore Runtime 的 tool calling 同步處理 routine 建立、修改、停用、完成，以及潛在高風險 safety events；session 關閉後才由 batch 補齊一般生活事件
 - **長期記憶**：使用 AWS AgentCore 服務管理，不自建 DynamoDB memories 表
 
 ## 系統架構
@@ -26,7 +26,7 @@ flowchart TB
         cognito["Cognito"]
         apigw["API Gateway REST + JWT"]
         chat["chat realtime Lambda<br/>POST /chat"]
-        tools["tools Lambda<br/>Bedrock Agent Action Group<br/>complete_routine / create_routine / notify_caregiver"]
+        tools["tools Lambda<br/>對話大腦的工具箱<br/>complete_routine / create_routine / notify_caregiver"]
         closer["session closer Lambda<br/>client close + periodic idle close"]
         periodic["EventBridge periodic session closer"]
         queue["SQS batch queue"]
@@ -38,6 +38,7 @@ flowchart TB
         summary["daily summary generator Lambda"]
         apis["資料 API Lambda<br/>elders / summaries / events<br/>routines / stats"]
         asr["後端 ASR"]
+        brain["AgentCore Runtime<br/>LangGraph 對話大腦 + 託管長期記憶"]
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
         embed["Bedrock embedding model<br/>concept retrieval + turn segmentation"]
         vectors[("S3 Vectors<br/>UCO concept index")]
@@ -56,9 +57,10 @@ flowchart TB
     periodic -->|idle sweep / batch recovery sweep| closer
     chat -->|audio| asr
     asr -->|transcript| chat
-    chat -->|structured output| model
-    model -->|RAG retrieval| kb
-    model -->|tool calling| tools
+    chat -->|invoke agent runtime| brain
+    brain -->|converse| model
+    brain -->|RAG retrieval| kb
+    brain -->|tool calling| tools
     tools -->|routines + safety events| ddb
     chat -->|turn + session| ddb
     chat -->|reply text| polly
@@ -83,7 +85,7 @@ flowchart TB
 
 - **語音對話迴圈**：裝置端辨識（zh-TW）→ `POST /chat` 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
-- Bedrock Agent tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：Agent 在 `InvokeAgent` 回應前自動呼叫 tools Lambda 寫入 completion event 或發送安全通知。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
+- AgentCore Runtime 的 tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：大腦在回應 chat Lambda 之前先呼叫 tools Lambda 寫入 completion event 或發送安全通知，並在回應 payload 明確回報 `routines_updated` 與 `safety_alert_triggered`。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
 - batch extractor 的分類前先做候選概念檢索：以 Bedrock embedding 取查詢向量，向 S3 Vectors 的概念索引取 Top-K 候選後才呼叫分類模型；同一個 embedding 供應者也用於 turn 切分。索引維度在建立時固定，因此 index 名稱帶模型與維度，模型抽換以新索引並存、切換環境變數完成。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
 
@@ -94,6 +96,7 @@ flowchart TB
 | `POST /chat` | realtime 對話快路徑（中文/客語 × text/audio） | 長者模式 |
 | `POST /chat/sessions/{session_id}/close` | 冪等關閉 session 並觸發離線 materialization | 長者模式 |
 | `GET /elders`、`POST /elders`、`PATCH /elders/{id}` | 長者資料 | 兩端／照護者 |
+| `GET /me`、`POST /elders/{id}/caregivers`、`GET /elders/{id}/caregivers` | 輸入照護者 ID 綁定家人 | 照護者／長者本人 |
 | `GET /summaries`、`POST /summaries/generate` | 含 `data_status` 的每日摘要 | 照護者模式 |
 | `GET /events` | 生活事件時間軸 | 照護者模式 |
 | `GET /routines`、`POST/PATCH /routines`、`POST /routines/{id}/complete` | 行程與完成確認 | 兩端 |
@@ -169,6 +172,7 @@ Base table：PK `elder_id` (String)。
 ```
 
 - `elder_id`、`caregiver_ids`、`created_at`、`updated_at` 為 server-owned；`elder_id = "eld_" + uuid4().hex[:12]`，App 或模型不得指定。
+- `caregiver_ids` 只有兩條寫入路徑：`POST /elders` 加入建立者的 Cognito `sub`，以及長者在 `POST /elders/{id}/caregivers` 輸入照護者 ID 後以條件式寫入加入該照護者（見 `docs/api.md`「綁定照護者」）。`PATCH /elders` 一律不接受這個欄位。對外只回 `cg_` 開頭、由 `sub` 穩定衍生的識別，不暴露 `sub`；後端需要能由 `cg_` 反查帳號，反查方式由後端決定。
 - `POST /elders` 未提供 `health_notes` 或 `family`，或其值為空時，後端補為 `[]`；`caregiver_ids` 至少加入建立者 Cognito token 的 `sub`，不得由 request 指定。
 - 建立時 `created_at=updated_at`；`PATCH /elders/{elder_id}` 成功變更公開欄位時由後端刷新 `updated_at`，不得改寫 `created_at`。
 - `GET /elders`：照護者只回 `caregiver_ids` 包含其 token `sub` 的長者；長者只回 `elder_id == token.elder_id` 的自己一筆。`GET /elders/{elder_id}` 以 Base table `GetItem` 查單筆，長者只能查自己，照護者只能查已綁定長者。
@@ -220,7 +224,7 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 | `elder_received_at`, `ai_responded_at` | String | 否 | 長者發話接收與 AI 回覆完成時間戳記 |
 | `routines_updated` | Boolean | 是 | 本 turn 是否觸發 routine 狀態更新 |
 
-tool calling 副作用（routine create/update/deactivate/complete、safety event 寫入）由 Bedrock Agent 在 `InvokeAgent` 回應前同步完成。所有離線 Topic Chunk 萃取狀態（Manifest、Topic 分塊與 Chunk 萃取狀態）100% 集中維護於 Session 的 `chunk_manifest` 中，Turn Item 不另外保存 `batch_*` 狀態欄位。所有對話皆為長者主動發話（長者先輸入文字或語音，AI 再合成語音回覆）。音訊欄位只存 S3 object key（`ai_respond_audio_s3_key`），不在 DynamoDB 保存公開 URL；API 每次回傳時動態簽發 15 分鐘 presigned URL。
+tool calling 副作用（routine create/update/deactivate/complete、safety event 寫入）由 AgentCore Runtime 在回應 chat Lambda 之前同步完成。所有離線 Topic Chunk 萃取狀態（Manifest、Topic 分塊與 Chunk 萃取狀態）100% 集中維護於 Session 的 `chunk_manifest` 中，Turn Item 不另外保存 `batch_*` 狀態欄位。所有對話皆為長者主動發話（長者先輸入文字或語音，AI 再合成語音回覆）。音訊欄位只存 S3 object key（`ai_respond_audio_s3_key`），不在 DynamoDB 保存公開 URL；API 每次回傳時動態簽發 15 分鐘 presigned URL。
 
 #### Session metadata 欄位
 
@@ -351,7 +355,7 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 - 所有 `event_id` 都由 `elder_id + canonical_event_key` 穩定產生，與 chunk 無關。`source_chunk_id` 可記初建來源，但 `evidence_conversation_ids` 可跨 chunk 擴充。
 - event identity 與既有事實欄位原則上不可覆寫；唯一可條件更新的例外是既有 safety event 的合法 enrichment。batch 以相同 event ID 與目前 `revision` 為條件，遞增 `revision` 並 enrich `detail`、`structured_detail`、`evidence_conversation_ids`、`confidence`、`updated_at`；不得重建事件，也不得因已存在就跳過補充資訊。
 - batch 建立一般事件時使用 conditional Put。retry 命中完全相同 canonical event 視為冪等；若內容互斥則保留既有資料、記錄衝突並讓工作失敗／告警，不靜默覆寫。
-- batch 萃取到疑似 routine 完成時，仍只寫一般事件，並在 `structured_detail` 記 `suspected_routine_id` 供摘要層降噪；不得寫 canonical completion event，也不改 routine 狀態。completion event 只能由 Bedrock Agent tool calling 或照護者手動完成端點建立。
+- batch 萃取到疑似 routine 完成時，仍只寫一般事件，並在 `structured_detail` 記 `suspected_routine_id` 供摘要層降噪；不得寫 canonical completion event，也不改 routine 狀態。completion event 只能由對話大腦的 tool calling 或照護者手動完成端點建立。
 - `GET /events` 一律 Query `events-by-time`；日期邊界以台灣時間計算，`ScanIndexForward=false` 回最新事件優先，`type` 以 FilterExpression 過濾，分頁將 DynamoDB `LastEvaluatedKey` 編碼為不透明 `next_token`。
 - `detail` 保存足以供時間軸、摘要與語音查詢使用的完整事件描述，但不複製逐字稿；`structured_detail` 保存結構化細節供後端摘要生成、統計與 RAG 使用。需要追溯原文時，依主要 `conversation_id` 或 `evidence_conversation_ids` 回 conversations 讀取，以減少 PII 重複儲存。
 - `GET /events` 只公開既有 API 欄位，不暴露 canonical key、track、chunk、revision 或 `structured_detail`。canonical 規則降低重複機率，但不宣稱 zero duplicate 或 100% extraction accuracy。
@@ -437,7 +441,7 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 ## Session／Chunk 與資料邊界
 
 - **Session** 是 immutable input snapshot 的邊界：active 接納 turns，closing freeze/verify，closed 固定輸入並啟動離線 materialization。closed 先於 batch。
-- **Tool calling ownership**（取代 realtime rail）：chat 回覆、routine create/update/deactivate/complete，以及潛在高風險 safety events。它透過 Bedrock Agent tool calling 同步寫入 routine completion event 與 safety event，不追求一般事件完整萃取。
+- **Tool calling ownership**（取代 realtime rail）：chat 回覆、routine create/update/deactivate/complete，以及潛在高風險 safety events。它透過對話大腦的 tool calling 同步寫入 routine completion event 與 safety event，不追求一般事件完整萃取。
 - **Batch ownership**：closed snapshot 的 normal events（含記憶體內去重）、既有 safety event enrichment、chunk manifest 與 batch 狀態。它不改 routine，也不改 frozen turn/session input；萃取到疑似 routine 完成時只以 `structured_detail.suspected_routine_id` 標記。
 - **Chunk** 只是同一 closed session 的 static processing range，不是公開 API 資源或資料身分。core ranges 完整且不重疊，context overlap 不 emit。
 - **Events** 是實際發生與 routine 完成的 canonical 紀錄；**routines** 是計畫；**daily_summaries** 是具 `data_status` 的衍生快照。長期記憶由 AWS AgentCore 管理。
@@ -471,6 +475,10 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 | `BEDROCK_SUMMARY_MODEL_ID` | 摘要階段模型覆寫；留空沿用主模型 |
 | `SUMMARY_ALERT_LOOKBACK_DAYS`、`SUMMARY_MAX_EVENTS` | alerts 的跨日觀察窗與進 prompt 的事件數上限 |
 | `SUMMARY_WAIT_MINUTES`、`SUMMARY_BACKFILL_DAYS`、`SUMMARY_SWEEP_LIMIT` | partial 重算的等待窗口、backfill 掃描天數與單次 sweep 長者數上限 |
+| `AGENTCORE_RUNTIME_ARN`、`AGENTCORE_ENDPOINT_NAME` | chat Lambda 呼叫對話大腦的位址；留空時 `/chat` 走模擬回覆，供本機開發 |
+| `AGENT_MODEL_ID` | 對話大腦的模型覆寫；留空沿用 `BEDROCK_MODEL_ID` |
+| `TOOLS_FUNCTION_NAME`、`AGENT_MEMORY_ID`、`KNOWLEDGE_BASE_ID`、`KB_RETRIEVE_TOP_K` | AgentCore Runtime 內部使用：工具箱 Lambda、託管記憶、衛教知識庫與單次檢索段落數 |
+| `MAX_TOOL_ITERATIONS` | 單輪對話的工具呼叫上限；防模型繞圈把 chat Lambda 的 timeout 耗盡 |
 
 ## Repo 結構
 
@@ -485,7 +493,7 @@ ai-elder-care/
 └── README.md
 ```
 
-`backend/src/` 下 `handlers/` 是 API 與事件入口、`shared/` 是跨 handler 共用層、`extraction/` 是生活記錄的萃取 pipeline（分類體系資產、剪枝、分塊、萃取、canonical identity、去重），只由 batch 相關 Lambda 使用。
+`backend/src/` 下 `handlers/` 是 API 與事件入口、`shared/` 是跨 handler 共用層、`extraction/` 是生活記錄的萃取 pipeline（分類體系資產、剪枝、分塊、萃取、canonical identity、去重），只由 batch 相關 Lambda 使用；`agentcore_runtime/` 是對話大腦，唯一不跑在 Lambda 上的部分，以 zip 部署到 AgentCore Runtime。
 
 ## Verification
 
@@ -494,7 +502,7 @@ ai-elder-care/
 - **分類體系可配置**：抽換高階類別定義或節點映射資產後，新事件依新體系寫入且 `taxonomy_version` 隨之改變，舊事件不受影響；未知節點退回 `other` 並告警。
 - **batch 不寫 routine completion**：batch 萃取到疑似 routine 完成時只寫一般事件並標記 `suspected_routine_id`，occurrence 仍依 canonical completion event 判定。
 - **Batch 去重**：batch worker 先在記憶體內依 `EVENT_SLOT_MINUTES` 去重，再以 conditional Put 寫入；retry 冪等。
-- **Tool calling safety**：Bedrock Agent 在 `InvokeAgent` 回應前透過 `notify_caregiver` tool 同步建立 `type=safety` 的 event；batch 同 key 只做 revision enrichment。
+- **Tool calling safety**：對話大腦在回應 chat Lambda 之前透過 `notify_caregiver` tool 同步建立 `type=safety` 的 event；batch 同 key 只做 revision enrichment。
 - **Close immutable／inflight recovery**：驗證 `/chat` reserve 與 close race、inflight 回 409、lease-expired turn 接管或安全失敗移除 reservation、`active→closing→closed`，以及 closed 後無法追加或修改 frozen turns、ordered IDs、counts 與 snapshot hash。
 - **Manifest retry reuse**：首次條件式保存 manifest 後，SQS retry、duplicate delivery 與 DLQ replay 的 manifest、core ranges、ordinal 與 chunk IDs 完全相同；所有 core turns 恰好一次，context-only 不 emit。
 - **SQS duplicate／DLQ／recovery**：模擬 closed 後 SendMessage 前中斷，由 `BATCH#PENDING` sweep 重投；processing lease 尚有效的相同 session/hash duplicate 不執行並直接 ack、由原 owner 收斂，僅 lease expired 可由 delivery／recovery 接管；failed/completed duplicate ack 不執行；retryable redrive 不假設同步 DDB；DLQ reconciler 依 session/hash 收斂 failed、清 lease與告警，人工 replay 先做 failed→pending 並從 frozen state/manifest 重建。
