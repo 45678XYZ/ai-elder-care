@@ -12,6 +12,8 @@
 
 ```text
 ├── .kiro/          # Kiro 設定與 specs（視需要使用）
+├── .agents/        # Codex 專案 skills
+├── AGENTS.md       # Codex 全專案工作規範
 ├── app/            # Flutter（elder/ caregiver/ 兩組頁面 + shared services）
 ├── asr-lambda/     # ASR 模型規格文件與本機 conda 環境
 ├── backend/        # Python Lambda handlers（chat, summary, apis）＋ ASR 領域模組

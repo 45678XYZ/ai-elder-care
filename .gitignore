@@ -25,16 +25,29 @@ terraform/build/
 !*.tfvars.example
 
 # --- AI tool configs (local, per-developer) ---
-.claude/        # Claude Code
-.codex/         # OpenAI Codex
-.cursor/        # Cursor
-.windsurf/      # Windsurf
-.continue/      # Continue
-.aider*         # Aider
-.gemini/        # Gemini CLI
-.qwen/          # Qwen Code
-.roo/           # Roo Code
-.agents/        # Antigravity
+.claude/        
+.codex/        
+.cursor/        
+.windsurf/     
+.continue/     
+.aider*        
+.gemini/        
+.qwen/         
+.roo/          
+.agents/       
+!.agents/
+!.agents/skills/
+!.agents/skills/**
+
+# --- 離線訓練工作流產出（語料、embedding 快取、標註檔、評測結果） ---
+# 內含第三方語料的衍生資料（DialSeg711／TIAGE／SeniorTalk），授權不允許再散布，一律不入庫
+data/segmenter_v2/
+backend/local_runner/
+
+# --- 建置產出 ---
+# scripts/build_kb_upload.py 產生的 KB 上傳版本（正文 + metadata sidecar）；
+# 由 data/knowledge/ 每次重新產生，不是原始資料
+build/
 
 # --- misc ---
 .DS_Store
