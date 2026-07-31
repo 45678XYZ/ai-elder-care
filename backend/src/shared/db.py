@@ -319,6 +319,8 @@ def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
     if not data.get("record_id"):
         data["record_id"] = f"TURN#{conv_id}"
     data.setdefault("item_type", "conversation")
+    data.setdefault("request_status", TURN_STATUS_COMPLETED)
+
 
     # created_at 與 ts 一律正規化為固定毫秒精度（+08:00），與 events 的 event_time_key
     # 同規範；conversation_time_key 由 created_at 衍生，精度不一致會讓 GSI 字串排序
