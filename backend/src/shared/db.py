@@ -326,10 +326,7 @@ def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
         data["created_at"] = normalize_ts(data["created_at"])
     else:
         data["created_at"] = format_ts(datetime.now(TZ_TAIPEI))
-    if data.get("ts"):
-        data["ts"] = normalize_ts(data["ts"])
-    else:
-        data["ts"] = data["created_at"]
+
 
     # 自動補全 GSI Sort Key: conversation_time_key (<created_at>#<conversation_id>)
     if not data.get("conversation_time_key"):

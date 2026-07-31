@@ -331,8 +331,8 @@ def test_in_flight_request_returns_409(stack):
         session["session_id"],
         turn={
             "conversation_id": conversation_id,
-            "idempotency_key": REQUEST_ID,
             "client_request_id": REQUEST_ID,
+
             "request_hash": chat.request_hash(
                 chat.ChatRequest.model_validate(chat_body()), b""
             ),
@@ -358,8 +358,8 @@ def test_expired_lease_is_taken_over_and_completed(stack, monkeypatch):
         session["session_id"],
         turn={
             "conversation_id": conversation_id,
-            "idempotency_key": REQUEST_ID,
             "client_request_id": REQUEST_ID,
+
             "request_hash": chat.request_hash(
                 chat.ChatRequest.model_validate(chat_body()), b""
             ),

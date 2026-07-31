@@ -398,9 +398,9 @@ def accept_new_turn(
     session = requested_session(req)
     turn = {
         "conversation_id": conversation_id,
-        "idempotency_key": req.client_request_id,
         "client_request_id": req.client_request_id,
         "request_hash": payload_hash,
+
         "lang": req.lang,
         "input_type": "audio" if req.audio else "text",
         "source": "elder_initiated",

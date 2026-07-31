@@ -49,11 +49,12 @@ INPUT_BYTE_FIELDS: tuple[str, ...] = ("ai_prompt_text", "elder_transcript", "ai_
 # reserve 時必須由呼叫端指定的欄位；其餘由本模組補齊
 _REQUIRED_TURN_FIELDS: tuple[str, ...] = (
     "conversation_id",
-    "idempotency_key",
+    "client_request_id",
     "request_hash",
     "lang",
     "input_type",
 )
+
 
 
 class TurnError(db.DBError):
