@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/api_page.dart';
 import '../models/caregiver.dart';
 import '../models/chat_reply.dart';
@@ -21,6 +25,7 @@ import 'demo_data.dart';
 /// 畫面兩邊共用同一套流程。
 ///
 /// 狀態只活在這個 App process 裡，重開就回到初始資料——demo 前不必清任何東西。
+/// 唯一的例外是已連結的家人（見 [_caregiversByElder]），那在 demo 流程裡是一次性設定。
 ///
 /// TODO: 正式資料齊備後整檔連同 [DemoData] 移除。
 class DemoRepository implements CareRepository {
@@ -206,7 +211,8 @@ class DemoRepository implements CareRepository {
           statusCode: 404, code: ApiErrorCodes.caregiverNotFound);
     }
 
-    final existing = _caregivers.where((c) => c.caregiverId == id).firstOrNull;
+    final list = await caregivers(elderId: elderId);
+    final existing = list.where((c) => c.caregiverId == id).firstOrNull;
     if (existing != null) {
       // 已綁定：linked_at 不刷新（api.md），所以原樣回傳。
       return (caregiver: existing, isNew: false);
@@ -218,17 +224,64 @@ class DemoRepository implements CareRepository {
       name: '家人 ${id.substring(id.length - 4)}',
       linkedAt: DateTime.now(),
     );
-    _caregivers.add(linked);
+    await _saveCaregivers(elderId, [...list, linked]);
     return Future.delayed(
         DemoData.latency, () => (caregiver: linked, isNew: true));
   }
 
   @override
-  Future<List<Caregiver>> caregivers({required String elderId}) async =>
-      List.of(_caregivers);
+  Future<List<Caregiver>> caregivers({required String elderId}) async {
+    final cached = _caregiversByElder[elderId];
+    if (cached != null) return List.of(cached);
 
-  /// 已綁定的家人。與其他 demo 狀態一樣只活在記憶體裡，重開 App 就回到未連結。
-  final List<Caregiver> _caregivers = [];
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getStringList(_caregiverStoreKey(elderId)) ?? const [];
+    final list = <Caregiver>[];
+    for (final entry in raw) {
+      // 寫壞或換過格式的資料直接跳過，不要讓整份清單載不出來。
+      try {
+        final decoded = jsonDecode(entry);
+        if (decoded is Map<String, dynamic>) {
+          list.add(Caregiver.fromJson(decoded));
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    _caregiversByElder[elderId] = list;
+    return List.of(list);
+  }
+
+  /// 已綁定的家人，依長者分開存。
+  ///
+  /// **這是 demo 狀態裡唯一有持久化的一份**，其餘（行程、長者、當日 occurrence）
+  /// 都只活在記憶體。理由是連結家人在 demo 流程裡是**一次性的設定**——照護者在
+  /// Act 1 綁一次，後面每一幕都預設它還在；每次重開 App 都要重綁的話，等於每次
+  /// 排練都得多做一段跟當幕無關的操作，也很容易在台上忘記。
+  ///
+  /// 以 `elder_id` 為 key：綁定本來就是 per-elder（api.md 的端點就長這樣），
+  /// 換長輩自然分開，不會看到別人的家人。
+  final Map<String, List<Caregiver>> _caregiversByElder = {};
+
+  static String _caregiverStoreKey(String elderId) =>
+      'demo_linked_caregivers_$elderId';
+
+  Future<void> _saveCaregivers(String elderId, List<Caregiver> list) async {
+    _caregiversByElder[elderId] = list;
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(
+      _caregiverStoreKey(elderId),
+      // 欄位名沿用 api.md，存進去的東西才能原樣走 Caregiver.fromJson 回來。
+      [
+        for (final c in list)
+          jsonEncode({
+            'caregiver_id': c.caregiverId,
+            'name': c.name,
+            if (c.linkedAt != null) 'linked_at': c.linkedAt!.toIso8601String(),
+          }),
+      ],
+    );
+  }
 
   // ---- 例行公事 ----
 

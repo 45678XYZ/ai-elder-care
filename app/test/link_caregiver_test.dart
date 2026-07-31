@@ -2,6 +2,7 @@
 import 'package:ai_elder_care/elder/screens/link_caregiver_screen.dart';
 import 'package:ai_elder_care/shared/services/care_repository.dart';
 import 'package:ai_elder_care/shared/services/demo_data.dart';
+import 'package:ai_elder_care/shared/services/demo_repository.dart';
 import 'package:ai_elder_care/shared/services/session_store.dart';
 import 'package:ai_elder_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -153,6 +154,28 @@ void main() {
     // 重建畫面：清單來自資料來源，不是這個 State 自己記的。
     await pump(tester);
     expect(find.text(_id1), findsOneWidget);
+  });
+
+  test('已連結的家人重開 App 也還在', () async {
+    // 連結家人在 demo 流程裡是一次性設定（照護者在 Act 1 綁一次，後面每一幕都預設
+    // 它還在）。每次重開都要重綁的話，等於每次排練都多做一段跟當幕無關的操作。
+    final first = DemoRepository();
+    await first.linkCaregiver(elderId: DemoData.elderId, caregiverId: _id1);
+
+    // 全新的實例＝重開 App：記憶體那份沒了，只剩落地的資料。
+    final restarted = DemoRepository();
+    final list = await restarted.caregivers(elderId: DemoData.elderId);
+    expect(list.single.caregiverId, _id1);
+    expect(list.single.linkedAt, isNotNull);
+  });
+
+  test('不同長者的家人清單分開', () async {
+    final repo = DemoRepository();
+    await repo.linkCaregiver(elderId: DemoData.elderId, caregiverId: _id1);
+
+    // 換一位長輩不該看到別人的家人——綁定本來就是 per-elder。
+    final other = await repo.caregivers(elderId: 'eld_9f8e7d6c5b4a');
+    expect(other, isEmpty);
   });
 
   // 綁定的另一半（api.md「綁定照護者」步驟 1）：照護者得先在自己的 App 看到 ID，

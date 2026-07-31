@@ -218,8 +218,9 @@ class AppSession {
 
   /// 確保已連結的家人清單載入過；已有資料就直接返回。
   ///
-  /// 不做持久化：真實來源是後端（`GET /elders/{id}/caregivers`），本機存一份只會
-  /// 在「家人在另一台裝置綁定」時對不上。未接後端時由 demo 資料來源代答。
+  /// **這裡**不做持久化：真實來源是後端（`GET /elders/{id}/caregivers`），在 AppSession
+  /// 再存一份只會在「家人用另一台裝置綁定」時對不上。要不要落地是資料來源的事——
+  /// 未接後端時由 demo 那份代答，它為了 demo 流程確實有存（見 `DemoRepository`）。
   Future<void> ensureCaregiversLoaded() async {
     if (linkedCaregivers.isNotEmpty) return;
     await ensureEldersLoaded();
