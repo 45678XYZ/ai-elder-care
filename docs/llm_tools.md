@@ -136,6 +136,9 @@
       "required": ["elder_id"]
     }
     ```
+*   **健康註記的寫入方式**：`health_note_to_add` 會以 `source: "agent"` 原子 append 進 `health_notes`（`db.append_health_note`），**不做讀出再整份寫回**。同一個欄位照護者也會在 App 上增刪，整份覆寫會讓其中一邊的結果無聲消失。已存在的相同內容不重複加入。
+*   **來源標示**：由此工具寫入的註記在 API 上帶 `source: "agent"`，與照護者手填的 `caregiver` 分開，讓照護者看得出哪幾筆是 AI 從談話裡聽來的（契約見 `docs/api.md` 的 health_notes 物件）。
+*   **回傳的 `health_notes`**：攤平成純文字陣列，不含 `note_id` 等內部識別碼。
 
 ## 3. 對話引導與工具調用實例
 

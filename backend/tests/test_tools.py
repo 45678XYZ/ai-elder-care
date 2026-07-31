@@ -154,28 +154,38 @@ def test_handle_get_elder_profile_success(monkeypatch):
 # 工具 5.1：update_elder_profile
 # =============================================================================
 
+def _fake_elder_store(monkeypatch):
+    """把 db 的長者讀寫換成一份記憶體資料，回傳那份資料供斷言。
+
+    健康註記走 append_health_note（原子 append），與 update_elder 是兩條不同的路，
+    測試得把兩條都接起來才反映真實流程。
+    """
+    stored = {
+        "elder_id": "eld_001",
+        "nickname": "阿蘭嬤",
+        "health_notes": [{"note_id": "hn_old", "text": "高血壓歷史", "source": "caregiver"}],
+        "habit_note": "喜歡喝高山烏龍茶",
+    }
+
+    def mock_append(eid, note):
+        stored["health_notes"] = stored["health_notes"] + [
+            {"note_id": "hn_new", "text": note["text"], "source": note["source"]}
+        ]
+        return dict(stored)
+
+    def mock_update(eid, patch):
+        stored.update(patch)
+        return dict(stored)
+
+    monkeypatch.setattr(db, "get_elder", lambda eid: dict(stored))
+    monkeypatch.setattr(db, "append_health_note", mock_append)
+    monkeypatch.setattr(db, "update_elder", mock_update)
+    return stored
+
+
 def test_handle_update_elder_profile_success(monkeypatch):
     """測試 update_elder_profile 工具處理函式。"""
-    # 模擬讀取
-    monkeypatch.setattr(
-        db,
-        "get_elder",
-        lambda eid: {
-            "elder_id": eid,
-            "nickname": "阿蘭嬤",
-            "health_notes": ["高血壓歷史"],
-            "habit_note": "喜歡喝高山烏龍茶"
-        }
-    )
-    # 模擬更新
-    def mock_update(eid, patch):
-        return {
-            "elder_id": eid,
-            "nickname": patch.get("nickname", "阿蘭嬤"),
-            "health_notes": patch.get("health_notes", ["高血壓歷史"]),
-            "habit_note": patch.get("habit_note", "喜歡喝高山烏龍茶")
-        }
-    monkeypatch.setattr(db, "update_elder", mock_update)
+    stored = _fake_elder_store(monkeypatch)
 
     res = tools.handle_update_elder_profile({
         "elder_id": "eld_001",
@@ -186,10 +196,61 @@ def test_handle_update_elder_profile_success(monkeypatch):
 
     assert res["status"] == "success"
     assert res["data"]["nickname"] == "超級阿蘭嬤"
+    # 回給模型的是攤平後的文字，不含 note_id
     assert "對阿司匹林過敏" in res["data"]["health_notes"]
     assert "高血壓歷史" in res["data"]["health_notes"]
     assert "不喜歡吃香菜" in res["data"]["habit_note"]
     assert "喜歡喝高山烏龍茶" in res["data"]["habit_note"]
+
+    # 落地的那一筆要標成 agent，照護者才分得出這是 AI 從談話裡聽來的
+    added = [n for n in stored["health_notes"] if n["text"] == "對阿司匹林過敏"]
+    assert len(added) == 1
+    assert added[0]["source"] == "agent"
+
+
+def test_handle_update_elder_profile_health_note_uses_atomic_append(monkeypatch):
+    """健康註記不得走 update_elder 整份覆寫，否則會蓋掉併發寫入的內容。"""
+    _fake_elder_store(monkeypatch)
+
+    patched_fields = []
+    original_update = db.update_elder
+    monkeypatch.setattr(
+        db, "update_elder",
+        lambda eid, patch: (patched_fields.extend(patch.keys()), original_update(eid, patch))[1]
+    )
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "health_note_to_add": "膝蓋退化",
+    })
+
+    assert res["status"] == "success"
+    assert "health_notes" not in patched_fields
+
+
+def test_handle_update_elder_profile_skips_duplicate_health_note(monkeypatch):
+    """已經有的註記不重複加；此時沒有任何欄位可更新。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "health_note_to_add": "高血壓歷史",
+    })
+
+    assert res["status"] == "error"
+    assert len(stored["health_notes"]) == 1
+
+
+def test_handle_get_elder_profile_flattens_health_notes(monkeypatch):
+    """給模型的檔案只帶文字，note_id 這種內部識別碼不進 prompt。"""
+    _fake_elder_store(monkeypatch)
+
+    res = tools.handle_get_elder_profile({"elder_id": "eld_001"})
+
+    assert res["status"] == "success"
+    assert res["data"]["health_notes"] == ["高血壓歷史"]
+
+
 # =============================================================================
 # 工具六：remind_pending_routines
 # =============================================================================

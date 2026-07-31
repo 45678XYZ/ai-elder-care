@@ -24,6 +24,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 from src.shared import db, sessions, routines
+from src.shared.models import health_note_texts
 from src.extraction.canonical import safety_alert_key, event_id_for
 
 
@@ -361,7 +362,8 @@ def handle_get_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             "birth_year": elder_info.get("birth_year"),
             "lang_preference": elder_info.get("lang_preference"),
             "address_region": elder_info.get("address_region"),
-            "health_notes": elder_info.get("health_notes", []),
+            # 攤平成文字：note_id 對模型沒有意義，留著只會被當成內容處理
+            "health_notes": health_note_texts(elder_info.get("health_notes")),
             "family": elder_info.get("family", []),
             "habit_note": elder_info.get("habit_note", ""),
         }
@@ -388,22 +390,15 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "error", "message": f"找不到長者 (ID: {elder_id}) 的個人檔案"}
 
         patch_data = {}
+        updated_fields = []
 
         # 處理暱稱更新
         if "nickname" in params and params["nickname"]:
             patch_data["nickname"] = params["nickname"]
 
-        # 處理健康注意事項 (附加至陣列)
-        if "health_note_to_add" in params and params["health_note_to_add"]:
-            current_health_notes = current_profile.get("health_notes", [])
-            new_note = params["health_note_to_add"].strip()
-            if new_note and new_note not in current_health_notes:
-                current_health_notes.append(new_note)
-                patch_data["health_notes"] = current_health_notes
-
         # 處理生活習慣紀錄 (附加至字串)
         if "habit_note_to_append" in params and params["habit_note_to_append"]:
-            current_habit = current_profile.get("habit_note", "").strip()
+            current_habit = (current_profile.get("habit_note") or "").strip()
             new_habit = params["habit_note_to_append"].strip()
             if new_habit:
                 if current_habit:
@@ -411,20 +406,41 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
                 else:
                     patch_data["habit_note"] = new_habit
 
-        if not patch_data:
+        # 處理健康注意事項：走原子 append，不做 read-modify-write。
+        # 這一項是 AI 依長輩談話補上的，照護者同時可能正在 App 上刪別的項目，
+        # 整份覆寫會讓其中一邊的結果無聲消失（見 db.append_health_note）。
+        new_note = (params.get("health_note_to_add") or "").strip()
+        appended = False
+        if new_note:
+            # 舊資料是純字串陣列，新資料是物件，去重時兩種都要看得懂
+            existing = {
+                n.get("text") if isinstance(n, dict) else n
+                for n in (current_profile.get("health_notes") or [])
+            }
+            if new_note not in existing:
+                db.append_health_note(elder_id, {"text": new_note, "source": "agent"})
+                appended = True
+                updated_fields.append("health_notes")
+
+        if not patch_data and not appended:
             return {"status": "error", "message": "沒有提供任何欲更新的檔案欄位"}
 
-        updated_profile = db.update_elder(elder_id, patch_data)
-        
+        if patch_data:
+            updated_profile = db.update_elder(elder_id, patch_data)
+            updated_fields.extend(patch_data.keys())
+        else:
+            # 只 append 健康註記時不必再寫一次，重讀拿最新內容即可
+            updated_profile = db.get_elder(elder_id) or {}
+
         # 準備回傳的簡要格式
         return {
             "status": "success",
             "message": "已成功更新長者個人檔案",
-            "updated_fields": list(patch_data.keys()),
+            "updated_fields": updated_fields,
             "data": {
                 "elder_id": updated_profile.get("elder_id"),
                 "nickname": updated_profile.get("nickname"),
-                "health_notes": updated_profile.get("health_notes", []),
+                "health_notes": health_note_texts(updated_profile.get("health_notes")),
                 "habit_note": updated_profile.get("habit_note", "")
             }
         }

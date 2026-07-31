@@ -34,7 +34,13 @@ from botocore.exceptions import ClientError
 # canonical 事件身分與時間正規化只有一份實作，避免同一筆資料在兩處算出不同 ID／精度
 from src.extraction.canonical import event_id_for, event_time_key, routine_completion_key
 from src.extraction.temporal import day_end, day_start, format_ts, normalize_ts
-from src.shared.models import ConversationCreate, DailySummaryCreate, EventCreate
+from src.shared.models import (
+    ConversationCreate,
+    DailySummaryCreate,
+    EventCreate,
+    HealthNote,
+    normalize_health_notes_input,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +64,9 @@ CONVERSATIONS_BY_TIME_INDEX = "conversations-by-time"
 
 # 一次互動只算已完成的 turn：failed 沒有回覆、processing 還沒收斂（見 docs/framework.md）
 TURN_STATUS_COMPLETED = "completed"
+
+# health_notes 刪除單筆時的重試上限，見 remove_health_note
+_REMOVE_NOTE_MAX_ATTEMPTS = 3
 
 # 兩個時間排序鍵都是 `<時間>#<ID>`（event_time_key、conversation_time_key）；
 # 查詢上界要蓋過同一毫秒的所有 ID
@@ -213,6 +222,108 @@ def get_elder(elder_id: str) -> dict[str, Any] | None:
         raise DBError(f"讀取長者資料失敗: {e.response['Error']['Message']}")
 
 
+def _prepare_health_notes(notes: Any) -> list[dict[str, Any]]:
+    """把 health_notes 正規化成落地格式：每一筆都帶 note_id、source 與 created_at。
+
+    相容舊資料的純字串（見 models.normalize_health_notes_input）。note_id 在這裡補齊，
+    刪除單筆時才有穩定的指定方式——用陣列 index 指定會在併發 append 後指到別人身上。
+    """
+    normalized = normalize_health_notes_input(notes)
+    if not isinstance(normalized, list):
+        return []
+
+    now_str = datetime.now(TZ_TAIPEI).isoformat()
+    prepared: list[dict[str, Any]] = []
+    for item in normalized:
+        note = HealthNote.model_validate(item)
+        data = note.model_dump()
+        if not data.get("created_at"):
+            data["created_at"] = now_str
+        prepared.append(data)
+    return prepared
+
+
+def append_health_note(elder_id: str, note: Any) -> dict[str, Any]:
+    """原子地在 health_notes 尾端加一筆，回傳更新後的長者資料。
+
+    **不做 read-modify-write**：`update_elder` 對 health_notes 是整份 SET，
+    照護者在 App 上刪一筆的同時 AI 正好補一筆的話，後寫的會把前一次整份蓋掉。
+    這裡改用 DynamoDB 的 list_append，兩邊各自只碰自己那一筆。
+    """
+    table = get_dynamodb_resource().Table(TABLE_ELDERS)
+    prepared = _prepare_health_notes([note])
+    if not prepared:
+        raise DBError("health_note 內容為空，無法新增")
+
+    try:
+        resp = table.update_item(
+            Key={"elder_id": elder_id},
+            UpdateExpression=(
+                "SET #hn = list_append(if_not_exists(#hn, :empty), :new), #ua = :now"
+            ),
+            ConditionExpression="attribute_exists(elder_id)",
+            ExpressionAttributeNames={"#hn": "health_notes", "#ua": "updated_at"},
+            ExpressionAttributeValues={
+                ":empty": [],
+                ":new": prepared,
+                ":now": datetime.now(TZ_TAIPEI).isoformat(),
+            },
+            ReturnValues="ALL_NEW",
+        )
+        return convert_decimals(resp.get("Attributes", {}))
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            raise DBError(f"找不到長者資料: {elder_id}")
+        raise DBError(f"新增健康註記失敗: {e.response['Error']['Message']}")
+
+
+def remove_health_note(elder_id: str, note_id: str) -> dict[str, Any] | None:
+    """依 note_id 刪掉單筆健康註記；找不到該筆時回 None。
+
+    DynamoDB 只能用 index 從 list 移除元素，而 index 會被併發的 append 推移，
+    因此每次都重讀出當下的位置，並以「該位置的 note_id 仍是這一筆」為條件寫入。
+    條件不成立代表期間有人動過，重讀重試（[_REMOVE_NOTE_MAX_ATTEMPTS] 次）。
+    """
+    table = get_dynamodb_resource().Table(TABLE_ELDERS)
+
+    for _ in range(_REMOVE_NOTE_MAX_ATTEMPTS):
+        elder = get_elder(elder_id)
+        if not elder:
+            raise DBError(f"找不到長者資料: {elder_id}")
+
+        notes = elder.get("health_notes") or []
+        index = next(
+            (i for i, n in enumerate(notes) if isinstance(n, dict) and n.get("note_id") == note_id),
+            None,
+        )
+        if index is None:
+            return None
+
+        try:
+            resp = table.update_item(
+                Key={"elder_id": elder_id},
+                UpdateExpression=f"REMOVE #hn[{index}] SET #ua = :now",
+                ConditionExpression=f"#hn[{index}].#nid = :nid",
+                ExpressionAttributeNames={
+                    "#hn": "health_notes",
+                    "#ua": "updated_at",
+                    "#nid": "note_id",
+                },
+                ExpressionAttributeValues={
+                    ":nid": note_id,
+                    ":now": datetime.now(TZ_TAIPEI).isoformat(),
+                },
+                ReturnValues="ALL_NEW",
+            )
+            return convert_decimals(resp.get("Attributes", {}))
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                continue  # 位置被併發寫入推移，重讀再來
+            raise DBError(f"刪除健康註記失敗: {e.response['Error']['Message']}")
+
+    raise DBError("刪除健康註記失敗：健康註記正被頻繁更新，請稍後再試")
+
+
 def create_elder(elder_data: dict[str, Any]) -> dict[str, Any]:
     """新增長者資料。自動補充 elder_id（若無）、created_at 與 updated_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_ELDERS)
@@ -235,7 +346,11 @@ def create_elder(elder_data: dict[str, Any]) -> dict[str, Any]:
     for list_key in ("health_notes", "family", "caregiver_ids"):
         if data.get(list_key) is None:
             data[list_key] = []
-            
+
+    # health_notes 落地前補齊 note_id/source/created_at（也把舊格式的純字串收編）
+    data["health_notes"] = _prepare_health_notes(data["health_notes"])
+
+
     try:
         table.put_item(Item=data)
         return convert_decimals(data)
@@ -250,6 +365,12 @@ def update_elder(elder_id: str, patch_data: dict[str, Any]) -> dict[str, Any]:
     # 複製 patch_data 並注入/更新 updated_at
     data = dict(patch_data)
     data["updated_at"] = datetime.now(TZ_TAIPEI).isoformat()
+
+    # PATCH 對 health_notes 的語意是整份取代（見 docs/api.md）；這裡只負責補齊每一筆的
+    # note_id/source/created_at。要單獨增刪一筆請走 append_health_note／remove_health_note，
+    # 它們不會覆寫到別人剛寫進去的內容。
+    if data.get("health_notes") is not None:
+        data["health_notes"] = _prepare_health_notes(data["health_notes"])
 
     # 動態建構 UpdateExpression
     update_parts = []
