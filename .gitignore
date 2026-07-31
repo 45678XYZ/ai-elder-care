@@ -50,6 +50,9 @@ backend/local_runner/
 # 由 data/knowledge/ 每次重新產生，不是原始資料
 build/
 
+# --- 本地交付文件（不進版控） ---
+docs/deliverables/
+
 # --- misc ---
 .DS_Store
 .env
