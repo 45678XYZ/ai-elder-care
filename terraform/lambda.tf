@@ -737,3 +737,115 @@ module "api_stats" {
   })
 }
 
+# --- 例行公事 API（規格見 docs/api.md「例行公事」）---
+#
+# 這是唯一會寫 routines 表的路徑，因此不共用 aws_iam_role.extraction：那個角色刻意只給
+# routines 讀取權，讓萃取與統計不可能回寫定義。
+
+resource "aws_iam_role" "api_routines" {
+  name = "${var.project_name}-api-routines"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "api_routines_logs" {
+  role       = aws_iam_role.api_routines.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+data "aws_iam_policy_document" "api_routines_data" {
+  # 版本不可變：建立走 PutItem，改版走 transact_write_items（關閉舊 current + 寫新版），
+  # 因此需要 PutItem 與 UpdateItem——transaction 在 IAM 上檢查的是底層那兩個動作
+  statement {
+    sid    = "RoutinesWrite"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [
+      aws_dynamodb_table.routines.arn,
+      "${aws_dynamodb_table.routines.arn}/index/*",
+    ]
+  }
+
+  # 手動完成寫 canonical completion event；當日行程視圖以 BatchGetItem 反查完成狀態
+  statement {
+    sid    = "CompletionEvents"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:BatchGetItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [
+      aws_dynamodb_table.events.arn,
+      "${aws_dynamodb_table.events.arn}/index/*",
+    ]
+  }
+
+  # assert_can_access_elder 依 elders.caregiver_ids 判定越權（見 backend/src/shared/auth.py）
+  statement {
+    sid       = "EldersRead"
+    effect    = "Allow"
+    actions   = ["dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.elders.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "api_routines_data" {
+  name   = "api-routines-data-access"
+  role   = aws_iam_role.api_routines.id
+  policy = data.aws_iam_policy_document.api_routines_data.json
+}
+
+# 四條路由（列表／當日／建立／改版／手動完成）掛同一支 handler，依 httpMethod 與 resource 分派
+module "api_routines" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
+  function_name = "${var.project_name}-api-routines"
+  description   = "例行公事定義與當日行程 API"
+  handler       = "src.handlers.routines.handler"
+  runtime       = "python3.11"
+  timeout       = 15
+  memory_size   = 512
+
+  create_role = false
+  lambda_role = aws_iam_role.api_routines.arn
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = {
+    TABLE_ELDERS   = aws_dynamodb_table.elders.name
+    TABLE_EVENTS   = aws_dynamodb_table.events.name
+    TABLE_ROUTINES = aws_dynamodb_table.routines.name
+
+    ROUTINE_GRACE_MINUTES = tostring(var.routine_grace_minutes)
+
+    METRICS_NAMESPACE = var.metrics_namespace
+    METRICS_ENABLED   = "true"
+  }
+}
+

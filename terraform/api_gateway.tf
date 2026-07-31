@@ -7,11 +7,13 @@
 #   GET/POST /elders、GET/PATCH /elders/{elder_id}          → elders ✅
 #   POST /elders/{elder_id}/health_notes、
 #   DELETE /elders/{elder_id}/health_notes/{note_id}        → elders ✅
-#   GET   /summaries、POST /summaries/generate              → summaries（feature/daily-summaries 實作）
+#   GET   /summaries、POST /summaries/generate              → summaries ✅
 #   GET   /events                                           → events ✅
 #   GET/POST /routines、PATCH /routines/{routine_id}、
-#   POST  /routines/{routine_id}/complete                   → routines（待其他分支實作）
-#   GET   /stats                                            → stats（待其他分支實作）
+#   POST  /routines/{routine_id}/complete                   → routines ✅
+#   GET   /stats                                            → stats ✅
+#
+# api.md 另有 GET/POST /elders/{elder_id}/caregivers（綁定照護者），後端與路由都尚未實作。
 #
 # 各模組自行補自己的路由，共用地基（REST API、authorizer、deployment、stage、
 # 存取日誌、節流）在此檔一次備妥。新增路由的固定四件事：
@@ -228,6 +230,135 @@ resource "aws_lambda_permission" "get_stats" {
   function_name = module.api_stats.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/stats"
+}
+
+# --- 例行公事：GET|POST /routines、PATCH /routines/{routine_id}、
+#     POST /routines/{routine_id}/complete ---
+#
+# 四條路由掛同一支 Lambda，handler 依 httpMethod 與 resource 分派（見
+# backend/src/handlers/routines.py）。GET 有無 date 參數決定回「定義列表」或「當日行程」，
+# 因此不拆成兩個 resource。
+
+resource "aws_api_gateway_resource" "routines" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "routines"
+}
+
+resource "aws_api_gateway_method" "get_routines" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routines.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+
+  request_parameters = {
+    "method.request.querystring.elder_id"   = false
+    "method.request.querystring.date"       = false
+    "method.request.querystring.limit"      = false
+    "method.request.querystring.next_token" = false
+  }
+}
+
+resource "aws_api_gateway_integration" "get_routines" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routines.id
+  http_method             = aws_api_gateway_method.get_routines.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.api_routines.lambda_function_invoke_arn
+}
+
+resource "aws_api_gateway_method" "post_routines" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routines.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+}
+
+resource "aws_api_gateway_integration" "post_routines" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routines.id
+  http_method             = aws_api_gateway_method.post_routines.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.api_routines.lambda_function_invoke_arn
+}
+
+resource "aws_api_gateway_resource" "routine_id" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.routines.id
+  path_part   = "{routine_id}"
+}
+
+resource "aws_api_gateway_method" "patch_routine" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routine_id.id
+  http_method          = "PATCH"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+
+  request_parameters = {
+    "method.request.path.routine_id" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "patch_routine" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routine_id.id
+  http_method             = aws_api_gateway_method.patch_routine.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.api_routines.lambda_function_invoke_arn
+}
+
+resource "aws_api_gateway_resource" "routine_complete" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.routine_id.id
+  path_part   = "complete"
+}
+
+resource "aws_api_gateway_method" "complete_routine" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routine_complete.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+
+  request_parameters = {
+    "method.request.path.routine_id" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "complete_routine" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routine_complete.id
+  http_method             = aws_api_gateway_method.complete_routine.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.api_routines.lambda_function_invoke_arn
+}
+
+# 集合路由與單筆路由各一條 permission，收斂到 /routines 這棵子樹
+resource "aws_lambda_permission" "apigw_routines" {
+  statement_id  = "AllowApiGatewayRoutines"
+  action        = "lambda:InvokeFunction"
+  function_name = module.api_routines.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/routines"
+}
+
+resource "aws_lambda_permission" "apigw_routine_ops" {
+  statement_id  = "AllowApiGatewayRoutineOps"
+  action        = "lambda:InvokeFunction"
+  function_name = module.api_routines.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/routines/*"
 }
 
 
@@ -529,6 +660,14 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_integration.generate_summary,
       aws_api_gateway_method.close_session,
       aws_api_gateway_integration.close_session,
+      aws_api_gateway_method.get_routines,
+      aws_api_gateway_integration.get_routines,
+      aws_api_gateway_method.post_routines,
+      aws_api_gateway_integration.post_routines,
+      aws_api_gateway_method.patch_routine,
+      aws_api_gateway_integration.patch_routine,
+      aws_api_gateway_method.complete_routine,
+      aws_api_gateway_integration.complete_routine,
       aws_api_gateway_authorizer.cognito,
       aws_api_gateway_request_validator.validator,
       aws_api_gateway_gateway_response.default_4xx,
