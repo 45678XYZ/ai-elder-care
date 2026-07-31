@@ -150,7 +150,46 @@ def test_handle_get_elder_profile_success(monkeypatch):
     assert res["data"]["habit_note"] == "喜歡喝高山烏龍茶、早起散步"
 
 
+# =============================================================================
+# 工具 5.1：update_elder_profile
+# =============================================================================
 
+def test_handle_update_elder_profile_success(monkeypatch):
+    """測試 update_elder_profile 工具處理函式。"""
+    # 模擬讀取
+    monkeypatch.setattr(
+        db,
+        "get_elder",
+        lambda eid: {
+            "elder_id": eid,
+            "nickname": "阿蘭嬤",
+            "health_notes": ["高血壓歷史"],
+            "habit_note": "喜歡喝高山烏龍茶"
+        }
+    )
+    # 模擬更新
+    def mock_update(eid, patch):
+        return {
+            "elder_id": eid,
+            "nickname": patch.get("nickname", "阿蘭嬤"),
+            "health_notes": patch.get("health_notes", ["高血壓歷史"]),
+            "habit_note": patch.get("habit_note", "喜歡喝高山烏龍茶")
+        }
+    monkeypatch.setattr(db, "update_elder", mock_update)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "nickname": "超級阿蘭嬤",
+        "health_note_to_add": "對阿司匹林過敏",
+        "habit_note_to_append": "不喜歡吃香菜"
+    })
+
+    assert res["status"] == "success"
+    assert res["data"]["nickname"] == "超級阿蘭嬤"
+    assert "對阿司匹林過敏" in res["data"]["health_notes"]
+    assert "高血壓歷史" in res["data"]["health_notes"]
+    assert "不喜歡吃香菜" in res["data"]["habit_note"]
+    assert "喜歡喝高山烏龍茶" in res["data"]["habit_note"]
 # =============================================================================
 # 工具六：remind_pending_routines
 # =============================================================================
