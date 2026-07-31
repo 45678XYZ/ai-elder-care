@@ -35,7 +35,8 @@ from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
 from src.shared import auth, db, responses, sessions, turns
-from src.shared.models import ChatRequest, ConversationCreate
+from src.shared.models import ChatRequest
+
 from src.shared.tts import TTSFactory
 from src.shared.validation import RequestValidationError, validate
 
@@ -400,7 +401,6 @@ def accept_new_turn(
         "conversation_id": conversation_id,
         "client_request_id": req.client_request_id,
         "request_hash": payload_hash,
-
         "lang": req.lang,
         "input_type": "audio" if req.audio else "text",
         "source": "elder_initiated",
