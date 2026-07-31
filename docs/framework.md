@@ -203,14 +203,15 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 | 欄位 | 型別 | 必填 | 說明 |
 |---|---|---|---|
 | `elder_id`, `record_id`, `item_type` | String | 是 | `record_id=TURN#...`；`item_type=conversation` |
-| `conversation_id` | String | 是 | `cnv_<identifier>`；由 `elder_id + idempotency_key` 穩定產生 |
+| `conversation_id` | String | 是 | `cnv_<identifier>`；由 `elder_id + client_request_id` 穩定產生 |
 | `conversation_time_key` | String | 是 | GSI 排序鍵 (`<created_at>#<conversation_id>`) |
-| `idempotency_key` | String | 是 | 等於 `client_request_id` |
-| `client_request_id` | String | 是 | 客戶端請求唯一 ID |
+| `client_request_id` | String | 是 | 客戶端請求唯一 ID (冪等 UUID) |
 | `request_hash` | String | 是 | 正規化請求 payload hash |
 | `request_status` | String | 是 | `processing` \| `completed` \| `failed` |
 | `request_lease_owner`, `request_lease_until` | String | 否 | `/chat` 請求租約鎖 |
+| `error_http_status`, `error_code`, `error_message` | String / Number | 否 | 終端失敗時記錄之 HTTP 碼、錯誤代碼與訊息（供冪等重播） |
 | `session_id` | String | 是 | `ses_<identifier>` |
+
 | `created_at` | String | 是 | 固定毫秒、`+08:00` |
 | `lang` | String | 是 | `zh-TW` \| `hak` |
 | `input_type` | String | 是 | `text` \| `audio` |
