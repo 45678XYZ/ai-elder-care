@@ -248,6 +248,17 @@ class AppSession {
     if (selectedElder == null) await selectElder(elders.first.elderId);
   }
 
+  /// 建立一位長輩（`POST /elders`），加進清單並切換過去。
+  ///
+  /// 建完就切過去：照護者剛填完這位長輩的資料，下一步一定是幫他設定行程，
+  /// 停在上一位身上等於逼人再點一次切換，而且很容易沒注意到就把行程加到別人身上。
+  Future<Elder> createElder(Map<String, dynamic> fields) async {
+    final created = await CareRepo.instance.createElder(fields);
+    elders = [...elders, created];
+    await selectElder(created.elderId);
+    return created;
+  }
+
   /// 切換目前在看的長者，並記住到下次啟動。
   Future<void> selectElder(String elderId) async {
     selectedElderId = elderId;

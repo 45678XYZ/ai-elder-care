@@ -108,6 +108,10 @@ class _FakeRepo implements CareRepository {
       ];
 
   @override
+  Future<Elder> createElder(Map<String, dynamic> fields) async =>
+      throw UnimplementedError();
+
+  @override
   Future<Elder> updateElder(
           String elderId, Map<String, dynamic> fields) async =>
       (await elders()).single;

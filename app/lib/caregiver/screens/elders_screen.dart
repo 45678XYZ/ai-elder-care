@@ -104,6 +104,42 @@ class _EldersScreenState extends State<EldersScreen> {
     if (created.remind) await _ensureNotificationPermission();
   }
 
+  /// 新增一位長輩（`POST /elders`）。
+  ///
+  /// 這是照護者上線後的第一步（demo Act 1）：建立者的 token `sub` 會被後端自動加進
+  /// `caregiver_ids`，所以建完立刻就看得到這位長輩，不必再走一次綁定。
+  ///
+  /// 建完切換過去並重載：下一步一定是幫這位長輩排行程，停在上一位身上很容易
+  /// 沒注意就把行程加到別人頭上。
+  Future<void> _addElder() async {
+    final draft = await showModalBottomSheet<_ElderDraft>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.cardAlt,
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.voicePanel),
+      builder: (_) => const _ElderForm(),
+    );
+    if (draft == null || !mounted) return;
+
+    final Elder created;
+    try {
+      created = await AppSession.instance.createElder(draft.toJson());
+    } catch (e) {
+      if (mounted) _showError('新增長輩失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    _reload();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.barDark,
+        content: Text('已新增「${created.name}」，接下來可以幫他排行程',
+            style: const TextStyle(color: AppColors.onDark)),
+      ),
+    );
+  }
+
   /// 寫入失敗的統一提示。
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -236,6 +272,23 @@ class _EldersScreenState extends State<EldersScreen> {
                   return ListView(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                     children: [
+                      SectionHeader(
+                        '長輩資料',
+                        trailing: TextButton.icon(
+                          onPressed: _addElder,
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            foregroundColor: AppColors.accentText,
+                          ),
+                          icon: const Icon(Icons.person_add_alt, size: 18),
+                          label: Text('新增長輩',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelSmall
+                                  ?.copyWith(color: AppColors.accentText)),
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
                       if (elder != null)
                         _ElderProfileCard(
                           elder: elder,
@@ -717,6 +770,233 @@ class _RoutineDraft {
 }
 
 /// 新增例行公事表單。失焦即驗證、錯誤訊息在欄位下方、有明確關閉鈕（§8／§12）。
+/// 新增長輩的表單內容（`POST /elders` 的 request 欄位，見 docs/api.md）。
+class _ElderDraft {
+  const _ElderDraft({
+    required this.name,
+    required this.nickname,
+    required this.lang,
+    required this.healthNotes,
+    required this.family,
+  });
+
+  final String name;
+  final String nickname;
+  final String lang;
+  final List<String> healthNotes;
+  final List<FamilyMember> family;
+
+  /// 只帶公開欄位：`elder_id`、`caregiver_ids`、`created_at`、`updated_at` 是
+  /// server-owned，傳了後端回 400 `INVALID_PARAMETER`。
+  ///
+  /// 空字串不送，讓後端套它自己的預設（api.md：未提供的 `health_notes`、`family`
+  /// 由後端補 `[]`），而不是送一堆空值進去。
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        if (nickname.isNotEmpty) 'nickname': nickname,
+        'lang_preference': lang,
+        if (healthNotes.isNotEmpty) 'health_notes': healthNotes,
+        if (family.isNotEmpty)
+          'family': [
+            for (final m in family)
+              {
+                'relation': m.relation,
+                'name': m.name,
+                if (m.note != null && m.note!.isNotEmpty) 'note': m.note,
+              },
+          ],
+      };
+}
+
+/// 新增長輩的表單。
+///
+/// 欄位取捨照 demo Act 1 的實際輸入：姓名、暱稱、語言、健康狀況、家人。
+/// 出生年、性別、居住地區 api.md 有但這裡不收——照護者現場輸入的欄位愈多愈慢，
+/// 而那三個目前沒有任何畫面在用；需要時走 `PATCH /elders/{id}` 補。
+class _ElderForm extends StatefulWidget {
+  const _ElderForm();
+
+  @override
+  State<_ElderForm> createState() => _ElderFormState();
+}
+
+class _ElderFormState extends State<_ElderForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
+  final _nicknameCtrl = TextEditingController();
+
+  /// 健康狀況與家人用「一行一筆」的多行輸入，不做動態增減列。
+  ///
+  /// 動態列在手機上要處理新增、刪除、捲動與鍵盤遮擋，欄位一多就變成一堆小按鈕；
+  /// 而這兩項的內容本來就是短句，換行輸入對照護者更快，也不會有「按了加號卻沒填」
+  /// 留下的空列。家人一行寫「關係,姓名,備註」，逗號分隔。
+  final _healthCtrl = TextEditingController();
+  final _familyCtrl = TextEditingController();
+
+  String _lang = 'zh-TW';
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _nicknameCtrl.dispose();
+    _healthCtrl.dispose();
+    _familyCtrl.dispose();
+    super.dispose();
+  }
+
+  /// 一行一筆，去掉空白行。
+  static List<String> _lines(String raw) => [
+        for (final l in raw.split('\n'))
+          if (l.trim().isNotEmpty) l.trim(),
+      ];
+
+  /// 「關係,姓名,備註」→ [FamilyMember]。關係與姓名缺一不可，備註選填。
+  ///
+  /// 分隔符同時接受半形與全形逗號：照護者在手機上打中文時輸入法給的是全形，
+  /// 只認半形的話會整行被當成關係、姓名變空的。
+  static List<FamilyMember> _parseFamily(String raw) {
+    final out = <FamilyMember>[];
+    for (final line in _lines(raw)) {
+      final parts = line.split(RegExp('[,，]')).map((p) => p.trim()).toList();
+      if (parts.length < 2 || parts[0].isEmpty || parts[1].isEmpty) continue;
+      out.add(FamilyMember(
+        relation: parts[0],
+        name: parts[1],
+        note: parts.length > 2 && parts[2].isNotEmpty ? parts[2] : null,
+      ));
+    }
+    return out;
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.of(context).pop(_ElderDraft(
+      name: _nameCtrl.text.trim(),
+      nickname: _nicknameCtrl.text.trim(),
+      lang: _lang,
+      healthNotes: _lines(_healthCtrl.text),
+      family: _parseFamily(_familyCtrl.text),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          child: Form(
+            key: _formKey,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text('新增長輩', style: text.titleMedium)),
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      tooltip: '關閉',
+                      icon: const Icon(Icons.close, color: AppColors.ink),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text('姓名', style: text.labelMedium),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _nameCtrl,
+                  style: text.bodyLarge,
+                  decoration: _elderDecoration('例如：陳阿蘭'),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? '請填寫長輩姓名' : null,
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text('稱呼', style: text.labelMedium),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _nicknameCtrl,
+                  style: text.bodyLarge,
+                  decoration: _elderDecoration('例如：阿蘭嬤（AI 會這樣叫他）'),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text('說話的語言', style: text.labelMedium),
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  children: [
+                    for (final l in const [('zh-TW', '華語'), ('hak', '客語')])
+                      _ChoicePill(
+                        label: l.$2,
+                        selected: _lang == l.$1,
+                        onTap: () => setState(() => _lang = l.$1),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text('健康狀況', style: text.labelMedium),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _healthCtrl,
+                  style: text.bodyLarge,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: _elderDecoration('一行一項\n例如：高血壓'),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text('家人', style: text.labelMedium),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _familyCtrl,
+                  style: text.bodyLarge,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: _elderDecoration('一行一位，用逗號分開\n例如：兒子,陳志明,在台北工作'),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: FilledButton(
+                    onPressed: _submit,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.accentText,
+                      foregroundColor: Colors.white,
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.all(AppRadius.field),
+                      ),
+                    ),
+                    child: Text('建立', style: text.labelLarge),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _elderDecoration(String hint) => InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: AppColors.chevron),
+        filled: true,
+        fillColor: AppColors.card,
+        enabledBorder: const OutlineInputBorder(
+          borderRadius: BorderRadius.all(AppRadius.field),
+          borderSide: BorderSide(color: AppColors.border),
+        ),
+        focusedBorder: const OutlineInputBorder(
+          borderRadius: BorderRadius.all(AppRadius.field),
+          borderSide: BorderSide(color: AppColors.accent, width: 2),
+        ),
+      );
+}
+
 class _RoutineForm extends StatefulWidget {
   const _RoutineForm();
 

@@ -64,6 +64,10 @@ class ApiRepository implements CareRepository {
   Future<List<Elder>> elders() => _api.getAllElders();
 
   @override
+  Future<Elder> createElder(Map<String, dynamic> fields) =>
+      _api.createElder(fields);
+
+  @override
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields) =>
       _api.updateElder(elderId, fields);
 

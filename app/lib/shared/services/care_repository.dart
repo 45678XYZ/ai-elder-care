@@ -57,6 +57,13 @@ abstract interface class CareRepository {
   /// `GET /elders` — 照護者可存取的長者（已翻完所有頁）。
   Future<List<Elder>> elders();
 
+  /// `POST /elders` — 建立長者（照護者）。
+  ///
+  /// [fields] 只帶公開欄位（`name` 必填）；`elder_id`、`caregiver_ids`、`created_at`、
+  /// `updated_at` 是 server-owned，傳了後端回 400 `INVALID_PARAMETER`。
+  /// 建立者的 token `sub` 會自動加入 `caregiver_ids`，所以建完就看得到這位長輩。
+  Future<Elder> createElder(Map<String, dynamic> fields);
+
   /// `PATCH /elders/{id}` — 部分更新。[fields] 的可用欄位見 docs/api.md。
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields);
 

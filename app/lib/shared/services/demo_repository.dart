@@ -171,6 +171,38 @@ class DemoRepository implements CareRepository {
   }
 
   @override
+  Future<Elder> createElder(Map<String, dynamic> fields) async {
+    if (_elders == null) await elders();
+    final list = _elders!;
+    final created = Elder(
+      // 真後端是 `"eld_" + uuid4().hex[:12]`；demo 用時間戳湊出同樣長度的十六進位。
+      elderId:
+          'eld_${DateTime.now().microsecondsSinceEpoch.toRadixString(16).padLeft(12, '0').substring(0, 12)}',
+      name: fields['name'] as String? ?? '',
+      nickname: fields['nickname'] as String?,
+      birthYear: fields['birth_year'] as int?,
+      gender: fields['gender'] as String?,
+      langPreference: fields['lang_preference'] as String? ?? 'zh-TW',
+      addressRegion: fields['address_region'] as String?,
+      healthNotes: _stringList(fields['health_notes']),
+      family: [
+        for (final f in fields['family'] as List<dynamic>? ?? const [])
+          if (f is Map<String, dynamic>) FamilyMember.fromJson(f),
+      ],
+      habitNote: fields['habit_note'] as String?,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    list.add(created);
+    return Future.delayed(DemoData.latency, () => created);
+  }
+
+  static List<String> _stringList(Object? raw) => [
+        for (final v in raw as List<dynamic>? ?? const [])
+          if (v is String && v.trim().isNotEmpty) v.trim(),
+      ];
+
+  @override
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields) async {
     if (_elders == null) await elders();
     final list = _elders!;
