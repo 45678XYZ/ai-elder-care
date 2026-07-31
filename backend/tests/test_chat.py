@@ -94,7 +94,7 @@ def stack(monkeypatch):
 
         calls = []
         monkeypatch.setattr(
-            chat, "invoke_agent_brain", lambda eid, txt: calls.append(txt) or (REPLY, True)
+            chat, "invoke_agent_brain", lambda eid, txt: calls.append(txt) or (REPLY, True, False)
         )
         monkeypatch.setattr(chat.TTSFactory, "get_tts_engine", lambda lang: DummyTTS())
         monkeypatch.setattr(
