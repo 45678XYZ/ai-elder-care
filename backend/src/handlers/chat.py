@@ -346,8 +346,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "routines_updated": routines_updated
             }
             db.save_conversation(conv_record)
-        except (AttributeError, NotImplementedError):
-            print(f"[Info] db.save_conversation 尚未在當前分支中導入。")
         except Exception as db_err:
             print(f"[Warning] 寫入對話紀錄至 DynamoDB 失敗: {db_err}")
 
