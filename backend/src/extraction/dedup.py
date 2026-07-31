@@ -114,7 +114,7 @@ def deduplicate(
             merged.append(group[0])
             continue
 
-        if embedder is not None and hasattr(embedder, "embed"):
+        if embedder is not None:
             # 使用 embedding cosine similarity 進行語義去重
             merge_result, merge_count = _embedding_merge_group(group, embedder, slot_minutes)
             merged.extend(merge_result)
@@ -130,6 +130,17 @@ def deduplicate(
         key_merged=key_merged,
         alias_merged=alias_merged,
     )
+
+
+def _get_embed_vector(embedder, text: str) -> np.ndarray:
+    """軟性適配各式 Embedder 介面 (embed / embed_query / embed_documents)。"""
+    if hasattr(embedder, "embed"):
+        return np.array(embedder.embed(text), dtype=np.float32)
+    if hasattr(embedder, "embed_query"):
+        return np.array(embedder.embed_query(text), dtype=np.float32)
+    if hasattr(embedder, "embed_documents"):
+        return np.array(embedder.embed_documents([text])[0], dtype=np.float32)
+    raise AttributeError("Embedder 缺乏相容的向量介面")
 
 
 def _embedding_merge_group(
@@ -157,7 +168,7 @@ def _embedding_merge_group(
         pred = event.predicate
         if pred not in pred_embeddings:
             try:
-                vec = embedder.embed(pred)
+                vec = _get_embed_vector(embedder, pred)
                 norm = np.linalg.norm(vec)
                 pred_embeddings[pred] = vec / (norm + 1e-9) if norm > 0 else vec
             except Exception:
