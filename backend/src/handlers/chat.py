@@ -72,7 +72,7 @@ def get_bedrock_agent_runtime():
     """取得 Bedrock Agent Runtime Client 實例。"""
     global _bedrock_agent_runtime
     if _bedrock_agent_runtime is None:
-        _bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
+        _bedrock_agent_runtime = boto3.client("bedrock-agentcore", region_name=AWS_REGION)
     return _bedrock_agent_runtime
 
 
@@ -158,7 +158,7 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool, bool]
 
         prompt_with_time = f"[目前台灣時間: {tw_time_str}]\n{transcript}"
 
-        response = client.invoke_agent(
+        response = client.invoke_agent_runtime(
             agentId=BEDROCK_AGENT_ID,
             agentAliasId=BEDROCK_AGENT_ALIAS_ID,
             sessionId=elder_id,
