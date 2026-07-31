@@ -1,14 +1,17 @@
-"""AWS Bedrock Agent Action Group — Tools Lambda Handler。
+"""對話大腦的工具箱 — Tools Lambda Handler。
 
 規格與定義出處：
 - 規格書：docs/llm_tools.md
-- Terraform 定義：terraform/bedrock_agent.tf
+- Terraform 定義：terraform/lambda.tf（Lambda 本體）、terraform/agentcore.tf（呼叫端權限）
 
 原理說明：
-當 Bedrock Agent (Claude 5 Sonnet) 在對話中判定需要執行特定任務（如查詢行程、標記吃藥完成）時，
-AWS 會包裝一個 JSON payload 傳給本 Lambda。
-本 Handler 負責解析 Bedrock 傳入的 function 名稱與 parameters，呼叫 shared/db.py 讀寫 DynamoDB，
-並回傳 Bedrock 要求的標準格式 JSON。
+當對話大腦在推理中判定需要執行特定任務（如查詢行程、標記吃藥完成）時，AgentCore Runtime
+（backend/src/agentcore_runtime/tools.py）以 lambda:InvokeFunction 傳一個 JSON payload 給本
+Lambda。本 Handler 負責分派到對應的 handle_* 函式，呼叫 shared/db.py 讀寫 DynamoDB，並把結果
+以 JSON 回傳。
+
+工具邏輯留在 Lambda 而非搬進常駐的 Runtime，是為了保住下方 `_emergency_state` 的語意——
+它依賴 Lambda 的短生命週期，搬進常駐容器會變成跨長者、跨 session 共用同一份記憶體。
 
 緊急通知安全機制（醫療級）：
 - category="emergency"         : 初次緊急警報，5 分鐘冷卻，寫入 type=safety event
@@ -796,65 +799,30 @@ TOOL_HANDLERS = {
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Bedrock Action Group 觸發的 Lambda 主進入點。
+    """AgentCore Runtime 觸發的 Lambda 主進入點。
 
-    Bedrock 傳入格式範例：
+    傳入格式（由 backend/src/agentcore_runtime/tools.py 組出）：
     {
-      "messageVersion": "1.0",
-      "actionGroup": "ElderCareRoutinesTools",
-      "function": "complete_routine",
-      "parameters": [
-        {"name": "elder_id", "type": "string", "value": "eld_001"},
-        {"name": "routine_id", "type": "string", "value": "rtn_001"}
-      ]
+      "tool": "complete_routine",
+      "params": {"elder_id": "eld_001", "routine_id": "rtn_001", ...}
     }
+
+    `elder_id` 一律由 Runtime 從請求 payload 注入，不是模型填的參數——模型填錯就會寫到
+    別位長者的紀錄上。
     """
     print(f"[Tools Lambda] Received event: {json.dumps(event, ensure_ascii=False)}")
 
-    action_group = event.get("actionGroup", "")
-    function_name = event.get("function", "")
-    parameters_list = event.get("parameters", [])
+    tool_name = event.get("tool", "")
+    params: Dict[str, Any] = event.get("params") or {}
 
-    # 將 Bedrock 傳入的 parameters 陣列轉換為 Python 字典
-    param_dict: Dict[str, Any] = {}
-    for p in parameters_list:
-        p_name = p.get("name")
-        p_val = p.get("value")
-        if p_name:
-            param_dict[p_name] = p_val
-
-    # 若 Payload 中有 sessionId，補充為 elder_id 的預設值
-    if "sessionId" in event and "elder_id" not in param_dict:
-        param_dict["elder_id"] = event["sessionId"]
-
-    # 尋找對應的工具處理函數
-    handler_func = TOOL_HANDLERS.get(function_name)
+    handler_func = TOOL_HANDLERS.get(tool_name)
     if not handler_func:
         result_payload = {
             "status": "error",
-            "message": f"未知的工具功能: '{function_name}'"
+            "message": f"未知的工具功能: '{tool_name}'"
         }
     else:
-        result_payload = handler_func(param_dict)
+        result_payload = handler_func(params)
 
-    # 轉為 JSON 字串以符合 Bedrock Response 格式
-    response_body_text = json.dumps(result_payload, ensure_ascii=False)
-
-    # 組裝 AWS Bedrock Agent 指定的標準傳回格式
-    bedrock_response = {
-        "messageVersion": "1.0",
-        "response": {
-            "actionGroup": action_group,
-            "function": function_name,
-            "functionResponse": {
-                "responseBody": {
-                    "TEXT": {
-                        "body": response_body_text
-                    }
-                }
-            }
-        }
-    }
-
-    print(f"[Tools Lambda] Responding: {json.dumps(bedrock_response, ensure_ascii=False)}")
-    return bedrock_response
+    print(f"[Tools Lambda] Responding: {json.dumps(result_payload, ensure_ascii=False)}")
+    return result_payload

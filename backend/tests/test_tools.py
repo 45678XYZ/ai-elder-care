@@ -1,4 +1,4 @@
-"""src.handlers.tools 單元測試：Action Group 7 大工具 handler 邏輯驗證。
+"""src.handlers.tools 單元測試：12 個工具 handler 邏輯與分派驗證。
 
 涵蓋項目：
 - 工具一至六：正常成功路徑與缺少必填參數的錯誤路徑
@@ -7,10 +7,9 @@
   - critical_escalation 強制繞過冷卻
   - mitigation 設為「⚠️ 待家屬確認」（不轉綠燈）
   - 無未結案警報時忽略 mitigation（防止誤報平安）
-- Lambda handler 完整 Bedrock 傳入格式轉發流程
+- Lambda handler 的 {tool, params} 分派流程（呼叫端為 AgentCore Runtime）
 """
 
-import json
 import time
 
 import pytest
@@ -478,11 +477,11 @@ def test_handle_get_daily_summaries_days_capped(monkeypatch):
 
 
 # =============================================================================
-# Lambda handler 完整 Bedrock 傳入格式轉發流程
+# Lambda handler 完整轉發流程（呼叫端為 AgentCore Runtime）
 # =============================================================================
 
 def test_tools_lambda_handler_flow(monkeypatch):
-    """測試完整 Bedrock Action Group Lambda handler 轉發流程。"""
+    """測試 {tool, params} 傳入格式能分派到對應 handler 並直接回 JSON 結果。"""
     monkeypatch.setattr(
         db,
         "get_daily_routines",
@@ -490,36 +489,19 @@ def test_tools_lambda_handler_flow(monkeypatch):
     )
 
     event = {
-        "messageVersion": "1.0",
-        "actionGroup": "ElderCareRoutinesTools",
-        "function": "get_today_routines",
-        "sessionId": "eld_001",
-        "parameters": [
-            {"name": "date", "type": "string", "value": "2026-07-28"}
-        ]
+        "tool": "get_today_routines",
+        "params": {"elder_id": "eld_001", "date": "2026-07-28"},
     }
 
     resp = tools.handler(event, None)
-    assert resp["messageVersion"] == "1.0"
-    assert resp["response"]["actionGroup"] == "ElderCareRoutinesTools"
-    assert resp["response"]["function"] == "get_today_routines"
-
-    body_text = resp["response"]["functionResponse"]["responseBody"]["TEXT"]["body"]
-    body_json = json.loads(body_text)
-    assert body_json["status"] == "success"
+    assert resp["status"] == "success"
+    assert resp["data"]["date"] == "2026-07-28"
 
 
 def test_tools_lambda_handler_unknown_function():
     """測試傳入未知工具名稱時，回傳 error 而非崩潰。"""
-    event = {
-        "messageVersion": "1.0",
-        "actionGroup": "ElderCareRoutinesTools",
-        "function": "nonexistent_function",
-        "parameters": []
-    }
+    event = {"tool": "nonexistent_function", "params": {}}
 
     resp = tools.handler(event, None)
-    body_text = resp["response"]["functionResponse"]["responseBody"]["TEXT"]["body"]
-    body_json = json.loads(body_text)
-    assert body_json["status"] == "error"
-    assert "nonexistent_function" in body_json["message"]
+    assert resp["status"] == "error"
+    assert "nonexistent_function" in resp["message"]

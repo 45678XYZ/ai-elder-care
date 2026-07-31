@@ -1,14 +1,16 @@
-# Bedrock Agent 智慧工具箱 (Action Groups / Tools) 規格說明書
+# 對話大腦智慧工具箱 (Tools) 規格說明書
 
-本文件定義供 **Amazon Bedrock Agent (Claude 5)** 自動調用的後端工具（Action Groups / Tools）。當長者在語音對話中提到與「例行公事（用藥、量血壓等）」或「新建行程（約會、看醫生）」相關的意圖時，Agent 會自動選擇並呼叫對應的工具。
+本文件定義供**對話大腦**自動調用的後端工具。當長者在語音對話中提到與「例行公事（用藥、量血壓等）」或「新建行程（約會、看醫生）」相關的意圖時，大腦會自動選擇並呼叫對應的工具。
 
-所有工具的執行邏輯均透過一個共用的 **Tools Lambda** (或直接在 `chat` 專案中調用) 進行，並直接讀寫 DynamoDB 的 `routines` 與 `events` 表。
+大腦跑在 AgentCore Runtime 上（實作見 `backend/src/agentcore_runtime/`），工具的 LangChain 包裝在該套件的 `tools.py`。所有工具的執行邏輯均透過一個共用的 **Tools Lambda**（`backend/src/handlers/tools.py`）進行，並直接讀寫 DynamoDB 的 `routines` 與 `events` 表。
+
+`elder_id` 不是模型填的參數：它由 Runtime 從 `POST /chat` 的請求 payload 注入後才轉呼叫 Tools Lambda。下方各工具的「輸入參數」仍列出 `elder_id`，因為那是 Tools Lambda 的介面；模型看到的工具 schema 沒有這個欄位。
 
 ---
 
 ## 1. 工具總覽與分類清單
 
-為了便於管理與 Agent 辨識，所有工具依據功能劃分為三大類：**行程管理類**、**事件與摘要類**、**安全與警報類**。
+為了便於管理與大腦辨識，所有工具依據功能劃分為四大類：**行程管理類**、**事件與摘要類**、**安全與警報類**、**衛教知識類**。
 
 ### 1.1 行程管理類 (Routine Management)
 | 工具名稱 | 功能描述 (供 LLM 判斷) | 調用契機 (Triggering Intent) |
@@ -32,6 +34,11 @@
 | 工具名稱 | 功能描述 (供 LLM 判斷) | 調用契機 (Triggering Intent) |
 |---|---|---|
 | **`notify_caregiver`** | 發送緊急警報、行程報告或健康摘要至照護者。 | 遭遇緊急狀況：「我剛剛在浴室滑倒了，站不起來。」 |
+
+### 1.4 衛教知識類 (Health Knowledge)
+| 工具名稱 | 功能描述 (供 LLM 判斷) | 調用契機 (Triggering Intent) |
+|---|---|---|
+| **`search_health_knowledge`** | 檢索衛教與長照知識庫，取得疾病照護、用藥觀念、長照資源的說明。 | 詢問衛教或長照資源：「血壓高平常要注意什麼？」「有沒有人可以幫忙照顧？」 |
 
 ---
 
@@ -139,6 +146,17 @@
 *   **健康註記的寫入方式**：`health_note_to_add` 會以 `source: "agent"` 原子 append 進 `health_notes`（`db.append_health_note`），**不做讀出再整份寫回**。同一個欄位照護者也會在 App 上增刪，整份覆寫會讓其中一邊的結果無聲消失。已存在的相同內容不重複加入。
 *   **來源標示**：由此工具寫入的註記在 API 上帶 `source: "agent"`，與照護者手填的 `caregiver` 分開，讓照護者看得出哪幾筆是 AI 從談話裡聽來的（契約見 `docs/api.md` 的 health_notes 物件）。
 *   **回傳的 `health_notes`**：攤平成純文字陣列，不含 `note_id` 等內部識別碼。
+
+### 2.4 衛教知識類 (Health Knowledge)
+
+#### `search_health_knowledge` (檢索衛教知識庫)
+*   **LLM 描述**：`Search the health education knowledge base for elder care guidance: chronic disease care, dementia, fall prevention, assistive devices, oral care, nutrition, medication concepts, seasonal health, and long-term care services in Taiwan.`
+*   **輸入參數**：`query` (字串，用長者的原話即可)
+*   **回傳資料**：`{"status": "success", "count": int, "passages": ["...", ...]}`
+*   **系統影響**：無副作用 (唯讀)。取代原本掛在託管 Agent 上的 knowledge base association；知識庫本體見 `terraform/bedrock_kb.tf`，回傳段落數由 `agent_kb_top_k` 控制。
+*   **何時該檢索**：判斷準則寫在 `backend/src/agentcore_runtime/prompts.py` 的系統提示，不寫在工具描述——閒聊與查詢長者自身紀錄時不應檢索。
+
+---
 
 ## 3. 對話引導與工具調用實例
 
