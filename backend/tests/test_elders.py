@@ -132,3 +132,116 @@ def test_patch_elder_success(monkeypatch):
     body = json.loads(resp["body"])
     assert body["name"] == "陳阿蘭（更新）"
 
+
+# =============================================================================
+# /elders/{elder_id}/health_notes — 單筆增刪
+# =============================================================================
+
+def _health_note_event(method, elder_id="eld_001", note_id=None, body=None, **kwargs):
+    """組出打 health_notes 子資源的事件。"""
+    path_params = {"elder_id": elder_id}
+    if note_id:
+        path_params["note_id"] = note_id
+    event = _make_event(method, body=body, path_params=path_params, **kwargs)
+    event["path"] = f"/elders/{elder_id}/health_notes" + (f"/{note_id}" if note_id else "")
+    return event
+
+
+def test_post_health_note_success(monkeypatch):
+    """新增單筆健康註記走原子 append，回 201。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+    captured = {}
+
+    def fake_append(eid, note):
+        captured["note"] = note
+        return {
+            "elder_id": eid,
+            "name": "陳阿蘭",
+            "health_notes": [{"note_id": "hn_a", "text": note["text"], "source": note["source"]}],
+            "created_at": "2026-07-28T12:00:00+08:00",
+        }
+
+    monkeypatch.setattr(db, "append_health_note", fake_append)
+
+    event = _health_note_event("POST", body={"text": "膝關節退化"}, sub="usr_c1")
+    resp = elders.handler(event, None)
+
+    assert resp["statusCode"] == 201
+    body = json.loads(resp["body"])
+    assert body["health_notes"][0]["text"] == "膝關節退化"
+    # 這個端點只給照護者用，落地的來源固定 caregiver
+    assert captured["note"]["source"] == "caregiver"
+
+
+def test_post_health_note_rejects_client_source(monkeypatch):
+    """client 不得自稱 agent，否則來源標示就沒有意義。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+
+    event = _health_note_event("POST", body={"text": "膝關節退化", "source": "agent"}, sub="usr_c1")
+    resp = elders.handler(event, None)
+
+    assert resp["statusCode"] == 400
+    assert json.loads(resp["body"])["error"]["code"] == "INVALID_PARAMETER"
+
+
+def test_post_health_note_empty_text_400(monkeypatch):
+    """text 為空回 400。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+
+    event = _health_note_event("POST", body={"text": "   "}, sub="usr_c1")
+    resp = elders.handler(event, None)
+
+    assert resp["statusCode"] == 400
+
+
+def test_post_health_note_elder_role_403(monkeypatch):
+    """長者帳號不能改自己的健康註記。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+
+    # 長者身分靠 token 的 elder_id claim 認定，這裡不能沿用 _health_note_event
+    # 的 elder_id（那個是路徑上的目標長者）
+    event = _make_event(
+        "POST",
+        body={"text": "膝關節退化"},
+        path_params={"elder_id": "eld_001"},
+        sub="usr_e1",
+        elder_id="eld_001",
+    )
+    event["path"] = "/elders/eld_001/health_notes"
+    resp = elders.handler(event, None)
+
+    assert resp["statusCode"] == 403
+
+
+def test_delete_health_note_success(monkeypatch):
+    """依 note_id 刪除單筆，回 200 與刪除後的長者資料。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+    monkeypatch.setattr(
+        db,
+        "remove_health_note",
+        lambda eid, nid: {
+            "elder_id": eid,
+            "name": "陳阿蘭",
+            "health_notes": [],
+            "created_at": "2026-07-28T12:00:00+08:00",
+        },
+    )
+
+    event = _health_note_event("DELETE", note_id="hn_a", sub="usr_c1")
+    resp = elders.handler(event, None)
+
+    assert resp["statusCode"] == 200
+    assert json.loads(resp["body"])["health_notes"] == []
+
+
+def test_delete_health_note_not_found_404(monkeypatch):
+    """找不到那一筆時回 404，而不是把 None 當成成功。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+    monkeypatch.setattr(db, "remove_health_note", lambda eid, nid: None)
+
+    event = _health_note_event("DELETE", note_id="hn_missing", sub="usr_c1")
+    resp = elders.handler(event, None)
+
+    assert resp["statusCode"] == 404
+    assert json.loads(resp["body"])["error"]["code"] == "HEALTH_NOTE_NOT_FOUND"
+

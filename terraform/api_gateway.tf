@@ -5,6 +5,8 @@
 #   POST  /chat                                             → chat ✅
 #   POST  /chat/sessions/{session_id}/close                 → session_closer ✅
 #   GET/POST /elders、GET/PATCH /elders/{elder_id}          → elders ✅
+#   POST /elders/{elder_id}/health_notes、
+#   DELETE /elders/{elder_id}/health_notes/{note_id}        → elders ✅
 #   GET   /summaries、POST /summaries/generate              → summaries（feature/daily-summaries 實作）
 #   GET   /events                                           → events ✅
 #   GET/POST /routines、PATCH /routines/{routine_id}、
@@ -373,6 +375,75 @@ resource "aws_lambda_permission" "apigw_elder_ops" {
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/elders/*"
 }
 
+# --- POST /elders/{elder_id}/health_notes + DELETE .../{note_id} ---
+#
+# 健康註記單獨開端點，而不是讓前端用 PATCH 送整份 health_notes：這個欄位同時被
+# 照護者（App）與 Bedrock Agent（update_elder_profile 工具）寫入，整份覆寫會讓
+# 其中一邊的結果無聲消失。增刪各自只碰一筆，見 backend/src/shared/db.py。
+
+resource "aws_api_gateway_resource" "elder_health_notes" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.elder_id.id
+  path_part   = "health_notes"
+}
+
+resource "aws_api_gateway_method" "post_health_note" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.elder_health_notes.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.path.elder_id" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "post_health_note" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.elder_health_notes.id
+  http_method             = aws_api_gateway_method.post_health_note.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.elders.invoke_arn
+}
+
+resource "aws_api_gateway_resource" "elder_health_note_id" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.elder_health_notes.id
+  path_part   = "{note_id}"
+}
+
+resource "aws_api_gateway_method" "delete_health_note" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.elder_health_note_id.id
+  http_method          = "DELETE"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.path.elder_id" = true
+    "method.request.path.note_id"  = true
+  }
+}
+
+resource "aws_api_gateway_integration" "delete_health_note" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.elder_health_note_id.id
+  http_method             = aws_api_gateway_method.delete_health_note.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.elders.invoke_arn
+}
+
+resource "aws_lambda_permission" "apigw_elder_health_notes" {
+  statement_id  = "AllowApiGatewayElderHealthNotes"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.elders.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/elders/*/health_notes*"
+}
+
 # --- POST /chat/sessions/{session_id}/close（前端主動關閉，雙管道設計之一） ---
 # Session 關閉採雙管道：前端可主動呼叫此 endpoint 即時關閉，EventBridge 排程則負責週期性收斂。
 
@@ -448,6 +519,10 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_integration.get_elder,
       aws_api_gateway_method.patch_elder,
       aws_api_gateway_integration.patch_elder,
+      aws_api_gateway_method.post_health_note,
+      aws_api_gateway_integration.post_health_note,
+      aws_api_gateway_method.delete_health_note,
+      aws_api_gateway_integration.delete_health_note,
       aws_api_gateway_method.get_summaries,
       aws_api_gateway_integration.get_summaries,
       aws_api_gateway_method.generate_summary,

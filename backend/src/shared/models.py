@@ -12,6 +12,7 @@
 """
 
 import re
+import uuid
 from typing import Any, Literal, get_args
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -43,6 +44,55 @@ class FamilyMember(BaseModel):
     note: str | None = Field(default=None, description="動態背景備註，例如：在台北工作，每週三來訪")
 
 
+class HealthNote(BaseModel):
+    """【子模型】單筆健康註記；被 ElderCreate / ElderUpdate / ElderResponse 引用。
+
+    `source` 區分這一項是誰寫的：`caregiver` 是照護者在 App 上自己填的，
+    `agent` 是對話中由 `update_elder_profile` 依長輩談話補上的。
+    兩者在照護者眼中的可信度不同——AI 聽來的更需要被看見與確認——所以來源必須
+    留在資料裡，否則前端拿到的只是一串無從分辨的字串。
+    """
+    note_id: str = Field(
+        default_factory=lambda: f"hn_{uuid.uuid4().hex[:12]}",
+        description="健康註記唯一識別碼（前綴 hn_），刪除單筆時以此指定",
+    )
+    text: str = Field(..., description="註記內容，例如：高血壓")
+    source: Literal["caregiver", "agent"] = Field(
+        default="caregiver", description="來源：caregiver（照護者填寫）｜agent（對話中由 AI 補上）"
+    )
+    created_at: str | None = Field(default=None, description="加入時間 (ISO 8601, 台灣時間 +08:00)")
+
+
+def normalize_health_notes_input(value: Any) -> Any:
+    """把 health_notes 的輸入正規化成 HealthNote 可接受的 dict 陣列。
+
+    舊契約（以及 DynamoDB 既有資料）是純字串陣列，改成物件後仍然要讀得動，
+    因此字串一律補成 `{"text": ..., "source": "caregiver"}`——舊資料都是照護者
+    建檔時填的，這個預設與事實相符，不需要另外做一次資料遷移。
+
+    非 list 或非字串元素原樣放行，交給 Pydantic 報型別錯誤。
+    """
+    if not isinstance(value, list):
+        return value
+    return [{"text": item, "source": "caregiver"} if isinstance(item, str) else item for item in value]
+
+
+def health_note_texts(notes: Any) -> list[str]:
+    """只取出健康註記的文字，給 LLM prompt 與工具回傳用。
+
+    模型不需要 note_id 這種內部識別碼——寫進 prompt 只會變成雜訊，甚至被複誦出來。
+    同時相容舊資料的純字串。
+    """
+    if not isinstance(notes, list):
+        return []
+    texts = []
+    for item in notes:
+        text = item.get("text") if isinstance(item, dict) else item
+        if isinstance(text, str) and text:
+            texts.append(text)
+    return texts
+
+
 class ElderCreate(BaseModel):
     """【API Request】POST /elders Request Body。"""
     name: str = Field(..., description="長者真實姓名（必填）")
@@ -51,10 +101,15 @@ class ElderCreate(BaseModel):
     gender: Literal["male", "female", "other"] | None = Field(default=None, description="性別")
     lang_preference: Literal["zh-TW", "hak"] = Field(default="zh-TW", description="語言偏好（預設 zh-TW）")
     address_region: str | None = Field(default=None, description="居住區域，例如：台北市大安區")
-    health_notes: list[str] = Field(default_factory=list, description="健康狀況/病史備註標籤")
+    health_notes: list[HealthNote] = Field(default_factory=list, description="健康狀況/病史備註標籤")
     family: list[FamilyMember] = Field(default_factory=list, description="親友背景資訊")
     habit_note: str | None = Field(default=None, description="生活習慣與喜好備註")
     caregiver_ids: list[str] = Field(default_factory=list, description="綁定之照護者 Cognito User ID 列表")
+
+    @field_validator("health_notes", mode="before")
+    @classmethod
+    def _accept_legacy_health_notes(cls, v: Any) -> Any:
+        return normalize_health_notes_input(v)
 
 
 class ElderUpdate(BaseModel):
@@ -65,10 +120,15 @@ class ElderUpdate(BaseModel):
     gender: Literal["male", "female", "other"] | None = Field(default=None, description="性別")
     lang_preference: Literal["zh-TW", "hak"] | None = Field(default=None, description="語言偏好")
     address_region: str | None = Field(default=None, description="居住區域")
-    health_notes: list[str] | None = Field(default=None, description="健康狀況/病史備註標籤")
+    health_notes: list[HealthNote] | None = Field(default=None, description="健康狀況/病史備註標籤（整份取代）")
     family: list[FamilyMember] | None = Field(default=None, description="親友背景資訊")
     habit_note: str | None = Field(default=None, description="生活習慣與喜好備註")
     caregiver_ids: list[str] | None = Field(default=None, description="綁定之照護者 Cognito User ID 列表")
+
+    @field_validator("health_notes", mode="before")
+    @classmethod
+    def _accept_legacy_health_notes(cls, v: Any) -> Any:
+        return normalize_health_notes_input(v)
 
 
 class ElderResponse(BaseModel):
@@ -80,12 +140,17 @@ class ElderResponse(BaseModel):
     gender: str | None = Field(default=None, description="性別")
     lang_preference: str = Field(default="zh-TW", description="語言偏好")
     address_region: str | None = Field(default=None, description="居住區域")
-    health_notes: list[str] = Field(default_factory=list, description="健康狀況備註")
+    health_notes: list[HealthNote] = Field(default_factory=list, description="健康狀況備註")
     family: list[FamilyMember] = Field(default_factory=list, description="親友背景資訊")
     habit_note: str | None = Field(default=None, description="生活習慣與喜好")
     caregiver_ids: list[str] = Field(default_factory=list, description="綁定之照護者 ID 列表")
     created_at: str = Field(..., description="建立時間 (ISO 8601, 台灣時間 +08:00)")
     updated_at: str | None = Field(default=None, description="最後更新時間 (ISO 8601, 台灣時間 +08:00)")
+
+    @field_validator("health_notes", mode="before")
+    @classmethod
+    def _accept_legacy_health_notes(cls, v: Any) -> Any:
+        return normalize_health_notes_input(v)
 
 
 # -----------------------------------------------------------------------------

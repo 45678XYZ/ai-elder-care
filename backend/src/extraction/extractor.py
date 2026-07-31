@@ -20,6 +20,7 @@ import logging
 from pydantic import ValidationError
 
 from src.shared import bedrock
+from src.shared.models import health_note_texts
 
 from .config import EXTRACTION_STRUCTURED_OUTPUT
 from .models import ComposedSchema, ExtractedEvent, ExtractionResult
@@ -74,9 +75,10 @@ def build_elder_context(elder: Mapping[str, Any] | None) -> str:
     birth_year = elder.get("birth_year")
     if birth_year:
         lines.append(f"- 出生年份：{birth_year}")
-    health_notes = elder.get("health_notes") or []
+    # health_notes 是物件陣列（含 note_id/source），prompt 只要文字
+    health_notes = health_note_texts(elder.get("health_notes"))
     if health_notes:
-        lines.append(f"- 健康註記：{'、'.join(str(note) for note in health_notes)}")
+        lines.append(f"- 健康註記：{'、'.join(health_notes)}")
     habit_note = elder.get("habit_note")
     if habit_note:
         lines.append(f"- 生活習慣：{habit_note}")
