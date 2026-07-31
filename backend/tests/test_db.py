@@ -204,20 +204,8 @@ def test_save_and_get_recent_conversations(mock_get_resource):
     mock_table = MagicMock()
     mock_get_resource.return_value.Table.return_value = mock_table
 
-    data = {
-        "elder_id": "eld_001",
-        "elder_transcript": "我吃過血壓藥了",
-        "ai_respond_text": "好棒！幫你記下來了。",
-    }
-    saved = db.save_conversation(data)
-    assert saved["elder_id"] == "eld_001"
-    assert saved["conversation_id"].startswith("cnv_")
-    assert "created_at" in saved
-    # created_at 一律正規化為固定毫秒精度，conversation_time_key 才能正確排序
-    assert saved["created_at"].endswith("+08:00")
-    assert "." in saved["created_at"]  # 帶毫秒
-    assert saved["conversation_time_key"] == f"{saved['created_at']}#{saved['conversation_id']}"
-    # 2. 測試 get_recent_conversations 走 GSI 並按時間倒序
+    # 1. 測試 get_recent_conversations 走 GSI 並按時間倒序
+
 
     mock_table.query.return_value = {
         "Items": [

@@ -299,48 +299,8 @@ def list_elders(caregiver_id: str = None) -> list[dict[str, Any]]:
         raise DBError(f"查詢長者列表失敗: {e.response['Error']['Message']}")
 
 
-# -----------------------------------------------------------------------------
-# Conversations 表操作
-# -----------------------------------------------------------------------------
-
-def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
-    """儲存對話紀錄。自動補充 conversation_id（若無）與 created_at 時間戳記。"""
-    table = get_dynamodb_resource().Table(TABLE_CONVERSATIONS)
-
-    data = dict(conversation_data)
-
-    # 自動補全 conversation_id (前綴 cnv_)
-    conv_id = data.get("conversation_id")
-    if not conv_id:
-        conv_id = f"cnv_{uuid.uuid4().hex[:12]}"
-        data["conversation_id"] = conv_id
-
-    # 自動補全 DynamoDB Sort Key: record_id ("TURN#cnv_...") 與 item_type ("conversation")
-    if not data.get("record_id"):
-        data["record_id"] = f"TURN#{conv_id}"
-    data.setdefault("item_type", "conversation")
-    data.setdefault("request_status", TURN_STATUS_COMPLETED)
 
 
-    # created_at 與 ts 一律正規化為固定毫秒精度（+08:00），與 events 的 event_time_key
-    # 同規範；conversation_time_key 由 created_at 衍生，精度不一致會讓 GSI 字串排序
-    # 與真實時間順序錯亂（例如無小數秒的 "T10:00:00+08:00" 會排在有毫秒的 "T10:00:00.000+08:00" 之前）
-    if data.get("created_at"):
-        data["created_at"] = normalize_ts(data["created_at"])
-    else:
-        data["created_at"] = format_ts(datetime.now(TZ_TAIPEI))
-
-
-    # 自動補全 GSI Sort Key: conversation_time_key (<created_at>#<conversation_id>)
-    if not data.get("conversation_time_key"):
-        data["conversation_time_key"] = f"{data['created_at']}#{conv_id}"
-
-    try:
-
-        table.put_item(Item=prepare_item(data))
-        return convert_decimals(data)
-    except ClientError as e:
-        raise DBError(f"儲存對話紀錄失敗: {e.response['Error']['Message']}")
 
 
 
