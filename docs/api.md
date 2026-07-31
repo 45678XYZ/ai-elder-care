@@ -8,9 +8,9 @@
 - **呼叫者身分取自 token**，不以 `caregiver_id` 參數指定呼叫者。綁定關係存於 `elders.caregiver_ids`，只能由 `POST /elders`（建立者自動綁定）與 `POST /elders/{id}/caregivers`（見「綁定照護者」）寫入；一般越權回 403，close 與綁定 endpoint 依其防洩漏規則回 404。
 - **格式**：request/response 為 `application/json; charset=utf-8`。
 - **時間**：ISO 8601 含時區，如 `2026-07-14T09:05:00+08:00`；日期為 `YYYY-MM-DD`；日界以台灣時間（+08:00）為準。
-- **ID 格式／前綴**：長者 ID 為 `eld_` 後接 12 個小寫十六進位字元；其餘前綴為 `rtn_`（例行公事）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）、`cg_`（照護者對外識別，見「綁定照護者」）。batch chunk ID 僅供後端追蹤，不由 API 回傳。
+- **ID 格式／前綴**：長者 ID 為 `eld_` 後接 12 個小寫十六進位字元；其餘前綴為 `rtn_`（例行公事）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）、`cg_`（照護者對外識別，見「綁定照護者」）、`hn_`（健康註記單筆，見「長者資料」）。batch chunk ID 僅供後端追蹤，不由 API 回傳。
 - **分頁**：列表支援 `?limit=`（預設 50）與 `?next_token=`。資料超過一頁時 response 最外層帶 `next_token`；下一次請求必須原樣帶回。它是後端由資料庫游標編碼的不透明字串，前端不得解析；沒有此欄位表示已無下一頁。
-- **Hybrid 處理**：`POST /chat` 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event，不等待 session batch。Session 關閉採雙管道：App 可主動呼叫 close endpoint 即時關閉，EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。
+- **Hybrid 處理**：`POST /chat` 透過對話大腦的 tool calling 同步處理 routine 變更與 safety event，不等待 session batch。Session 關閉採雙管道：App 可主動呼叫 close endpoint 即時關閉，EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。
 
 ### 共用 enum
 
@@ -40,7 +40,7 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 | 400 | 缺漏／格式錯誤（`INVALID_PARAMETER`）；音訊超長（`AUDIO_TOO_LONG`）；指定日期無該 routine（`ROUTINE_NOT_SCHEDULED`） |
 | 401 | token 缺漏或無效（`UNAUTHORIZED`） |
 | 403 | 越權（`FORBIDDEN`）；不適用於 close endpoint 的 session 存在性／ownership 判斷 |
-| 404 | `ELDER_NOT_FOUND`、`ROUTINE_NOT_FOUND`、`SESSION_NOT_FOUND`、`CAREGIVER_NOT_FOUND`；close endpoint 對不存在或不屬該長者的 session 都使用 `SESSION_NOT_FOUND` |
+| 404 | `ELDER_NOT_FOUND`、`ROUTINE_NOT_FOUND`、`SESSION_NOT_FOUND`、`CAREGIVER_NOT_FOUND`、`HEALTH_NOTE_NOT_FOUND`；close endpoint 對不存在或不屬該長者的 session 都使用 `SESSION_NOT_FOUND` |
 | 409 | `REQUEST_IN_PROGRESS`、`IDEMPOTENCY_CONFLICT` |
 | 429 | 超過 stage 節流上限（`THROTTLED`）；前端退避重試 |
 | 500 | `INTERNAL_ERROR` |
@@ -60,7 +60,7 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 response 前只執行：
 
 1. 回覆所需的 ASR、近期上下文、既有 events/routines 查詢、AgentCore 長期記憶與 AI/TTS。
-2. 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event 寫入。
+2. 透過對話大腦的 tool calling 同步處理 routine 變更與 safety event 寫入。
 3. 需要立即生效的 routine 建立、修改、停用或完成，以及潛在高風險 safety event 的事件寫入。
 
 一般生活 events 不由 realtime materialize；只在 session close 後由 batch 處理。後端 extraction 狀態不回傳 App。
@@ -205,7 +205,10 @@ close 以 session 狀態保證冪等，不需要 `client_request_id`：
       "gender": "female",
       "lang_preference": "zh-TW",
       "address_region": "台北市大安區",
-      "health_notes": ["高血壓", "膝關節退化"],
+      "health_notes": [
+        { "note_id": "hn_9c1f2a4b7d3e", "text": "高血壓", "source": "caregiver", "created_at": "2026-07-01T10:00:00+08:00" },
+        { "note_id": "hn_4e8a0b6c2f19", "text": "最近膝蓋痛", "source": "agent", "created_at": "2026-07-30T20:11:00+08:00" }
+      ],
       "family": [
         { "relation": "兒子", "name": "陳志明", "note": "在台北工作，每週三來訪" },
         { "relation": "孫子", "name": "小明", "note": "高中生" }
@@ -217,6 +220,19 @@ close 以 session 狀態保證冪等，不需要 `client_request_id`：
   ]
 }
 ```
+
+#### health_notes 物件
+
+| 欄位 | 說明 |
+|---|---|
+| `note_id` | 單筆識別碼，`hn_` 後接 12 個小寫十六進位字元。由後端產生，刪除單筆時以此指定 |
+| `text` | 註記內容 |
+| `source` | `caregiver`（照護者在 App 填的）｜`agent`（對話中由 `update_elder_profile` 工具依長輩談話補上的） |
+| `created_at` | 加入時間 |
+
+`source` 是**必要資訊而非裝飾**：同一個欄位被照護者與對話大腦共寫，AI 聽來的那幾筆更可能出錯、也更需要照護者確認，前端必須分得出來才做得到。
+
+寫入時 `note_id`、`created_at` 一律由後端補；`source` 只由後端依寫入路徑決定，client 指定會被拒絕。相容性：`health_notes` 送純字串陣列仍會被接受，一律視為 `source: "caregiver"`，回應一律是物件陣列。
 
 ### GET /elders/{elder_id} — 單筆
 
@@ -231,6 +247,24 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 ### PATCH /elders/{elder_id} — 更新（照護者）
 
 部分更新公開欄位；不得傳 `elder_id`、`caregiver_ids`、`created_at`、`updated_at`。後端只在成功變更時刷新 `updated_at`，`created_at` 保持不變。Response 200 回更新後物件。
+
+`health_notes` 在這裡的語意是**整份取代**。要增刪單筆請走下面兩個端點——`health_notes` 同時被照護者與 Agent 寫入，整份覆寫會把對方期間寫進去的內容一起蓋掉。
+
+### POST /elders/{elder_id}/health_notes — 新增單筆健康註記（照護者）
+
+```json
+{ "text": "膝關節退化" }
+```
+
+`text` 必填且不得為空白，否則回 400 `INVALID_PARAMETER`；帶 `source` 一律回 400（來源由後端依寫入路徑決定，此端點固定寫入 `caregiver`）。
+
+後端以原子 append 寫入，不讀出再整份寫回，因此與 Agent 的同時寫入不會互相覆蓋。Response 201 回傳更新後的完整長者物件。
+
+### DELETE /elders/{elder_id}/health_notes/{note_id} — 刪除單筆（照護者）
+
+依 `note_id` 移除該筆。Response 200 回傳更新後的完整長者物件；找不到該筆時回 404 `HEALTH_NOTE_NOT_FOUND`。
+
+刪除以「該位置仍是這一筆」為條件寫入，期間若有併發寫入推移了位置會自動重讀重試；持續衝突時回 500 `INTERNAL_ERROR`。
 
 ---
 
@@ -512,7 +546,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 }
 ```
 
-`client_request_id` 與 `title` 必填，`title` 不得為空字串。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行或重送相同 scoped ID／相同 hash 同樣回 201 與既有物件，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。長者帳號呼叫回 403 `FORBIDDEN`。對話建立的 routine 由 Bedrock Agent tool calling 直接寫入，不呼叫此 API。
+`client_request_id` 與 `title` 必填，`title` 不得為空字串。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行或重送相同 scoped ID／相同 hash 同樣回 201 與既有物件，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。長者帳號呼叫回 403 `FORBIDDEN`。對話建立的 routine 由對話大腦的 tool calling 直接寫入，不呼叫此 API。
 
 ### PATCH /routines/{routine_id} — 修改／停用（照護者）
 
@@ -581,6 +615,8 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 | `GET /elders/{id}` | 長者單筆 | 兩端 |
 | `POST /elders` | 建立長者 | 照護者 |
 | `PATCH /elders/{id}` | 更新長者 | 照護者 |
+| `POST /elders/{id}/health_notes` | 新增單筆健康註記 | 照護者 |
+| `DELETE /elders/{id}/health_notes/{note_id}` | 刪除單筆健康註記 | 照護者 |
 | `GET /me` | 呼叫者自己的照護者 ID 與名稱 | 照護者 |
 | `POST /elders/{id}/caregivers` | 輸入照護者 ID 綁定 | 長者本人 |
 | `GET /elders/{id}/caregivers` | 已綁定的家人 | 兩端 |

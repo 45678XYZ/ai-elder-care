@@ -1,14 +1,17 @@
-"""AWS Bedrock Agent Action Group — Tools Lambda Handler。
+"""對話大腦的工具箱 — Tools Lambda Handler。
 
 規格與定義出處：
 - 規格書：docs/llm_tools.md
-- Terraform 定義：terraform/bedrock_agent.tf
+- Terraform 定義：terraform/lambda.tf（Lambda 本體）、terraform/agentcore.tf（呼叫端權限）
 
 原理說明：
-當 Bedrock Agent (Claude 5 Sonnet) 在對話中判定需要執行特定任務（如查詢行程、標記吃藥完成）時，
-AWS 會包裝一個 JSON payload 傳給本 Lambda。
-本 Handler 負責解析 Bedrock 傳入的 function 名稱與 parameters，呼叫 shared/db.py 讀寫 DynamoDB，
-並回傳 Bedrock 要求的標準格式 JSON。
+當對話大腦在推理中判定需要執行特定任務（如查詢行程、標記吃藥完成）時，AgentCore Runtime
+（backend/src/agentcore_runtime/tools.py）以 lambda:InvokeFunction 傳一個 JSON payload 給本
+Lambda。本 Handler 負責分派到對應的 handle_* 函式，呼叫 shared/db.py 讀寫 DynamoDB，並把結果
+以 JSON 回傳。
+
+工具邏輯留在 Lambda 而非搬進常駐的 Runtime，是為了保住下方 `_emergency_state` 的語意——
+它依賴 Lambda 的短生命週期，搬進常駐容器會變成跨長者、跨 session 共用同一份記憶體。
 
 緊急通知安全機制（醫療級）：
 - category="emergency"         : 初次緊急警報，5 分鐘冷卻，寫入 type=safety event
@@ -24,6 +27,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 from src.shared import db, sessions, routines
+from src.shared.models import health_note_texts
 from src.extraction.canonical import safety_alert_key, event_id_for
 
 
@@ -361,7 +365,8 @@ def handle_get_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             "birth_year": elder_info.get("birth_year"),
             "lang_preference": elder_info.get("lang_preference"),
             "address_region": elder_info.get("address_region"),
-            "health_notes": elder_info.get("health_notes", []),
+            # 攤平成文字：note_id 對模型沒有意義，留著只會被當成內容處理
+            "health_notes": health_note_texts(elder_info.get("health_notes")),
             "family": elder_info.get("family", []),
             "habit_note": elder_info.get("habit_note", ""),
         }
@@ -388,22 +393,15 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "error", "message": f"找不到長者 (ID: {elder_id}) 的個人檔案"}
 
         patch_data = {}
+        updated_fields = []
 
         # 處理暱稱更新
         if "nickname" in params and params["nickname"]:
             patch_data["nickname"] = params["nickname"]
 
-        # 處理健康注意事項 (附加至陣列)
-        if "health_note_to_add" in params and params["health_note_to_add"]:
-            current_health_notes = current_profile.get("health_notes", [])
-            new_note = params["health_note_to_add"].strip()
-            if new_note and new_note not in current_health_notes:
-                current_health_notes.append(new_note)
-                patch_data["health_notes"] = current_health_notes
-
         # 處理生活習慣紀錄 (附加至字串)
         if "habit_note_to_append" in params and params["habit_note_to_append"]:
-            current_habit = current_profile.get("habit_note", "").strip()
+            current_habit = (current_profile.get("habit_note") or "").strip()
             new_habit = params["habit_note_to_append"].strip()
             if new_habit:
                 if current_habit:
@@ -411,20 +409,41 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
                 else:
                     patch_data["habit_note"] = new_habit
 
-        if not patch_data:
+        # 處理健康注意事項：走原子 append，不做 read-modify-write。
+        # 這一項是 AI 依長輩談話補上的，照護者同時可能正在 App 上刪別的項目，
+        # 整份覆寫會讓其中一邊的結果無聲消失（見 db.append_health_note）。
+        new_note = (params.get("health_note_to_add") or "").strip()
+        appended = False
+        if new_note:
+            # 舊資料是純字串陣列，新資料是物件，去重時兩種都要看得懂
+            existing = {
+                n.get("text") if isinstance(n, dict) else n
+                for n in (current_profile.get("health_notes") or [])
+            }
+            if new_note not in existing:
+                db.append_health_note(elder_id, {"text": new_note, "source": "agent"})
+                appended = True
+                updated_fields.append("health_notes")
+
+        if not patch_data and not appended:
             return {"status": "error", "message": "沒有提供任何欲更新的檔案欄位"}
 
-        updated_profile = db.update_elder(elder_id, patch_data)
-        
+        if patch_data:
+            updated_profile = db.update_elder(elder_id, patch_data)
+            updated_fields.extend(patch_data.keys())
+        else:
+            # 只 append 健康註記時不必再寫一次，重讀拿最新內容即可
+            updated_profile = db.get_elder(elder_id) or {}
+
         # 準備回傳的簡要格式
         return {
             "status": "success",
             "message": "已成功更新長者個人檔案",
-            "updated_fields": list(patch_data.keys()),
+            "updated_fields": updated_fields,
             "data": {
                 "elder_id": updated_profile.get("elder_id"),
                 "nickname": updated_profile.get("nickname"),
-                "health_notes": updated_profile.get("health_notes", []),
+                "health_notes": health_note_texts(updated_profile.get("health_notes")),
                 "habit_note": updated_profile.get("habit_note", "")
             }
         }
@@ -780,65 +799,30 @@ TOOL_HANDLERS = {
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """AWS Bedrock Action Group 觸發的 Lambda 主進入點。
+    """AgentCore Runtime 觸發的 Lambda 主進入點。
 
-    Bedrock 傳入格式範例：
+    傳入格式（由 backend/src/agentcore_runtime/tools.py 組出）：
     {
-      "messageVersion": "1.0",
-      "actionGroup": "ElderCareRoutinesTools",
-      "function": "complete_routine",
-      "parameters": [
-        {"name": "elder_id", "type": "string", "value": "eld_001"},
-        {"name": "routine_id", "type": "string", "value": "rtn_001"}
-      ]
+      "tool": "complete_routine",
+      "params": {"elder_id": "eld_001", "routine_id": "rtn_001", ...}
     }
+
+    `elder_id` 一律由 Runtime 從請求 payload 注入，不是模型填的參數——模型填錯就會寫到
+    別位長者的紀錄上。
     """
     print(f"[Tools Lambda] Received event: {json.dumps(event, ensure_ascii=False)}")
 
-    action_group = event.get("actionGroup", "")
-    function_name = event.get("function", "")
-    parameters_list = event.get("parameters", [])
+    tool_name = event.get("tool", "")
+    params: Dict[str, Any] = event.get("params") or {}
 
-    # 將 Bedrock 傳入的 parameters 陣列轉換為 Python 字典
-    param_dict: Dict[str, Any] = {}
-    for p in parameters_list:
-        p_name = p.get("name")
-        p_val = p.get("value")
-        if p_name:
-            param_dict[p_name] = p_val
-
-    # 若 Payload 中有 sessionId，補充為 elder_id 的預設值
-    if "sessionId" in event and "elder_id" not in param_dict:
-        param_dict["elder_id"] = event["sessionId"]
-
-    # 尋找對應的工具處理函數
-    handler_func = TOOL_HANDLERS.get(function_name)
+    handler_func = TOOL_HANDLERS.get(tool_name)
     if not handler_func:
         result_payload = {
             "status": "error",
-            "message": f"未知的工具功能: '{function_name}'"
+            "message": f"未知的工具功能: '{tool_name}'"
         }
     else:
-        result_payload = handler_func(param_dict)
+        result_payload = handler_func(params)
 
-    # 轉為 JSON 字串以符合 Bedrock Response 格式
-    response_body_text = json.dumps(result_payload, ensure_ascii=False)
-
-    # 組裝 AWS Bedrock Agent 指定的標準傳回格式
-    bedrock_response = {
-        "messageVersion": "1.0",
-        "response": {
-            "actionGroup": action_group,
-            "function": function_name,
-            "functionResponse": {
-                "responseBody": {
-                    "TEXT": {
-                        "body": response_body_text
-                    }
-                }
-            }
-        }
-    }
-
-    print(f"[Tools Lambda] Responding: {json.dumps(bedrock_response, ensure_ascii=False)}")
-    return bedrock_response
+    print(f"[Tools Lambda] Responding: {json.dumps(result_payload, ensure_ascii=False)}")
+    return result_payload
