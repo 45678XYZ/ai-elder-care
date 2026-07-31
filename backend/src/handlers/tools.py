@@ -23,7 +23,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from src.shared import db, sessions
+from src.shared import db, sessions, routines
 
 
 # -----------------------------------------------------------------------------
@@ -197,7 +197,15 @@ def handle_create_routine(params: Dict[str, Any]) -> Dict[str, Any]:
         "type": routine_type,
         "schedule": schedule_data,
         "active": True,
-        "created_at": now_iso
+        "remind": True,
+        "created_by": "conversation",
+        "updated_by": "conversation",
+        "canonical_action_key": f"create_{routine_id}",
+        "change_request_id": f"chg_{uuid.uuid4().hex[:12]}",
+        "request_hash": "ai_tool_creation",
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "schema_version": 1,
     }
 
     try:
@@ -206,6 +214,103 @@ def handle_create_routine(params: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         print(f"[Error] handle_create_routine 失敗: {e}")
         return {"status": "error", "message": f"建立新行程失敗: {str(e)}"}
+
+# -----------------------------------------------------------------------------
+# 工具 3.1：更新例行公事
+# -----------------------------------------------------------------------------
+
+def _apply_routine_update(elder_id: str, routine_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        versions = db.list_routine_versions(routine_id)
+        if not versions:
+            return {"status": "error", "message": "找不到指定的例行公事"}
+            
+        current = versions[-1]
+        if current.get("elder_id") != elder_id:
+            return {"status": "error", "message": "資料不符，無法修改此行程"}
+            
+        now = routines.now_iso()
+        next_version = int(current["version"]) + 1
+        active = changes.get("active", current.get("active", True))
+        
+        item = dict(current)
+        item.update(changes)
+        
+        item.update({
+            "version": next_version,
+            "is_current": True,
+            "effective_from": now,
+            "version_time_key": routines.version_time_key(now, routine_id, next_version),
+            "current_sort_key": routines.current_sort_key(
+                active, current.get("created_at", now), routine_id
+            ),
+            "updated_by": "conversation",
+            "canonical_action_key": f"update_{routine_id}",
+            "change_request_id": f"chg_{uuid.uuid4().hex[:12]}",
+            "request_hash": "ai_tool_update",
+            "updated_at": now,
+        })
+        item.pop("effective_to", None)
+        
+        updated = db.replace_current_routine_version(current, item)
+        return {"status": "success", "data": updated}
+    except Exception as e:
+        print(f"[Error] _apply_routine_update 失敗: {e}")
+        return {"status": "error", "message": f"操作行程失敗: {str(e)}"}
+
+
+def handle_update_routine(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具 3.1：修改長者的例行公事。"""
+    elder_id = params.get("elder_id")
+    routine_id = params.get("routine_id")
+    
+    if not elder_id or not routine_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
+        
+    changes: Dict[str, Any] = {}
+    if "title" in params: changes["title"] = params["title"]
+    if "type" in params: changes["type"] = params["type"]
+    if "remind" in params:
+        # 處理 Bedrock 有可能傳來 string 型別的 true/false
+        remind_val = params["remind"]
+        if isinstance(remind_val, str):
+            remind_val = remind_val.lower() == "true"
+        changes["remind"] = remind_val
+    if "active" in params:
+        active_val = params["active"]
+        if isinstance(active_val, str):
+            active_val = active_val.lower() == "true"
+        changes["active"] = active_val
+        
+    freq = params.get("freq")
+    time_str = params.get("time")
+    specific_date = params.get("date")
+    
+    if freq and time_str:
+        schedule_data: Dict[str, Any] = {"freq": freq, "time": time_str}
+        if freq == "once" and specific_date:
+            schedule_data["date"] = specific_date
+        changes["schedule"] = schedule_data
+        
+    if not changes:
+        return {"status": "error", "message": "沒有提供任何欲修改的欄位"}
+        
+    return _apply_routine_update(elder_id, routine_id, changes)
+
+
+# -----------------------------------------------------------------------------
+# 工具 3.2：停用/刪除例行公事
+# -----------------------------------------------------------------------------
+
+def handle_deactivate_routine(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具 3.2：停用/刪除長者的例行公事。"""
+    elder_id = params.get("elder_id")
+    routine_id = params.get("routine_id")
+    
+    if not elder_id or not routine_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
+        
+    return _apply_routine_update(elder_id, routine_id, {"active": False})
 
 
 # -----------------------------------------------------------------------------
@@ -600,6 +705,8 @@ TOOL_HANDLERS = {
     "get_today_routines": handle_get_today_routines,
     "complete_routine": handle_complete_routine,
     "create_routine": handle_create_routine,
+    "update_routine": handle_update_routine,
+    "deactivate_routine": handle_deactivate_routine,
     "get_recent_events": handle_get_recent_events,
     "get_elder_profile": handle_get_elder_profile,
     "remind_pending_routines": handle_remind_pending_routines,

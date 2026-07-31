@@ -185,6 +185,84 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
           }
       }
 
+      # 工具三.一：更新行程
+      functions {
+        name        = "update_routine"
+        description = "Update an existing scheduled routine (e.g., change time, title, or frequency) for the elder."
+          parameters {
+            map_block_key = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameters {
+            map_block_key = "routine_id"
+            type        = "string"
+            description = "要修改的行程 ID，例如 rtn_001"
+            required    = true
+          }
+          parameters {
+            map_block_key = "title"
+            type        = "string"
+            description = "行程的標題或內容"
+            required    = false
+          }
+          parameters {
+            map_block_key = "type"
+            type        = "string"
+            description = "行程類型分類：medication, diet, activity, wellbeing, other"
+            required    = false
+          }
+          parameters {
+            map_block_key = "time"
+            type        = "string"
+            description = "行程時間，格式為 HH:MM"
+            required    = false
+          }
+          parameters {
+            map_block_key = "freq"
+            type        = "string"
+            description = "頻率：daily, weekly, once"
+            required    = false
+          }
+          parameters {
+            map_block_key = "date"
+            type        = "string"
+            description = "單次行程的日期 YYYY-MM-DD"
+            required    = false
+          }
+          parameters {
+            map_block_key = "remind"
+            type        = "boolean"
+            description = "是否發送提醒"
+            required    = false
+          }
+          parameters {
+            map_block_key = "active"
+            type        = "boolean"
+            description = "是否啟用"
+            required    = false
+          }
+      }
+
+      # 工具三.二：停用/刪除行程
+      functions {
+        name        = "deactivate_routine"
+        description = "Deactivate or cancel an existing scheduled routine for the elder."
+          parameters {
+            map_block_key = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameters {
+            map_block_key = "routine_id"
+            type        = "string"
+            description = "要停用的行程 ID，例如 rtn_001"
+            required    = true
+          }
+      }
+
       # 工具四：查詢近期生活事件歷史
       functions {
         name        = "get_recent_events"
