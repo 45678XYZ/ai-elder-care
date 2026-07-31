@@ -23,6 +23,7 @@ from src.shared import bedrock
 
 from .config import (
     CHUNKER_EMBEDDING_DEPTH,
+    CHUNKER_FULL_SESSION,
     CHUNKER_LLM_PROMPT,
     CHUNKER_PAIRWISE_V2,
 )
@@ -70,7 +71,9 @@ DEFAULT_FALLBACK_SIZE = 4
 # 自適應門檻之標準差倍數；數值越大門檻越高（切分出的區塊越少且越保守）
 DEFAULT_DEPTH_K = 0.5
 
-_MODE_HANDLERS = frozenset({CHUNKER_LLM_PROMPT, CHUNKER_EMBEDDING_DEPTH, CHUNKER_PAIRWISE_V2})
+_MODE_HANDLERS = frozenset(
+    {CHUNKER_LLM_PROMPT, CHUNKER_EMBEDDING_DEPTH, CHUNKER_PAIRWISE_V2, CHUNKER_FULL_SESSION}
+)
 
 
 class ChunkerError(ValueError):
@@ -170,7 +173,7 @@ def plan_boundaries(
         raise ChunkerError(f"未知的分塊模式：{chunker_type}")
 
     total = len(turns)
-    if total == 1:
+    if total == 1 or chunker_type == CHUNKER_FULL_SESSION:
         return BoundaryPlan(boundaries=(0,), strategy=chunker_type)
 
     try:
