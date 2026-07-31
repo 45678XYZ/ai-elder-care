@@ -34,7 +34,8 @@ from botocore.exceptions import ClientError
 # canonical 事件身分與時間正規化只有一份實作，避免同一筆資料在兩處算出不同 ID／精度
 from src.extraction.canonical import event_id_for, event_time_key, routine_completion_key
 from src.extraction.temporal import day_end, day_start, format_ts, normalize_ts
-from src.shared.models import ConversationCreate, DailySummaryCreate, EventCreate
+from src.shared.models import DailySummaryCreate, EventCreate
+
 
 
 logger = logging.getLogger(__name__)
@@ -332,12 +333,8 @@ def save_conversation(conversation_data: dict[str, Any]) -> dict[str, Any]:
     if not data.get("conversation_time_key"):
         data["conversation_time_key"] = f"{data['created_at']}#{conv_id}"
 
-    # 透過 ConversationCreate 進行校驗與預設值補充
-    validated = ConversationCreate.model_validate(data)
-    validated_dict = validated.model_dump(exclude_none=True)
-    data.update(validated_dict)
-
     try:
+
         table.put_item(Item=prepare_item(data))
         return convert_decimals(data)
     except ClientError as e:

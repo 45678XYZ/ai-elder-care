@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from src.shared.models import (
     SUMMARY_SECTION_KEYS,
-    ConversationCreate,
+    ConversationItem,
     DailySummaryCreate,
     DailySummaryResponse,
     ElderCreate,
@@ -96,9 +96,9 @@ def test_elder_response_model():
     assert er.health_notes == []
 
 
-def test_conversation_create_model():
-    """測試 ConversationCreate 模型長者發話單一模式與核心欄位。"""
-    cc_elder = ConversationCreate(
+def test_conversation_item_model():
+    """測試 ConversationItem 模型長者發話單一模式與核心欄位。"""
+    cc_elder = ConversationItem(
         elder_id="eld_001",
         session_id="ses_01J8",
         elder_transcript="我吃過血壓藥了",
@@ -113,6 +113,7 @@ def test_conversation_create_model():
     assert cc_elder.ai_respond_audio_s3_key == "tts/cnv_001.mp3"
     assert cc_elder.elder_received_at == "2026-07-24T17:30:00+08:00"
     assert cc_elder.ai_responded_at == "2026-07-24T17:30:01+08:00"
+
 
 def test_event_models():
 

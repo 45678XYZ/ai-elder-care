@@ -120,8 +120,22 @@ class ChatRequest(BaseModel):
         return self
 
 
-class ConversationCreate(BaseModel):
-    """【DB Schema】conversations 表 Turn 寫入驗證；由 shared/db.py 與 chat handler 共同引用。"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class ConversationItem(BaseModel):
+    """【DB Schema】conversations 表 Turn Item 完整資料庫 Schema 定義。"""
     conversation_id: str | None = Field(default=None, description="對話 ID (前綴 cnv_)")
     session_id: str | None = Field(default=None, description="關聯 Session ID (前綴 ses_)")
     elder_id: str = Field(..., description="對話歸屬之長者 ID（必填）")
@@ -163,20 +177,10 @@ class ConversationCreate(BaseModel):
     ai_responded_at: str | None = Field(default=None, description="AI 推理完成送出回應之時間戳記")
     routines_updated: bool = Field(default=False, description="本輪對話是否觸發例行公事狀態更新")
 
-
-
-
-
-
-
-
-
-
-
-
 # -----------------------------------------------------------------------------
 # Events 表模型
 # -----------------------------------------------------------------------------
+
 
 class EventCreate(BaseModel):
     """【DB Schema】events 表寫入驗證；由 shared/db.py 引用，非對外 API 請求體。"""
