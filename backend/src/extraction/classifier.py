@@ -25,8 +25,9 @@ CLASSIFIER_VERSION = "rac-classifier-1"
 
 # 系統 Prompt：強制要求模型僅依據對話判斷，嚴禁補充推測與輸出候選集以外的標籤
 SYSTEM_PROMPT = (
-    "你是嚴謹的長者照護主題多標籤分類助手，只依據對話內容判斷，"
+    "你是嚴謹的長者照護主題多標籤分類助手，只依據對話中長者已發生的事實行為判斷，"
     "不補充對話沒有提到的事情，也不輸出候選清單以外的標籤。"
+    "AI 助理的建議、衛教提醒、預防性說明不構成事實行為，不應觸發標籤。"
 )
 
 
@@ -93,6 +94,11 @@ def build_classification_prompt(
 4. 對話沒有提到的主題不要標；沒有任何命中就回空陣列。
 5. `rationale` 用繁體中文說明判斷依據，不要抄寫對話原文。
 6. `chunk_id` 必須填 "{chunk_id}"。
+7. 以下情況不要標記為命中：
+   - AI 回應中的建議或衛教不代表長者已執行該行為
+   - AI 回應中的風險提醒不代表已發生不良反應
+   - 長者的意圖或計劃不等同於已執行的行為
+   - 長者的詢問不等同於已發生的事實
 
 【候選節點定義】
 {candidates_block}
@@ -155,7 +161,7 @@ def classify_chunk(
             if taxonomy is not None and taxonomy.get(str(concept_id)) is not None:
                 logger.info("分類回傳候選集外但存在於 Taxonomy 的合法節點：concept_id=%s", concept_id)
                 node = taxonomy.get(str(concept_id))
-                display_names[str(concept_id)] = node.label_zh if node else str(concept_id)
+                display_names[str(concept_id)] = node.display_name if node else str(concept_id)
             else:
                 logger.warning("分類回傳候選集外的無效節點，已丟棄：concept_id=%s", concept_id)
                 continue

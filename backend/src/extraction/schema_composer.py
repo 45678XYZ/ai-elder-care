@@ -243,7 +243,8 @@ def describe_for_prompt(
     """將組裝好的 Schema 轉譯為 Prompt 中的規則描述區塊。
 
     由於單次 Single-Pass 萃取不依賴硬約束解碼，Prompt 必須明確指出允許的分類節點、
-    各節點的專屬屬性白名單、predicate 候選詞與全空填 null 規則，傳遞最完整的上下文引導 LLM。
+    各節點的專屬屬性白名單與全空填 null 規則，傳遞最完整的上下文引導 LLM。
+    predicate 欄位採開放世界策略，由 LLM 自行撰寫精簡動作短語，後續去重由 embedding similarity 處理。
     """
     lines: list[str] = []
 
@@ -270,24 +271,21 @@ def describe_for_prompt(
         rendered = "、".join(f"`{name}`" for name in props) if props else "（無專屬屬性）"
         lines.append(f"- `{concept_id}`：{rendered}")
 
-    if predicate_candidates:
-        lines.append("")
-        lines.append("## predicate 候選詞彙")
-        lines.append(
-            f"predicate 必須從對應節點的候選清單中選一個；都不適用時填 `{other_predicate_token}`。"
-        )
-        for concept_id in composed.concept_ids:
-            candidates = predicate_candidates.get(concept_id) or ()
-            rendered = "、".join(f"`{c}`" for c in candidates) if candidates else "（無候選，請填上述其他值）"
-            lines.append(f"- `{concept_id}`：{rendered}")
+    lines.append("")
+    lines.append("## predicate 填寫規則")
+    lines.append(
+        "predicate 請用精簡的動詞短語描述這個事件的核心行為（如「吃早餐」「膝蓋發出聲響」「服用糖尿病藥」「幫鄰居澆花」）。"
+        "不要填抽象的類別名稱，不要複製 concept_id。"
+    )
 
     lines.append("")
     lines.append("## 輸出規則")
     lines.append("1. 只輸出符合下方 JSON Schema 的 JSON，不要加說明文字或程式碼註解。")
     lines.append("2. 未在對話中提及的欄位一律填 `null`，不要推測、不要沿用其他事件的值。")
     lines.append("3. 同一件事只輸出一筆事件；不同主體或不同謂語則拆成多筆。")
-    lines.append("4. `event_summary` 用精簡描述，不要複製整段逐字稿。")
+    lines.append("4. `event_summary` 必須描述已發生的事實結果，禁止使用「提到」「詢問」「被建議」「準備」「考慮」等過程性描述。")
     lines.append("5. `subject` 與 `predicate` 必填，兩者決定事件身分。")
+    lines.append("6. `confidence_score` 必填，填 0.0–1.0 之間的浮點數。")
 
     lines.append("")
     lines.append("## JSON Schema")
@@ -296,6 +294,7 @@ def describe_for_prompt(
     lines.append("```")
 
     return "\n".join(lines)
+
 
 
 def check_schema_constraints(schema: Mapping[str, Any]) -> list[str]:

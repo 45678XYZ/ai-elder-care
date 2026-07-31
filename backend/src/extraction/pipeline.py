@@ -195,7 +195,6 @@ class ExtractionPipeline:
             reference,
             composed,
             self.taxonomy,
-            predicate_candidates=self.lexicon.candidates_for_prompt(composed.concept_ids),
             elder=elder,
             extraction_mode=self.config.extraction_mode,
             model_id=self.config.model_for("extractor"),
@@ -283,14 +282,7 @@ class ExtractionPipeline:
         ]
         confidence = min(confidences) if confidences else None
 
-        if predicate.via_alias:
-            structured["predicate_alias_hit"] = True
-        elif predicate.via_fuzzy_embedding:
-            structured["predicate_fuzzy_hit"] = True
-            structured["predicate_fuzzy_sim"] = predicate.similarity_score
-        elif not predicate.matched:
-            structured["is_novel_predicate"] = True
-
+        # 開放世界策略下不再區分 alias/fuzzy/novel，僅在正規化改變了文字時記錄原始值
         if predicate.raw_predicate and predicate.raw_predicate != predicate.value:
             structured["raw_predicate"] = predicate.raw_predicate
 
@@ -349,6 +341,7 @@ class ExtractionPipeline:
             collected,
             slot_minutes=self.config.event_slot_minutes,
             lexicon=self.lexicon,
+            embedder=self.embedder,
         )
         return PipelineResult(
             session_id=session_id,
