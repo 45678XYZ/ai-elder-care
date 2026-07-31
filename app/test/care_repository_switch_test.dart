@@ -148,6 +148,11 @@ class _FakeRepo implements CareRepository {
       throw UnimplementedError();
 
   @override
+  Future<void> deleteRoutine(String routineId,
+          {required String clientRequestId}) async =>
+      throw UnimplementedError();
+
+  @override
   Future<DailyRoutineView> dailyRoutines({
     required String elderId,
     required String date,

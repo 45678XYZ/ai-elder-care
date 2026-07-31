@@ -33,8 +33,8 @@ void main() {
     AppSession.instance
       ..elders = const []
       ..selectedElderId = null;
-    // 資料來源也要重來一份：demo 那個實作是有狀態的（停用的行程會留在記憶體裡），
-    // 沿用同一個實例的話，前一個測試停用掉的行程會出現在下一個測試的初始資料裡。
+    // 資料來源也要重來一份：demo 那個實作是有狀態的（刪掉的行程真的從清單消失），
+    // 沿用同一個實例的話，前一個測試刪掉的行程在下一個測試就不見了。
     CareRepo.overrideWith(null);
   });
 
@@ -407,16 +407,36 @@ void main() {
   });
 
   group('管理畫面', () {
-    testWidgets('列出例行公事並可停用', (tester) async {
+    testWidgets('列出例行公事並可刪除', (tester) async {
       await pumpTall(tester, const EldersScreen());
 
       expect(find.text('吃血壓藥'), findsOneWidget);
-      expect(find.text('停用'), findsWidgets);
+      expect(find.text('刪除'), findsWidgets);
 
-      await tester.tap(find.text('停用').first);
+      await tester.tap(find.text('刪除').first);
       await tester.pumpAndSettle();
 
-      expect(find.text('已停用'), findsOneWidget);
+      // 刪除沒有回頭路，送出前要再問一次。
+      expect(find.text('刪除「吃血壓藥」？'), findsOneWidget);
+      // 對話框的「刪除」與卡片上的同名，指名對話框裡那顆。
+      await tester.tap(find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('刪除'),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('吃血壓藥'), findsNothing);
+    });
+
+    testWidgets('刪除確認可以取消，取消就什麼都不做', (tester) async {
+      await pumpTall(tester, const EldersScreen());
+
+      await tester.tap(find.text('刪除').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('吃血壓藥'), findsOneWidget);
     });
   });
 }

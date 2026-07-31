@@ -19,8 +19,8 @@ import '../../theme/app_theme.dart';
 
 /// S8 `/care/manage` — 長輩資料與例行公事管理。
 ///
-/// `GET /elders`、`GET/POST/PATCH /routines`。長輩基本資料唯讀顯示，
-/// 例行公事可新增與停用（服藥時間、回診、約會）。
+/// `GET/POST /elders`、`GET/POST/PATCH /routines`。可新增長輩、新增與刪除例行公事
+/// （服藥時間、回診、約會）；長輩基本資料目前只有語言可改。
 ///
 /// 寫入端點都要 `client_request_id`：同一個值重送拿到同一筆，不會建出兩筆重複行程
 /// （api.md 冪等規則）。送出前產生一次並持有，重試沿用；改內容才換新值。
@@ -223,26 +223,60 @@ class _EldersScreenState extends State<EldersScreen> {
     );
   }
 
-  /// 停用／啟用。PATCH 每次修改都要**新的** client_request_id（同值代表同一次修改）。
-  Future<void> _toggleActive(Routine r) async {
-    final Routine updated;
+  /// 刪除一筆例行公事。
+  ///
+  /// 先問一次再刪：這個動作在畫面上沒有回頭路（不像停用還能再啟用），而列表裡
+  /// 每張卡的刪除鈕位置都一樣，按錯的成本是長輩從此收不到那個提醒——而且照護者
+  /// 不會馬上發現。
+  ///
+  /// 每次都要新的 client_request_id（同值代表同一次修改）。
+  Future<void> _deleteRoutine(Routine r) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardAlt,
+        title:
+            Text('刪除「${r.title}」？', style: Theme.of(ctx).textTheme.titleMedium),
+        content: Text(
+          '刪掉之後長輩就不會再收到這個提醒。',
+          style: Theme.of(ctx).textTheme.bodyLarge,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
+            child: const Text('刪除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     try {
-      updated = await CareRepo.instance.updateRoutine(
-        r.routineId,
-        clientRequestId: _uuid.v4(),
-        fields: {'active': !r.active},
-      );
+      await CareRepo.instance
+          .deleteRoutine(r.routineId, clientRequestId: _uuid.v4());
     } catch (e) {
-      if (mounted) _showError('${r.active ? '停用' : '啟用'}失敗：$e');
+      if (mounted) _showError('刪除失敗：$e');
       return;
     }
     if (!mounted) return;
 
-    final i = _routines.indexWhere((e) => e.routineId == updated.routineId);
-    if (i < 0) return;
-    setState(() => _routines[i] = updated);
-    // 停用要立刻讓提醒消失，不能等下次啟動
+    setState(() => _routines.removeWhere((e) => e.routineId == r.routineId));
+    // 刪掉要立刻讓提醒消失，不能等下次啟動
     unawaited(NotificationService.instance.syncRoutines(_routines));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.barDark,
+        content: Text('已刪除「${r.title}」',
+            style: const TextStyle(color: AppColors.onDark)),
+      ),
+    );
   }
 
   @override
@@ -266,8 +300,10 @@ class _EldersScreenState extends State<EldersScreen> {
                 onRetry: _reload,
                 builder: (context, _) {
                   final elder = AppSession.instance.selectedElder;
-                  final active = _routines.where((r) => r.active).toList();
-                  final paused = _routines.where((r) => !r.active).toList();
+                  // 只列還在的。停用改成刪除之後就沒有「已停用」這個狀態了——
+                  // 後端目前仍是 active=false（資料還在），但那對照護者不該可見，
+                  // 顯示出來等於告訴他「刪掉的東西其實還在」。
+                  final visible = _routines.where((r) => r.active).toList();
 
                   return ListView(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -312,31 +348,17 @@ class _EldersScreenState extends State<EldersScreen> {
                         ),
                       ),
                       const SizedBox(height: AppSpacing.sm),
-                      if (_routines.isEmpty)
+                      if (visible.isEmpty)
                         _EmptyRoutines(onAdd: _addRoutine)
-                      else ...[
-                        for (final r in active) ...[
+                      else
+                        for (final r in visible) ...[
                           _RoutineCard(
                             key: ValueKey(r.routineId),
                             routine: r,
-                            onToggle: () => _toggleActive(r),
+                            onDelete: () => _deleteRoutine(r),
                           ),
                           const SizedBox(height: AppSpacing.md),
                         ],
-                        if (paused.isNotEmpty) ...[
-                          const SizedBox(height: AppSpacing.sm),
-                          const SectionHeader('已停用'),
-                          const SizedBox(height: AppSpacing.sm),
-                          for (final r in paused) ...[
-                            _RoutineCard(
-                              key: ValueKey(r.routineId),
-                              routine: r,
-                              onToggle: () => _toggleActive(r),
-                            ),
-                            const SizedBox(height: AppSpacing.md),
-                          ],
-                        ],
-                      ],
                       const SizedBox(height: AppSpacing.xl),
                       const _PolicyLink(),
                       const SignOutButton(),
@@ -600,17 +622,16 @@ class _RoutineCard extends StatelessWidget {
   const _RoutineCard({
     super.key,
     required this.routine,
-    required this.onToggle,
+    required this.onDelete,
   });
 
   final Routine routine;
-  final VoidCallback onToggle;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final category = EventCategory.fromType(routine.type);
-    final paused = !routine.active;
 
     return AppCard.nested(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -622,12 +643,11 @@ class _RoutineCard extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: paused ? AppColors.track : category.bg,
+              color: category.bg,
               borderRadius: BorderRadius.circular(11),
             ),
             alignment: Alignment.center,
-            child: Icon(_iconFor(routine.type),
-                size: 20, color: paused ? AppColors.chevron : category.fg),
+            child: Icon(_iconFor(routine.type), size: 20, color: category.fg),
           ),
           const SizedBox(width: AppSpacing.md),
           Expanded(
@@ -636,9 +656,7 @@ class _RoutineCard extends StatelessWidget {
               children: [
                 Text(
                   routine.title,
-                  style: text.titleSmall?.copyWith(
-                    color: paused ? AppColors.inkSecondary : AppColors.ink,
-                  ),
+                  style: text.titleSmall,
                 ),
                 const SizedBox(height: 2),
                 Text(_scheduleLabel(routine.schedule),
@@ -669,18 +687,17 @@ class _RoutineCard extends StatelessWidget {
               ],
             ),
           ),
-          // 停用／啟用：文字按鈕而非只有開關，狀態不靠單一視覺線索
+          // 用文字而不是只有一個垃圾桶 icon：icon 的語意要靠猜，而這個動作按錯了
+          // 沒有回頭路（送出前還會再問一次，見 _deleteRoutine）。
           TextButton(
-            onPressed: onToggle,
+            onPressed: onDelete,
             style: TextButton.styleFrom(
               minimumSize: const Size(48, 48),
               foregroundColor: AppColors.accentText,
             ),
-            child: Text(paused ? '啟用' : '停用',
-                style: text.labelSmall?.copyWith(
-                    color: paused
-                        ? AppColors.accentText
-                        : AppColors.inkSecondary)),
+            child: Text('刪除',
+                style:
+                    text.labelSmall?.copyWith(color: AppColors.inkSecondary)),
           ),
         ],
       ),

@@ -398,6 +398,16 @@ class DemoRepository implements CareRepository {
   }
 
   @override
+  Future<void> deleteRoutine(String routineId,
+      {required String clientRequestId}) async {
+    // demo 直接從清單移除。後端那條目前是 active=false（資料還在），兩邊對畫面
+    // 而言一樣：都看不到了。等後端定案再對齊。
+    final list = await _mutableRoutines(null);
+    list.removeWhere((r) => r.routineId == routineId);
+    return Future.delayed(DemoData.latency, () {});
+  }
+
+  @override
   Future<DailyRoutineView> dailyRoutines({
     required String elderId,
     required String date,

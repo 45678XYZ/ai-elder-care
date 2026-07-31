@@ -102,7 +102,7 @@ abstract interface class CareRepository {
     required Map<String, dynamic> fields,
   });
 
-  /// `PATCH /routines/{id}` — 修改／停用。
+  /// `PATCH /routines/{id}` — 修改。
   ///
   /// [clientRequestId] **每次修改都要新的一個**（同值代表同一次修改）。
   Future<Routine> updateRoutine(
@@ -110,6 +110,18 @@ abstract interface class CareRepository {
     required String clientRequestId,
     required Map<String, dynamic> fields,
   });
+
+  /// 刪除一筆例行公事。刪掉之後照護者在 App 裡看不到它，也不會再收到提醒。
+  ///
+  /// **目前底下走的仍是 `PATCH {active:false}`**——api.md 還沒有刪除端點，後端之後
+  /// 會改成什麼樣還不知道。之所以另外開一個方法而不是讓畫面直接送 `active:false`，
+  /// 就是為了把那個未定的部分關在這一層：後端定案時只改實作，畫面不用動。
+  ///
+  /// 這也表示現在**刪除在後端仍是可逆的**（資料還在，只是 active=false），但 App
+  /// 不再提供還原的入口。UI 說「刪除」就要真的看起來像刪除，留一個復原按鈕反而
+  /// 讓人以為只是暫停。
+  Future<void> deleteRoutine(String routineId,
+      {required String clientRequestId});
 
   /// `GET /routines?elder_id=&date=` — 當日行程視圖。
   Future<DailyRoutineView> dailyRoutines({
