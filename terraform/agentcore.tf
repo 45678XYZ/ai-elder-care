@@ -79,6 +79,12 @@ module "agent_runtime_package" {
   source_path   = local.agent_runtime_source_path
   artifacts_dir = "${path.module}/build"
 
+  # AgentCore Runtime 掃描 zip 內每個 .so 的 ELF header，不是 arm64 就拒收，因此依賴必須
+  # 在 arm64 Linux 容器裡裝（見 lambda.tf 的 docker_build_options）。這裡只打包不建函數，
+  # 所以不需要 architectures。
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
   depends_on = [aws_s3_bucket_versioning.agent_runtime_code]
 }
 
@@ -196,7 +202,7 @@ resource "aws_iam_role_policy" "agentcore_runtime_invoke_tools" {
     Statement = [{
       Effect   = "Allow"
       Action   = "lambda:InvokeFunction"
-      Resource = aws_lambda_function.tools.arn
+      Resource = module.tools.lambda_function_arn
     }]
   })
 }
@@ -276,7 +282,7 @@ resource "aws_bedrockagentcore_agent_runtime" "companion" {
   }
 
   environment_variables = {
-    TOOLS_FUNCTION_NAME = aws_lambda_function.tools.function_name
+    TOOLS_FUNCTION_NAME = module.tools.lambda_function_name
     AGENT_MEMORY_ID     = aws_bedrockagentcore_memory.companion.id
     KNOWLEDGE_BASE_ID   = aws_bedrockagent_knowledge_base.kb.id
     AGENT_MODEL_ID      = var.agent_model_id != "" ? var.agent_model_id : var.bedrock_model_id

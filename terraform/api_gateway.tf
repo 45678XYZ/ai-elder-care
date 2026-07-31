@@ -254,13 +254,13 @@ resource "aws_api_gateway_integration" "post_chat" {
   http_method             = aws_api_gateway_method.post_chat.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.chat.invoke_arn
+  uri                     = module.chat.lambda_function_invoke_arn
 }
 
 resource "aws_lambda_permission" "apigw_post_chat" {
   statement_id  = "AllowApiGatewayPostChat"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.chat.function_name
+  function_name = module.chat.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/chat"
 }
@@ -288,7 +288,7 @@ resource "aws_api_gateway_integration" "get_elders" {
   http_method             = aws_api_gateway_method.get_elders.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.elders.invoke_arn
+  uri                     = module.elders.lambda_function_invoke_arn
 }
 
 resource "aws_api_gateway_method" "post_elders" {
@@ -306,13 +306,13 @@ resource "aws_api_gateway_integration" "post_elders" {
   http_method             = aws_api_gateway_method.post_elders.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.elders.invoke_arn
+  uri                     = module.elders.lambda_function_invoke_arn
 }
 
 resource "aws_lambda_permission" "apigw_elders" {
   statement_id  = "AllowApiGatewayElders"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.elders.function_name
+  function_name = module.elders.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/elders"
 }
@@ -343,7 +343,7 @@ resource "aws_api_gateway_integration" "get_elder" {
   http_method             = aws_api_gateway_method.get_elder.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.elders.invoke_arn
+  uri                     = module.elders.lambda_function_invoke_arn
 }
 
 resource "aws_api_gateway_method" "patch_elder" {
@@ -364,13 +364,13 @@ resource "aws_api_gateway_integration" "patch_elder" {
   http_method             = aws_api_gateway_method.patch_elder.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.elders.invoke_arn
+  uri                     = module.elders.lambda_function_invoke_arn
 }
 
 resource "aws_lambda_permission" "apigw_elder_ops" {
   statement_id  = "AllowApiGatewayElderOps"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.elders.function_name
+  function_name = module.elders.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/elders/*"
 }
@@ -405,7 +405,7 @@ resource "aws_api_gateway_integration" "post_health_note" {
   http_method             = aws_api_gateway_method.post_health_note.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.elders.invoke_arn
+  uri                     = module.elders.lambda_function_invoke_arn
 }
 
 resource "aws_api_gateway_resource" "elder_health_note_id" {
@@ -433,13 +433,13 @@ resource "aws_api_gateway_integration" "delete_health_note" {
   http_method             = aws_api_gateway_method.delete_health_note.http_method
   type                    = "AWS_PROXY"
   integration_http_method = "POST"
-  uri                     = aws_lambda_function.elders.invoke_arn
+  uri                     = module.elders.lambda_function_invoke_arn
 }
 
 resource "aws_lambda_permission" "apigw_elder_health_notes" {
   statement_id  = "AllowApiGatewayElderHealthNotes"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.elders.function_name
+  function_name = module.elders.lambda_function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/elders/*/health_notes*"
 }

@@ -54,6 +54,9 @@ module "pre_token" {
   source_path   = "${path.module}/../backend/src/handlers/pre_token_generation.py"
   artifacts_dir = "${path.module}/build"
 
+  # 單檔且不裝任何依賴，因此不必進 Docker 打包；架構仍與其餘 Lambda 一致
+  architectures = local.lambda_architectures
+
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = {
@@ -106,6 +109,17 @@ locals {
       pip_requirements = true
     }
   ]
+
+  # 執行架構統一 arm64。AgentCore Runtime 只支援 arm64，且會逐一驗證部署包內 .so 的 ELF
+  # header，混到 x86_64 或 macOS 的 Mach-O 會直接被拒；Lambda 跟著一起走 arm64，打包平台
+  # 就只剩一種，在 Apple Silicon 上也不必靠模擬跑 pip。
+  lambda_architectures = ["arm64"]
+
+  # 依賴一律在容器內安裝。社群模組的 package.py 是直接在本機跑 pip 且不帶 --platform，
+  # 在 macOS 上會裝成 macosx wheel（requirements.txt 的 pydantic 帶編譯出來的 pydantic-core），
+  # zip 上去後 Lambda 冷啟就 ImportModuleError。映像檔沿用模組預設的
+  # public.ecr.aws/sam/build-python3.11，這裡只指定平台，讓誰打包結果都一樣。
+  docker_build_options = ["--platform", "linux/arm64"]
 
   # 萃取行為一律由環境變數驅動，程式不寫死（見 docs/framework.md 後端環境變數）
   extraction_env = {
@@ -220,80 +234,116 @@ resource "aws_sns_topic" "caregiver_notifications" {
 }
 
 # 4. chat Lambda 函數 (POST /chat 對話進入點)
-resource "aws_lambda_function" "chat" {
+#
+# AWS_REGION 是 Lambda 的保留環境變數（由執行環境自動注入），設了會讓 CreateFunction
+# 直接被拒；chat.py 讀的就是那個注入值，因此這裡不重複宣告。
+module "chat" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-chat"
-  role          = aws_iam_role.lambda_backend_role.arn
-  handler       = "handlers.chat.handler"
+  description   = "POST /chat 對話進入點"
+  handler       = "src.handlers.chat.handler"
   runtime       = "python3.11"
   timeout       = 28
   memory_size   = 512
 
-  filename = "${path.module}/build/backend.zip"
+  create_role = false
+  lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  environment {
-    variables = {
-      S3_AUDIO_BUCKET = "${var.project_name}-audio"
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
 
-      # 對話大腦：AgentCore Runtime 以 ARN 定址、以 endpoint 名稱當 qualifier（見 agentcore.tf）
-      AGENTCORE_RUNTIME_ARN      = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
-      AGENTCORE_ENDPOINT_NAME    = aws_bedrockagentcore_agent_runtime_endpoint.live.name
-      AWS_REGION                 = var.aws_region
-      SAGEMAKER_CE_ENDPOINT_NAME = ""
-      TABLE_ELDERS               = aws_dynamodb_table.elders.name
-      TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
-      TABLE_EVENTS               = aws_dynamodb_table.events.name
-      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
-      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
 
-      # turn 狀態機：租約長度必須大於本函數的 timeout，否則同一個請求還在跑就會被判定為
-      # 「前一個 invocation 已死」而被接管，副作用會做第二次
-      REQUEST_LEASE_SECONDS      = tostring(var.request_lease_seconds)
-      SESSION_IDLE_MINUTES       = tostring(var.session_idle_minutes)
-      SESSION_MAX_TURNS          = tostring(var.session_max_turns)
-      SESSION_MAX_INFLIGHT_TURNS = tostring(var.session_max_inflight_turns)
-      SESSION_MAX_INPUT_BYTES    = tostring(var.session_max_input_bytes)
-    }
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = {
+    S3_AUDIO_BUCKET = "${var.project_name}-audio"
+
+    # 對話大腦：AgentCore Runtime 以 ARN 定址、以 endpoint 名稱當 qualifier（見 agentcore.tf）
+    AGENTCORE_RUNTIME_ARN      = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
+    AGENTCORE_ENDPOINT_NAME    = aws_bedrockagentcore_agent_runtime_endpoint.live.name
+    SAGEMAKER_CE_ENDPOINT_NAME = ""
+    TABLE_ELDERS               = aws_dynamodb_table.elders.name
+    TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
+    TABLE_EVENTS               = aws_dynamodb_table.events.name
+    TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+    CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+
+    # turn 狀態機：租約長度必須大於本函數的 timeout，否則同一個請求還在跑就會被判定為
+    # 「前一個 invocation 已死」而被接管，副作用會做第二次
+    REQUEST_LEASE_SECONDS      = tostring(var.request_lease_seconds)
+    SESSION_IDLE_MINUTES       = tostring(var.session_idle_minutes)
+    SESSION_MAX_TURNS          = tostring(var.session_max_turns)
+    SESSION_MAX_INFLIGHT_TURNS = tostring(var.session_max_inflight_turns)
+    SESSION_MAX_INPUT_BYTES    = tostring(var.session_max_input_bytes)
   }
 }
 
 # 5. tools Lambda 函數（12 個工具箱；由 AgentCore Runtime 以 lambda:InvokeFunction 呼叫）
-resource "aws_lambda_function" "tools" {
+module "tools" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-tools"
-  role          = aws_iam_role.lambda_backend_role.arn
-  handler       = "handlers.tools.handler"
+  description   = "對話大腦的工具箱"
+  handler       = "src.handlers.tools.handler"
   runtime       = "python3.11"
   timeout       = 15
   memory_size   = 256
 
-  filename = "${path.module}/build/backend.zip"
+  create_role = false
+  lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  environment {
-    variables = {
-      TABLE_ELDERS               = aws_dynamodb_table.elders.name
-      TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
-      TABLE_EVENTS               = aws_dynamodb_table.events.name
-      TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
-      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
-      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
-    }
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = {
+    TABLE_ELDERS               = aws_dynamodb_table.elders.name
+    TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
+    TABLE_EVENTS               = aws_dynamodb_table.events.name
+    TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
+    TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+    CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
   }
 }
 
 # 6. elders Lambda 函數 (GET/POST/PATCH /elders 長者個人檔案與偏好 API)
-resource "aws_lambda_function" "elders" {
+module "elders" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-elders"
-  role          = aws_iam_role.lambda_backend_role.arn
-  handler       = "handlers.elders.handler"
+  description   = "長者個人檔案與偏好 API"
+  handler       = "src.handlers.elders.handler"
   runtime       = "python3.11"
   timeout       = 10
+  memory_size   = 512
 
-  filename = "${path.module}/build/backend.zip"
+  create_role = false
+  lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  environment {
-    variables = {
-      TABLE_ELDERS               = aws_dynamodb_table.elders.name
-      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
-    }
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = {
+    TABLE_ELDERS               = aws_dynamodb_table.elders.name
+    CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
   }
 }
 
@@ -301,26 +351,37 @@ resource "aws_lambda_function" "elders" {
 # 5. Cognito Post Confirmation Trigger
 # =============================================================================
 
-resource "aws_lambda_function" "post_confirmation" {
+module "post_confirmation" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-post-confirmation"
-  role          = aws_iam_role.lambda_backend_role.arn
-  handler       = "handlers.post_confirmation.handler"
+  description   = "Cognito post-confirmation trigger：註冊完成後綁定 SNS"
+  handler       = "src.handlers.post_confirmation.handler"
   runtime       = "python3.11"
   timeout       = 10
 
-  filename = "${path.module}/build/backend.zip"
+  create_role = false
+  lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  environment {
-    variables = {
-      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
-    }
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = {
+    CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
   }
 }
 
 resource "aws_lambda_permission" "allow_cognito_post_confirmation" {
   statement_id  = "AllowCognitoInvokePostConfirmation"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.post_confirmation.function_name
+  function_name = module.post_confirmation.lambda_function_name
   principal     = "cognito-idp.amazonaws.com"
   source_arn    = aws_cognito_user_pool.accounts.arn
 }
@@ -465,6 +526,10 @@ module "batch_extractor" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = merge(local.extraction_env, {
@@ -497,6 +562,10 @@ module "session_closer" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = merge(local.extraction_env, {
@@ -520,6 +589,10 @@ module "dlq_reconciler" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -551,6 +624,10 @@ module "api_events" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -593,6 +670,10 @@ module "api_summaries" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = merge(local.extraction_env, local.summary_env)
@@ -615,6 +696,10 @@ module "summary_generator" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -639,6 +724,10 @@ module "api_stats" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
 
   cloudwatch_logs_retention_in_days = 30
 
