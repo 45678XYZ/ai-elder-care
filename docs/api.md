@@ -10,7 +10,7 @@
 - **時間**：ISO 8601 含時區，如 `2026-07-14T09:05:00+08:00`；日期為 `YYYY-MM-DD`；日界以台灣時間（+08:00）為準。
 - **ID 格式／前綴**：長者 ID 為 `eld_` 後接 12 個小寫十六進位字元；其餘前綴為 `rtn_`（例行公事）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）、`hn_`（健康註記單筆，見「長者資料」）。batch chunk ID 僅供後端追蹤，不由 API 回傳。
 - **分頁**：列表支援 `?limit=`（預設 50）與 `?next_token=`。資料超過一頁時 response 最外層帶 `next_token`；下一次請求必須原樣帶回。它是後端由資料庫游標編碼的不透明字串，前端不得解析；沒有此欄位表示已無下一頁。
-- **Hybrid 處理**：`POST /chat` 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event，不等待 session batch。Session 關閉採雙管道：App 可主動呼叫 close endpoint 即時關閉，EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。
+- **Hybrid 處理**：`POST /chat` 透過對話大腦的 tool calling 同步處理 routine 變更與 safety event，不等待 session batch。Session 關閉採雙管道：App 可主動呼叫 close endpoint 即時關閉，EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。
 
 ### 共用 enum
 
@@ -60,7 +60,7 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 response 前只執行：
 
 1. 回覆所需的 ASR、近期上下文、既有 events/routines 查詢、AgentCore 長期記憶與 AI/TTS。
-2. 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event 寫入。
+2. 透過對話大腦的 tool calling 同步處理 routine 變更與 safety event 寫入。
 3. 需要立即生效的 routine 建立、修改、停用或完成，以及潛在高風險 safety event 的事件寫入。
 
 一般生活 events 不由 realtime materialize；只在 session close 後由 batch 處理。後端 extraction 狀態不回傳 App。
@@ -230,7 +230,7 @@ close 以 session 狀態保證冪等，不需要 `client_request_id`：
 | `source` | `caregiver`（照護者在 App 填的）｜`agent`（對話中由 `update_elder_profile` 工具依長輩談話補上的） |
 | `created_at` | 加入時間 |
 
-`source` 是**必要資訊而非裝飾**：同一個欄位被照護者與 Bedrock Agent 共寫，AI 聽來的那幾筆更可能出錯、也更需要照護者確認，前端必須分得出來才做得到。
+`source` 是**必要資訊而非裝飾**：同一個欄位被照護者與對話大腦共寫，AI 聽來的那幾筆更可能出錯、也更需要照護者確認，前端必須分得出來才做得到。
 
 寫入時 `note_id`、`created_at` 一律由後端補；`source` 只由後端依寫入路徑決定，client 指定會被拒絕。相容性：`health_notes` 送純字串陣列仍會被接受，一律視為 `source: "caregiver"`，回應一律是物件陣列。
 
@@ -468,7 +468,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 }
 ```
 
-`client_request_id` 與 `title` 必填，`title` 不得為空字串。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行或重送相同 scoped ID／相同 hash 同樣回 201 與既有物件，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。長者帳號呼叫回 403 `FORBIDDEN`。對話建立的 routine 由 Bedrock Agent tool calling 直接寫入，不呼叫此 API。
+`client_request_id` 與 `title` 必填，`title` 不得為空字串。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行或重送相同 scoped ID／相同 hash 同樣回 201 與既有物件，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。長者帳號呼叫回 403 `FORBIDDEN`。對話建立的 routine 由對話大腦的 tool calling 直接寫入，不呼叫此 API。
 
 ### PATCH /routines/{routine_id} — 修改／停用（照護者）
 
