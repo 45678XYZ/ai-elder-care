@@ -173,8 +173,8 @@ locals {
 }
 ```
 
-- `asr_enable_endpoints = false` 時：不注入設定，Lambda 使用只有 `hak_mock`
-  可服務的安全預設。
+- `asr_enable_endpoints = false` 時：仍注入明確的 production-disabled 設定；
+  `zh-TW`／`hak` route 都停用，不建立 provider、不外呼，也不啟用 `hak_mock`。
 - `asr_enable_endpoints = true` 時：Terraform 會填入 endpoint 與遠端 provider，
   但模型仍須另外通過個別 ADR 與五項 production gate。
 - 建立 endpoint 不代表模型獲准上線；目前 CE、Formo 都是
@@ -185,6 +185,9 @@ locals {
 ---
 
 ## 合法設定範例
+
+以下「僅 mock」範例只供單元測試或明確的本機開發使用，不得作為 production
+`ASR_CONFIG_JSON`。production 在 endpoint 關閉時使用 Terraform 產生的 disabled routes。
 
 ### 最小可用設定（僅 mock）
 
@@ -219,9 +222,9 @@ locals {
   "routes": {
     "hak": {
       "route": "hak_primary",
-      "provider_identifier": "hak_mock",
+      "provider_identifier": "ce_remote",
       "enabled": true,
-      "fallback_chain": ["ce_remote"]
+      "fallback_chain": []
     },
     "zh-TW": {
       "route": "zh_tw_primary",
@@ -230,11 +233,6 @@ locals {
     }
   },
   "providers": {
-    "hak_mock": {
-      "identifier": "hak_mock",
-      "status": "enabled",
-      "kind": "mock"
-    },
     "ce_remote": {
       "identifier": "ce_remote",
       "status": "enabled",

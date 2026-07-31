@@ -3,41 +3,30 @@
 # 從 Terraform endpoint 名稱、allowed providers、routing 和 gates 組合
 # ASR_CONFIG_JSON — Lambda 唯一的 ASR 設定來源。
 #
-# chat Lambda 的完整定義（打包、部署、API Gateway 整合）仍為 TODO，
-# 本檔先定義：
-#   1. ASR_CONFIG_JSON 的組裝邏輯（local value）
-#   2. 呼叫端 IAM policy（已在 asr_models.tf 定義，此處說明 attach 方式）
-#
-# 部署者建立 chat Lambda 後需要：
-#   - 設定環境變數 ASR_CONFIG_JSON = local.asr_config_json
-#   - Attach aws_iam_policy.invoke_asr_endpoints 到 Lambda execution role
+# Chat Lambda 由 lambda.tf 注入本檔組裝的 JSON；即使 endpoint 關閉也明確注入
+# production-disabled 設定，避免空環境變數啟用 default_config() 的 hak_mock。
 
 locals {
   # ASR_CONFIG_JSON — 由 Terraform 從 endpoint 名稱與設定組裝。
-  # 啟用時產生完整的 remote-only 設定；未啟用時產生安全預設（僅 hak_mock 可用）。
+  # 啟用時產生完整的 remote-only 設定；未啟用時兩條 production route 都停用。
   # 建立 endpoint 不等於模型已核准；個別模型 ADR 未通過前，production gate
   # 必須維持關閉，build_provider_registry() 不會建立遠端 provider。
   asr_config_json = var.asr_enable_endpoints ? jsonencode({
     routes = {
       "hak" = {
         route               = "hak_primary"
-        provider_identifier = "hak_mock"
+        provider_identifier = "ce_remote"
         enabled             = true
-        fallback_chain      = ["ce_remote"]
+        fallback_chain      = ["formo_remote"]
       }
       "zh-TW" = {
         route               = "zh_tw_primary"
         provider_identifier = "ce_remote"
         enabled             = true
-        fallback_chain      = ["formo_remote"]
+        fallback_chain      = []
       }
     }
     providers = {
-      hak_mock = {
-        identifier = "hak_mock"
-        status     = "enabled"
-        kind       = "mock"
-      }
       ce_remote = {
         identifier     = "ce_remote"
         status         = "enabled"
@@ -100,5 +89,39 @@ locals {
     concurrency = {
       spill_wait_ms = 250
     }
-  }) : "" # 未啟用時不注入 — Lambda 會使用 default_config()（僅 hak_mock）
+  }) : jsonencode({
+    routes = {
+      "hak" = {
+        route               = "hak_disabled"
+        provider_identifier = "production_disabled"
+        enabled             = false
+        fallback_chain      = []
+      }
+      "zh-TW" = {
+        route               = "zh_tw_disabled"
+        provider_identifier = "production_disabled"
+        enabled             = false
+        fallback_chain      = []
+      }
+    }
+    providers = {
+      production_disabled = {
+        identifier = "production_disabled"
+        status     = "disabled"
+        kind       = "mock"
+      }
+    }
+    model_metadata = {}
+    formo_prompt_id_allowlist = [
+      "htia_sixian",
+      "htia_hailu",
+      "htia_dapu",
+      "htia_raoping",
+      "htia_zhaoan",
+      "htia_nansixian",
+    ]
+    concurrency = {
+      spill_wait_ms = 250
+    }
+  })
 }

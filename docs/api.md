@@ -10,7 +10,7 @@
 - **時間**：ISO 8601 含時區，如 `2026-07-14T09:05:00+08:00`；日期為 `YYYY-MM-DD`；日界以台灣時間（+08:00）為準。
 - **ID 格式／前綴**：長者 ID 為 `eld_` 後接 12 個小寫十六進位字元；其餘前綴為 `rtn_`（例行公事）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）。batch chunk ID 僅供後端追蹤，不由 API 回傳。
 - **分頁**：列表支援 `?limit=`（預設 50）與 `?next_token=`。資料超過一頁時 response 最外層帶 `next_token`；下一次請求必須原樣帶回。它是後端由資料庫游標編碼的不透明字串，前端不得解析；沒有此欄位表示已無下一頁。
-- **Hybrid 處理**：`POST /chat` 僅等待 realtime routine/safety rail，不等待 session batch。App 應在互動結束時呼叫 close；未呼叫者由 periodic idle closer 收斂。
+- **Hybrid 處理**：`POST /chat` 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event，不等待 session batch。Session 關閉採雙管道：App 可主動呼叫 close endpoint 即時關閉，EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。
 
 ### 共用 enum
 
@@ -21,7 +21,7 @@
 | `SummaryDataStatus` | `complete` \| `partial` |
 | `Gender` | `male` \| `female` \| `other` |
 | `Language` | `zh-TW` \| `hak` |
-| `EventType` | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `other` |
+| `EventType` | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `safety` \| `other` |
 | `RoutineStatus` | `pending` \| `done` \| `missed` |
 | `CompletedBy` | `conversation` \| `elder` \| `caregiver` |
 
@@ -29,7 +29,7 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 
 ### 錯誤格式
 
-非 2xx 一律為下列結構；401 例外，由 API Gateway 回固定格式。
+非 2xx 一律為下列結構。
 
 ```json
 { "error": { "code": "ELDER_NOT_FOUND", "message": "找不到指定的長者" } }
@@ -38,13 +38,16 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 | HTTP | 使用時機與 `code` |
 |---|---|
 | 400 | 缺漏／格式錯誤（`INVALID_PARAMETER`）；音訊超長（`AUDIO_TOO_LONG`）；指定日期無該 routine（`ROUTINE_NOT_SCHEDULED`） |
-| 401 | token 缺漏或無效（API Gateway） |
+| 401 | token 缺漏或無效（`UNAUTHORIZED`） |
 | 403 | 越權（`FORBIDDEN`）；不適用於 close endpoint 的 session 存在性／ownership 判斷 |
 | 404 | `ELDER_NOT_FOUND`、`ROUTINE_NOT_FOUND`、`SESSION_NOT_FOUND`；close endpoint 對不存在或不屬該長者的 session 都使用 `SESSION_NOT_FOUND` |
 | 409 | `REQUEST_IN_PROGRESS`、`IDEMPOTENCY_CONFLICT` |
+| 429 | 超過 stage 節流上限（`THROTTLED`）；前端退避重試 |
 | 500 | `INTERNAL_ERROR` |
 
 `code` 是前端 UX 分支的穩定識別碼；程式不得依賴可能調整的 `message`。任一端點可能回通用錯誤；端點特例另行註明。
+
+請求在抵達 handler 前被 API Gateway 擋下時（token 無效、路由不存在、payload 過大、節流、integration 逾時），`code` 為該 gateway 錯誤類型，如 `UNAUTHORIZED`、`MISSING_AUTHENTICATION_TOKEN`、`REQUEST_TOO_LARGE`、`THROTTLED`、`INTEGRATION_TIMEOUT`，`message` 為英文原文。
 
 ---
 
@@ -57,10 +60,10 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 response 前只執行：
 
 1. 回覆所需的 ASR、近期上下文、既有 events/routines 查詢、AgentCore 長期記憶與 AI/TTS。
-2. 使用既有 chat 模型 structured output 加 deterministic safety rules 的 realtime rail。
-3. 需要立即生效的 routine 建立、修改、停用或完成，以及潛在高風險 wellbeing/safety signal 的事件寫入。
+2. 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event 寫入。
+3. 需要立即生效的 routine 建立、修改、停用或完成，以及潛在高風險 safety event 的事件寫入。
 
-一般生活 events 不由 realtime materialize；只在 session close 後由 batch 處理。後端 `rt_labels` 與 extraction 狀態不回傳 App。
+一般生活 events 不由 realtime materialize；只在 session close 後由 batch 處理。後端 extraction 狀態不回傳 App。
 
 #### Request
 
@@ -108,7 +111,7 @@ response 前只執行：
 - 未帶 `session_id`：建立新的 `active` session。
 - session 存在、屬於該長者、仍 `active`、未超過 idle 門檻且未達 turn/input bytes 上限：沿用。
 - session 屬於該長者但已 idle、`closing`、`closed` 或達上限：該 turn 不寫入原 session；後端建立新的 active session並在 response 回新 `session_id`。idle／達上限的原 session 由 closer 收斂。
-- session 不存在：404 `SESSION_NOT_FOUND`；session 屬於其他長者：403 `FORBIDDEN`。
+- session 不存在或不屬於該長者：一律 404 `SESSION_NOT_FOUND`，與 close 一致不以 403 區分，避免洩漏 session 是否存在。
 
 後端只對查無 existing turn 的全新 ID，在 session 仍為 active 時以 transaction 建立 processing turn lease並 reserve inflight ID；turn 與 session inflight 均受上限約束。reserve 與 close 競爭時，reserve 先成功則 close 回 409 等待收斂；close 的 `active→closing` 先成功則本 turn 不得 append 原 session，必須建立新 active session後 reserve。final success 以單一 DynamoDB transaction 原子提交 completed 穩定結果、所有 realtime routine/event mutations、移除 inflight、按接納順序追加 turn/context IDs及更新 counts/activity；每 turn action 數受限，transaction 不超過 100 items。
 
@@ -135,7 +138,7 @@ response 前只執行：
 | `session_id` | 本 turn 首次接納時實際使用的 session；相同 `client_request_id` replay 一律回原 ID，即使該 session 後續已 closing/closed。只有全新 ID 在指定原 session idle、closing、closed 或達上限時才會取得新 ID |
 | `transcript` | audio 的 ASR 結果；text 則原樣回傳 |
 | `reply_text` | AI 回覆 |
-| `reply_audio_url` | 15 分鐘 S3 presigned URL |
+| `reply_audio_url` | 15 分鐘 S3 presigned URL；回覆語音無法儲存或簽發時為 `null` |
 | `routines_updated` | 本次 response 前已成功建立、修改、停用 routine 或完成 occurrence 時為 true，否則為 false |
 
 `routines_updated` 必須反映已提交的業務結果，不得只代表模型曾提出候選。App 收到 true 後可背景呼叫 `GET /routines` 更新定義與當日狀態。一般 events 尚未產生不影響 200 response；回覆失敗時沿用通用錯誤格式。
@@ -143,6 +146,8 @@ response 前只執行：
 ### POST /chat/sessions/{session_id}/close — 明確關閉
 
 App 在停止免手持互動、離開對話畫面或切換長者前呼叫。此 endpoint 表示停止向該 session 追加 turn、freeze immutable snapshot，並啟動離線 normal events materialization；不保證 response 時 batch 已完成。
+
+> Session 關閉採雙管道設計：前端可主動呼叫此 endpoint 即時關閉（適用於即時展示等需要快速收斂的場景），EventBridge 週期性收斂（idle close）則確保未明確關閉的 session 最終仍會收斂。兩者邏輯與條件式寫入完全一致。
 
 只有 token 對應的長者本人可呼叫。request body 可省略；傳送時必須是空 object：
 
@@ -250,6 +255,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
         "sleep": "昨晚睡約七小時",
         "medication": "血壓藥已按時服用",
         "wellbeing": "提到膝蓋疼痛，心情平穩",
+        "safety": null,
         "other": null
       },
       "routines": {
@@ -272,7 +278,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 | 欄位 | 說明 |
 |---|---|
-| `sections` | 固定六類 `diet/activity/sleep/medication/wellbeing/other`；六個 key 每次完整回傳，無資料為 null |
+| `sections` | 固定七類 `diet/activity/sleep/medication/wellbeing/safety/other`，與 `EventType` 一一對應；七個 key 每次完整回傳，無資料為 null |
 | `routines.completed` | `routines.items` 中 `status=done` 的 occurrence 數；pending 不計入 |
 | `routines.missed` | `routines.items` 中 `status=missed` 的 occurrence 數；pending 不計入 |
 | `routines.items[]` | 固定 `{routine_id,title,status}`；每個 `routine_id + date` 最多一項。`occurrence_cutoff=min(input_through_at, routine_date 的台灣日界結束 23:59:59.999+08:00)`；已有 canonical completion event 時，title 優先取 event 所記 `routine_version` 的不可變定義且 status 為 done，未完成時才取 `occurrence_cutoff` 前最新有效版本 |
@@ -289,7 +295,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 { "elder_id": "eld_a1b2c3d4e5f6", "date": "2026-07-14" }
 ```
 
-`date` 預設今天。同步生成，Response 200 回單一摘要物件（結構同列表 item）。手動生成不等待排程窗口，因此可回 `data_status=partial`。只有 `pending_session_count=0` 且所有相關 closed session batch 都 completed 才可回 complete。無對話且確認沒有相關待處理 session 時，六類為 null、alerts 為 `[]`、interaction_count 為 0、pending_session_count 為 0，並可回 complete。
+`date` 預設今天。同步生成，Response 200 回單一摘要物件（結構同列表 item）。手動生成不等待排程窗口，因此可回 `data_status=partial`。只有 `pending_session_count=0` 且所有相關 closed session batch 都 completed 才可回 complete。無對話且確認沒有相關待處理 session 時，七類為 null、alerts 為 `[]`、interaction_count 為 0、pending_session_count 為 0，並可回 complete。
 
 ---
 
@@ -328,7 +334,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 | 欄位 | 說明 |
 |---|---|
-| `type` | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `other` |
+| `type` | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `safety` \| `other` |
 | `detail` | canonical event 的目前顯示描述；batch 可 enrich 同一 safety event |
 | `source` | `conversation` \| `manual` |
 | `conversation_id` | 對話事件的主要來源 turn；manual 事件省略 |
@@ -336,7 +342,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 資料可見時間：routine completion 與潛在高風險 safety event 可在 `/chat` response 前寫入並立即查得；一般生活事件只在 session close 且 batch materialization 後出現。active 或 batch pending 的缺口不另以公開欄位列出。API 不暴露 extraction track、canonical key、revision、chunk、evidence 列表或其他 extraction internals。
 
-分類與摘要 `sections` 固定六類一一對應；`wellbeing` 涵蓋身體症狀與情緒，無法歸入前五類的一律為 `other`，回診、約會等行程類事件也歸 `other`，與 routine occurrence 以 `routine_id` 連結。分類不會截斷內容：`detail` 保留事件完整描述，摘要生成讀取 `detail` 全文而不是只看 `type`。同一 safety episode 若先 realtime、後 batch enrich，仍使用同一 `event_id`，`detail` 可以更新得更完整；需要逐字追溯時由後端依 `conversation_id` 讀 conversations，events response 不複製逐字稿。
+分類與摘要 `sections` 固定七類一一對應：`activity` 指涉及身體動作的日常活動；`wellbeing` 涵蓋身體症狀、生理量測與情緒；`safety` 涵蓋跌倒、走失、詐騙、居家危害等安全事件，與 `alerts` 語意一致；無法歸入前六類的一律為 `other`，回診、約會等行程類事件與家屬互動、看電視等非身體活動也歸 `other`，與 routine occurrence 以 `routine_id` 連結。後端另有更細的分類節點供摘要、統計與 alerts 使用，但不在此 API 暴露。分類不會截斷內容：`detail` 保留事件完整描述，摘要生成讀取 `detail` 全文而不是只看 `type`。同一 safety episode 若先 tool calling（`notify_caregiver`）、後 batch enrich，仍使用同一 `event_id`，`detail` 可以更新得更完整；需要逐字追溯時由後端依 `conversation_id` 讀 conversations，events response 不複製逐字稿。
 
 ---
 
@@ -344,7 +350,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 ### GET /routines?elder_id= — 定義列表
 
-回所有生效中定義，供 App 排本地通知。
+回所有生效中定義，供 App 排本地通知。結果套用共通分頁規則，`limit` 上限 100。
 
 ```json
 {
@@ -383,7 +389,9 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 | `weekly` | `weekday`（1–7，週一為 1）、`time` |
 | `once` | `date`、`time` |
 
-每週多天建立多筆 weekly routine。routine `type` 與 events 共用六類；口語或手動完成時，completion event 必須沿用該 routine 的 `type`。current GSI 最終一致；`POST/PATCH` response 是強一致最新結果。`/chat` 回 `routines_updated=true` 時，App 應背景呼叫本 endpoint 取得最新定義／狀態。
+`time` 為 24 小時制 `HH:MM`；`schedule` 只接受該 `freq` 對應的欄位，缺少必要欄位或帶入不適用欄位一律回 400 `INVALID_PARAMETER`。
+
+每週多天建立多筆 weekly routine。routine `type` 與 events 共用七類；口語或手動完成時，completion event 必須沿用該 routine 的 `type`。current GSI 最終一致；`POST/PATCH` response 是強一致最新結果。`/chat` 回 `routines_updated=true` 時，App 應背景呼叫本 endpoint 取得最新定義／狀態。
 
 ### GET /routines?elder_id=&date=YYYY-MM-DD — 當日行程
 
@@ -426,17 +434,17 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 }
 ```
 
-`client_request_id` 必填。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行相同 scoped ID／相同 hash 回既有同一結果，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。對話建立的 routine 由 backend realtime rail 直接寫入，不呼叫此 API。
+`client_request_id` 與 `title` 必填，`title` 不得為空字串。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行或重送相同 scoped ID／相同 hash 同樣回 201 與既有物件，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。長者帳號呼叫回 403 `FORBIDDEN`。對話建立的 routine 由 Bedrock Agent tool calling 直接寫入，不呼叫此 API。
 
 ### PATCH /routines/{routine_id} — 修改／停用（照護者）
 
-必須含新的 `client_request_id`；除該欄位外，只可部分更新 `title`、`type`、`schedule`、`remind`、`active`。server-owned 或未知欄位一律回 400 `INVALID_PARAMETER`。停用範例：
+必須含新的 `client_request_id`；除該欄位外，只可部分更新 `title`、`type`、`schedule`、`remind`、`active`，且至少提供其中一項。server-owned 或未知欄位、以及未提供任何可更新欄位，一律回 400 `INVALID_PARAMETER`。停用範例：
 
 ```json
 { "client_request_id": "<uuid>", "active": false }
 ```
 
-Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_id + authenticated actor sub + client_request_id`，並保存正規化 request hash；後端以單一 transaction 驗證 scoped request、保護 current version、關閉舊版並建立唯一下一版。並行相同 scope/hash 回同一結果且不建立額外版本；同一 scope 搭配不同 hash 回 409 `IDEMPOTENCY_CONFLICT`。
+Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_id + authenticated actor sub + client_request_id`，並保存正規化 request hash；後端以單一 transaction 驗證 scoped request、保護 current version、關閉舊版並建立唯一下一版。並行相同 scope/hash 回同一結果且不建立額外版本；同一 scope 搭配不同 hash 回 409 `IDEMPOTENCY_CONFLICT`。並行的另一次修改先行改版、本次未成立時回 409 `REQUEST_IN_PROGRESS`，client 以同一 `client_request_id` 重試。長者帳號呼叫回 403 `FORBIDDEN`；`routine_id` 不存在回 404 `ROUTINE_NOT_FOUND`。
 
 ### POST /routines/{routine_id}/complete — 手動完成（兩端）
 
@@ -444,10 +452,11 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 { "date": "2026-07-14" }
 ```
 
-`date` 預設今天。後端寫 `source=manual` event，event `type` 必須沿用完成當時的 routine type；routine 表不保存完成狀態。Response 200 回該日 occurrence。
+`date` 預設今天，格式為 `YYYY-MM-DD`。後端寫 `source=manual` event，event `type` 必須沿用完成當時的 routine type；routine 表不保存完成狀態。Response 200 回該日單一 occurrence 物件，欄位與當日行程的 item 相同。
 
-- 指定日期無排程：400 `ROUTINE_NOT_SCHEDULED`。
-- 已完成：冪等回 200，不重複事件。若先前已由 conversation 完成，也命中同一 canonical occurrence event。
+- 指定日期無排程，或該日有效版本已停用：400 `ROUTINE_NOT_SCHEDULED`。
+- 已完成：冪等回 200，不重複事件。若先前已由 conversation 完成，也命中同一 canonical occurrence event，`completed_at`、`completed_by` 維持首次完成的結果。
+- `routine_id` 不存在：404 `ROUTINE_NOT_FOUND`。
 
 ---
 
@@ -478,7 +487,9 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 }
 ```
 
-`interaction_count` 一律是 `/chat` turn 數，不是 session 數。`today` 即時計算；`daily` 是前端近 N 日趨勢的逐日資料；`routines.by_routine` 只列期間內至少有一次排程的 routine。完成依 canonical events 計數。
+`elder_id` 必填；`days` 預設 7，可帶 1–31，超出範圍或非整數回 400 `INVALID_PARAMETER`。統計區間為台灣日界下含今天的最近 `days` 天，全部即時彙總，不讀每日摘要。
+
+`interaction_count` 一律是 `/chat` turn 數，不是 session 數，且只計已完成的 turn。`today` 即時計算，當日尚無互動時 `interaction_count` 為 0 並省略 `last_interaction_at`；`period.active_days` 是區間內有互動的天數。`daily` 是前端近 N 日趨勢的逐日資料，依日期遞增，區間內每天都有一筆，無資料的日期以 0 呈現。`routines.by_routine` 只列期間內至少有一次排程的 routine，依 `routine_id` 排序：`total` 是該 routine 在區間內的 occurrence 數（含 pending 與 missed），`completed` 是其中已完成數，`title` 取區間內最新一次排程採用的版本。完成依 canonical events 計數，occurrence 的收斂與 `missed` 判定與當日行程同一套規則。
 
 ---
 
@@ -487,7 +498,7 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 | 方法與路徑 | 用途 | 使用者 |
 |---|---|---|
 | `POST /chat` | realtime 對話（text/audio） | 長者 |
-| `POST /chat/sessions/{session_id}/close` | 冪等關閉 session、啟動離線 materialization | 長者本人 |
+| `POST /chat/sessions/{session_id}/close` | 明確關閉 session（雙管道：API 即時 + EventBridge 收斂） | 長者本人 |
 | `GET /elders` | 長者列表 | 兩端 |
 | `GET /elders/{id}` | 長者單筆 | 兩端 |
 | `POST /elders` | 建立長者 | 照護者 |

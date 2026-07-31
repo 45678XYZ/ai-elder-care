@@ -231,6 +231,10 @@ operator 打錯的設定會被靜默忽略，實際生效的東西與他以為�
 也就是說**預設只有客語 mock 能出結果**。要開通任何實體模型，必須在
 `ASR_CONFIG_JSON` 明確填上 production gate 的五項核准。
 
+這個預設只供測試與明確的本機開發使用。Terraform 部署永遠注入明確設定；endpoint
+關閉時兩條 production route 都停用，因此 `zh-TW`／`hak` 都回 `route_not_approved`，
+不會在 production 使用 `hak_mock`。
+
 ### 選擇要用哪個模型
 
 **在 CE 與 Formo 之間選、換主力／備援順序、調併發**：純設定，改 `ASR_CONFIG_JSON`
@@ -266,7 +270,9 @@ Formo 客語備援）與 target-tracking autoscaling，供 `ProviderKind.REMOTE_
 
 ## 9. 執行環境與依賴
 
-- 執行期依賴：`boto3`、`pydantic`（見 `pyproject.toml`）。
+- 執行期依賴：`boto3`、`pydantic`、`numpy`、`soundfile`、`av`（見
+  `pyproject.toml` 與部署用 `requirements.txt`）。後三者只負責音訊解碼、
+  downmix 與 resample，不包含模型推論。
 - 開發期工具：`pytest`、`hypothesis`（`pip install -e ".[dev]"`）。
 - 容器開發環境：`asr-lambda/environment.yml` 建立的 `asr-model` conda 環境。
 - 測試：`python -m pytest tests/asr -q`；不連網（`conftest.py` 阻斷 socket）、

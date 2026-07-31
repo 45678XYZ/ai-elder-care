@@ -1,0 +1,42 @@
+{
+  "version": "high-level-types-1.0.0",
+  "description": "對外的高階事件類別，與 docs/api.md 的 EventType 及 daily_summaries.sections 一一對應。順序即為摘要呈現順序。",
+  "default_type": "other",
+  "types": [
+    {
+      "id": "diet",
+      "display_name": "飲食",
+      "description": "正餐、點心、飲水與食慾、吞嚥相關的攝食行為"
+    },
+    {
+      "id": "activity",
+      "display_name": "活動",
+      "description": "涉及身體動作的日常活動，含行走、移位、運動與個人照顧"
+    },
+    {
+      "id": "sleep",
+      "display_name": "睡眠",
+      "description": "入睡、睡眠維持、睡眠品質與白天小睡"
+    },
+    {
+      "id": "medication",
+      "display_name": "用藥",
+      "description": "按時服藥、漏服、藥物不良反應與外用照護處置"
+    },
+    {
+      "id": "wellbeing",
+      "display_name": "身心狀況",
+      "description": "身體症狀、生理量測數值、情緒與認知定向狀態"
+    },
+    {
+      "id": "safety",
+      "display_name": "安全事件",
+      "description": "跌倒、走失、詐騙與居家危害等需要照護者立即知悉的事件"
+    },
+    {
+      "id": "other",
+      "display_name": "其他",
+      "description": "無法歸入前六類者，含回診與約會等行程、家屬互動、媒體與消費等非身體活動"
+    }
+  ]
+}

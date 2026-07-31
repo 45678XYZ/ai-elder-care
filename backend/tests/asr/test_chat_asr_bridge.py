@@ -7,10 +7,13 @@ chat handler 與 ASR 領域套件的串接測試。
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import struct
 
+import boto3
 import pytest
+from moto import mock_aws
 
 from src.handlers import chat
 from src.shared.asr.composition import reset_asr_facade
@@ -24,24 +27,80 @@ from src.shared.asr_http import (
 
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch: pytest.MonkeyPatch):
+    """使用 main 的真實 turn/session 狀態機，ASR bridge 測試不得繞過 DynamoDB。"""
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("TABLE_CONVERSATIONS", "conversations-asr-test")
     reset_asr_facade()
     monkeypatch.delenv("ASR_CONFIG_JSON", raising=False)
-    # Bedrock 與 TTS 以固定值替換：本測試只關心 ASR 段落。
-    monkeypatch.setattr(
-        chat, "invoke_agent_brain", lambda elder_id, transcript: ("回覆", False)
-    )
 
-    class _FakeEngine:
-        def synthesize(self, text: str) -> bytes:
-            return b"mp3"
+    with mock_aws():
+        boto3.resource("dynamodb").create_table(
+            TableName="conversations-asr-test",
+            KeySchema=[
+                {"AttributeName": "elder_id", "KeyType": "HASH"},
+                {"AttributeName": "record_id", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "elder_id", "AttributeType": "S"},
+                {"AttributeName": "record_id", "AttributeType": "S"},
+                {"AttributeName": "conversation_time_key", "AttributeType": "S"},
+                {"AttributeName": "session_state_key", "AttributeType": "S"},
+                {"AttributeName": "session_state_time_key", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "conversations-by-time",
+                    "KeySchema": [
+                        {"AttributeName": "elder_id", "KeyType": "HASH"},
+                        {
+                            "AttributeName": "conversation_time_key",
+                            "KeyType": "RANGE",
+                        },
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+                {
+                    "IndexName": "sessions-by-state",
+                    "KeySchema": [
+                        {"AttributeName": "session_state_key", "KeyType": "HASH"},
+                        {
+                            "AttributeName": "session_state_time_key",
+                            "KeyType": "RANGE",
+                        },
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        importlib.reload(importlib.import_module("src.shared.db"))
+        importlib.reload(importlib.import_module("src.shared.sessions"))
+        importlib.reload(importlib.import_module("src.shared.turns"))
+        importlib.reload(chat)
 
-    monkeypatch.setattr(
-        chat.TTSFactory, "get_tts_engine", staticmethod(lambda lang: _FakeEngine())
-    )
-    monkeypatch.setattr(
-        chat, "upload_audio_to_s3", lambda audio_bytes, conversation_id: "https://x"
-    )
-    yield
+        monkeypatch.setattr(
+            chat,
+            "invoke_agent_brain",
+            lambda elder_id, transcript: ("回覆", False, False),
+        )
+
+        class _FakeEngine:
+            def synthesize(self, text: str) -> bytes:
+                return b"mp3"
+
+        monkeypatch.setattr(
+            chat.TTSFactory, "get_tts_engine", staticmethod(lambda lang: _FakeEngine())
+        )
+        monkeypatch.setattr(
+            chat, "upload_audio_to_s3", lambda audio_bytes, conversation_id: "tts/test.mp3"
+        )
+        monkeypatch.setattr(
+            chat, "presign_audio", lambda object_key: "https://x" if object_key else None
+        )
+        yield
+
     reset_asr_facade()
 
 
@@ -149,7 +208,7 @@ def test_zh_tw_audio_is_fail_closed_as_internal_error() -> None:
     assert body["error"]["code"] == "INTERNAL_ERROR"
 
 
-def test_internal_diagnostic_message_is_not_exposed_to_caller(capsys) -> None:
+def test_internal_diagnostic_message_is_not_exposed_to_caller(caplog) -> None:
     """route_not_approved 的內部原因（含佈署細節）不得出現在 response。"""
     _status, body = call(audio_body(lang="zh-TW"))
 
@@ -157,7 +216,7 @@ def test_internal_diagnostic_message_is_not_exposed_to_caller(capsys) -> None:
     assert "capability gate" not in message
     assert "provider" not in message.lower()
     # 但必須留在伺服器日誌裡供排查
-    assert "ASR failed" in capsys.readouterr().out
+    assert "ASR failed" in caplog.text
 
 
 def test_unsupported_audio_format_is_rejected_as_invalid_parameter() -> None:

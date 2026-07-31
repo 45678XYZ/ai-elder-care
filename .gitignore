@@ -15,6 +15,7 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 *.egg-info/
+backend/chroma_db/
 
 # --- Terraform ---
 terraform/.terraform/
@@ -52,3 +53,9 @@ build/
 # --- misc ---
 .DS_Store
 .env
+
+# --- 本地端測試與 Runner 產出 (Local Runner & Offline Pipeline) ---
+backend/local_runner/data/
+backend/local_runner/outputs/
+backend/local_runner/storage/
+.env.local

@@ -34,6 +34,10 @@ Lambda 只負責將正規化音訊傳送到 SageMaker、驗證 `{ "text": "..." 
 未經核准的路徑一律拒絕且不做任何外呼。預設安全狀態只允許 `hak_mock`；
 未完整設定或未核准的遠端路由必須回傳 `route_not_approved`，不可回落到任何模型。
 
+`default_config()` 的 `hak_mock` 僅供單元測試與明確的本機開發使用。Terraform 部署的
+Chat Lambda 即使 endpoint 關閉，也會注入兩條 production route 都停用的明確設定；
+production 不會因 `ASR_CONFIG_JSON` 為空而啟用 mock。
+
 ### 唯一設定來源
 
 `ASR_CONFIG_JSON` 是 Lambda 唯一的 ASR 設定來源。不保留分散的 endpoint、裝置、
@@ -161,6 +165,9 @@ Terraform 從 endpoint 名稱、allowed providers、routing 和 gates 組裝此 
 
 Terraform 組裝 `ASR_CONFIG_JSON` 並注入 Chat Lambda 的環境變數。
 同時附加 resource-scoped `sagemaker:InvokeEndpoint` IAM policy。
+
+`asr_enable_endpoints=false` 時仍注入 production-disabled JSON，`zh-TW`／`hak` 都會
+fail closed 且不外呼；只有明確啟用 endpoint 並通過模型核准閘門後才可導流。
 
 建立 endpoint 與核准模型是兩個獨立條件。模型目錄或個別 ADR 顯示未核准時，
 即使 endpoint 資源存在，Lambda 仍不得建立 remote provider 或執行外呼。

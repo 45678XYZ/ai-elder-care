@@ -1,20 +1,26 @@
 """backend/src/shared/models.py Pydantic Models 單元測試。"""
 
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
 from src.shared.models import (
+    SUMMARY_SECTION_KEYS,
     ConversationCreate,
-    ConversationResponse,
+    DailySummaryCreate,
     DailySummaryResponse,
     ElderCreate,
     ElderResponse,
     ElderUpdate,
     EventCreate,
     EventResponse,
+    EventType,
     FamilyMember,
+    RoutineComplete,
     RoutineCreate,
-    RoutineResponse,
+    RoutineDefinition,
+    RoutineOccurrence,
     RoutineSchedule,
     RoutineUpdate,
 )
@@ -91,72 +97,25 @@ def test_elder_response_model():
 
 
 def test_conversation_create_model():
-    """測試 ConversationCreate 模型長者發話 vs 系統主動提醒模式、雙語音與三階段時間戳記。"""
-    # 模式 1: 長者主動發話
+    """測試 ConversationCreate 模型長者發話單一模式與核心欄位。"""
     cc_elder = ConversationCreate(
         elder_id="eld_001",
+        session_id="ses_01J8",
         elder_transcript="我吃過血壓藥了",
         ai_respond_text="真棒！我幫你記下來了。",
-        elder_audio_s3_key="audio/eld_001/input_001.m4a",
-        ai_respond_audio_url="https://s3.amazonaws.com/reply.mp3",
+        ai_respond_audio_s3_key="tts/cnv_001.mp3",
         elder_received_at="2026-07-24T17:30:00+08:00",
         ai_responded_at="2026-07-24T17:30:01+08:00",
     )
-    assert cc_elder.source == "elder_initiated"
-    assert cc_elder.user_status == "replied"
-    assert cc_elder.system_status == "success"
-    assert cc_elder.ai_prompt_text is None
+    assert cc_elder.session_id == "ses_01J8"
     assert cc_elder.elder_transcript == "我吃過血壓藥了"
-    assert cc_elder.ai_prompt_audio_url is None
-    assert cc_elder.elder_audio_s3_key == "audio/eld_001/input_001.m4a"
-    assert cc_elder.ai_respond_audio_url == "https://s3.amazonaws.com/reply.mp3"
+    assert cc_elder.ai_respond_text == "真棒！我幫你記下來了。"
+    assert cc_elder.ai_respond_audio_s3_key == "tts/cnv_001.mp3"
     assert cc_elder.elder_received_at == "2026-07-24T17:30:00+08:00"
     assert cc_elder.ai_responded_at == "2026-07-24T17:30:01+08:00"
 
-    # 模式 2: 系統主動提醒（長者逾時無回應）
-    cc_sys_no_resp = ConversationCreate(
-        elder_id="eld_001",
-        source="system_routine_inquiry",
-        user_status="no_response",
-        routine_id="rtn_001",
-        ai_prompt_text="阿蘭嬤，吃血壓藥時間到了喔！",
-        ai_prompt_audio_url="https://s3.amazonaws.com/prompt_rtn001.mp3",
-        prompt_sent_at="2026-07-24T17:00:00+08:00",
-    )
-    assert cc_sys_no_resp.source == "system_routine_inquiry"
-    assert cc_sys_no_resp.user_status == "no_response"
-    assert cc_sys_no_resp.elder_transcript is None
-    assert cc_sys_no_resp.ai_prompt_text == "阿蘭嬤，吃血壓藥時間到了喔！"
-    assert cc_sys_no_resp.ai_prompt_audio_url == "https://s3.amazonaws.com/prompt_rtn001.mp3"
-    assert cc_sys_no_resp.prompt_sent_at == "2026-07-24T17:00:00+08:00"
-
-    # 模式 3: 系統處理失敗紀錄
-    cc_failed = ConversationCreate(
-        elder_id="eld_001",
-        system_status="failed",
-        error_message="Polly TTS synthesis timeout",
-    )
-    assert cc_failed.system_status == "failed"
-    assert cc_failed.error_message == "Polly TTS synthesis timeout"
-
-
-def test_conversation_response_model():
-    """測試 ConversationResponse 完整結構。"""
-    cr = ConversationResponse(
-        conversation_id="cnv_999",
-        elder_id="eld_001",
-        created_at="2026-07-24T17:30:00+08:00",
-        elder_transcript="昨天睡得很好",
-        ai_respond_text="太棒了！保持規律作息喔。",
-        ai_respond_audio_url="https://s3.amazonaws.com/response.mp3",
-    )
-    assert cr.conversation_id == "cnv_999"
-    assert cr.elder_id == "eld_001"
-    assert cr.created_at == "2026-07-24T17:30:00+08:00"
-    assert cr.ai_respond_audio_url == "https://s3.amazonaws.com/response.mp3"
-
-
 def test_event_models():
+
     """測試 EventCreate 與 EventResponse 模型。"""
     ec = EventCreate(
         elder_id="eld_001",
@@ -182,13 +141,51 @@ def test_event_models():
     assert er.type == "medication"
 
 
+def test_event_create_accepts_safety_type_and_taxonomy_fields():
+    """safety 為第七個高階類別；concept_id／taxonomy_version 為後端內部欄位。"""
+    ec = EventCreate(
+        elder_id="eld_001",
+        ts="2026-07-25T18:20:00.000+08:00",
+        type="safety",
+        concept_id="UCO.StatusOutcome.SafetyIncident.FallEvent",
+        taxonomy_version="uco-1.0.0",
+        detail="在浴室滑倒，沒有受傷",
+        canonical_event_key="2026-07-25#SLOT_1800#長者#浴室滑倒",
+    )
+    assert ec.type == "safety"
+    assert ec.concept_id == "UCO.StatusOutcome.SafetyIncident.FallEvent"
+    assert ec.taxonomy_version == "uco-1.0.0"
+
+    # concept_id／taxonomy_version 不屬於對外回應欄位
+    assert "concept_id" not in EventResponse.model_fields
+    assert "taxonomy_version" not in EventResponse.model_fields
+
+
+def test_event_create_rejects_unknown_type():
+    """未在高階類別內的值必須被擋下，避免繞過分類映射直接寫入。"""
+    with pytest.raises(ValidationError):
+        EventCreate(
+            elder_id="eld_001",
+            ts="2026-07-25T09:05:00+08:00",
+            type="fall",
+            detail="跌倒",
+        )
+
+
+def test_summary_section_keys_match_event_type():
+    """sections 的 key 集合必須等於 EventType，避免兩邊走鐘。"""
+    assert SUMMARY_SECTION_KEYS == get_args(EventType)
+    assert SUMMARY_SECTION_KEYS[-1] == "other"
+
+
 def test_daily_summary_model():
     """測試 DailySummaryResponse 模型。"""
     ds = DailySummaryResponse(
         elder_id="eld_001",
         date="2026-07-25",
         overview="今日狀態良好，有按時用藥。",
-        sections={"medication": "已服用血壓藥", "diet": "三餐正常", "activity": None, "sleep": None, "wellbeing": None, "other": None},
+        sections={key: None for key in SUMMARY_SECTION_KEYS}
+        | {"medication": "已服用血壓藥", "diet": "三餐正常"},
         routines={"completed": 1, "missed": 0, "items": []},
         alerts=[],
         generated_at="2026-07-25T20:00:00+08:00",
@@ -196,10 +193,13 @@ def test_daily_summary_model():
     assert ds.elder_id == "eld_001"
     assert ds.data_status == "complete"
     assert ds.sections["medication"] == "已服用血壓藥"
+    # sections 與 EventType 一一對應，新增高階類別時此斷言會擋住漏改的 section
+    assert set(ds.sections) == set(get_args(EventType))
+    assert "safety" in ds.sections
 
 
 def test_routine_models():
-    """測試 RoutineSchedule, RoutineCreate, RoutineUpdate, RoutineResponse 模型。"""
+    """測試 RoutineSchedule, RoutineCreate, RoutineUpdate 與兩種 Response 模型。"""
     sched = RoutineSchedule(freq="daily", time="09:00")
     rc = RoutineCreate(
         client_request_id="uuid_123",
@@ -215,15 +215,101 @@ def test_routine_models():
     assert ru.active is False
     assert ru.title is None
 
-    rr = RoutineResponse(
+    rd = RoutineDefinition(
         routine_id="rtn_001",
         elder_id="eld_001",
         title="吃血壓藥",
         type="medication",
         schedule={"freq": "daily", "time": "09:00"},
+        created_at="2026-07-25T10:00:00+08:00",
+    )
+    assert rd.routine_id == "rtn_001"
+    assert rd.active is True
+
+    ro = RoutineOccurrence(
+        routine_id="rtn_001",
+        title="吃血壓藥",
+        type="medication",
+        scheduled_at="2026-07-25T09:00:00+08:00",
         status="done",
         completed_at="2026-07-25T09:05:00+08:00",
     )
-    assert rr.routine_id == "rtn_001"
-    assert rr.status == "done"
+    assert ro.status == "done"
+    # 未完成的 occurrence 不帶完成欄位
+    assert "completed_by" not in ro.model_dump(exclude_none=True)
+
+
+def test_routine_schedule_validation():
+    """測試 schedule 依 freq 的欄位規則與時間格式。"""
+    weekly = RoutineSchedule(freq="weekly", weekday=3, time="19:00")
+    assert weekly.weekday == 3
+
+    with pytest.raises(ValidationError):
+        RoutineSchedule(freq="weekly", time="19:00")  # 缺 weekday
+    with pytest.raises(ValidationError):
+        RoutineSchedule(freq="daily", weekday=3, time="19:00")  # daily 不該帶 weekday
+    with pytest.raises(ValidationError):
+        RoutineSchedule(freq="once", time="19:00")  # 缺 date
+    with pytest.raises(ValidationError):
+        RoutineSchedule(freq="daily", time="9:00")  # 時間格式錯
+
+
+def test_routine_request_models_reject_unknown_fields():
+    """server-owned 或未知欄位一律拒絕（docs/api.md）。"""
+    with pytest.raises(ValidationError):
+        RoutineCreate(
+            client_request_id="uuid_123",
+            elder_id="eld_001",
+            title="吃血壓藥",
+            schedule=RoutineSchedule(freq="daily", time="09:00"),
+            routine_id="rtn_偽造",
+        )
+    with pytest.raises(ValidationError):
+        RoutineUpdate(client_request_id="uuid_124", created_at="2026-07-25T10:00:00+08:00")
+    with pytest.raises(ValidationError):
+        RoutineComplete(date="2026/07/25")
+
+    assert RoutineComplete().date is None
+
+
+def test_daily_summary_models():
+    """測試 DailySummaryCreate (DB 寫入模型) 與 DailySummaryResponse (API 回應模型) 驗證與序列化。"""
+    sections = {key: None for key in SUMMARY_SECTION_KEYS}
+    sections["diet"] = "三餐正常"
+
+    dsc = DailySummaryCreate(
+        elder_id="eld_001",
+        date="2026-07-31",
+        overview="今日狀態良好",
+        sections=sections,
+        routines={"completed": 1, "missed": 0, "items": []},
+        alerts=[],
+        interaction_count=3,
+        data_status="complete",
+        pending_session_count=0,
+        input_through_at="2026-07-31T23:50:00+08:00",
+        generated_at="2026-07-31T23:50:05+08:00",
+    )
+    assert dsc.elder_id == "eld_001"
+    assert dsc.data_status == "complete"
+    assert dsc.sections["diet"] == "三餐正常"
+
+    dsr = DailySummaryResponse(
+        elder_id="eld_001",
+        date="2026-07-31",
+        overview="今日狀態良好",
+        sections=sections,
+        routines={"completed": 1, "missed": 0, "items": []},
+        alerts=[],
+        interaction_count=3,
+        data_status="complete",
+        pending_session_count=0,
+        generated_at="2026-07-31T23:50:05+08:00",
+    )
+    dumped = dsr.model_dump()
+    assert dumped["elder_id"] == "eld_001"
+    assert "input_through_at" not in dumped
+    assert "completeness_rank" not in dumped
+    assert dumped["sections"]["diet"] == "三餐正常"
+
 

@@ -11,15 +11,7 @@ variable "aws_region" {
 }
 
 # --- ASR 實體模型端點（見 asr_models.tf）---
-#
-# 預設 false：不建立任何 GPU 資源。這與後端 ASR 模組的 model production gate
-# 一致——模型未經人工核准前，程式層與基礎設施層都保持關閉。
-#
-# 啟用前置條件（fail-closed）：
-# 1. 兩個模型的 image URI 與 model-data URL 都必須提供
-# 2. artifact bucket 必須存在
-# 3. Formo 的方言 prompt 必須在 container deployment 中固定（Lambda 不傳送）
-# 4. 程式側 model production gate 5 項全部核准
+# 預設不建立 GPU 資源；啟用前必須備妥兩個模型的 image、artifact 與 Formo 部署 prompt。
 
 variable "asr_enable_endpoints" {
   description = "是否建立 ASR 推論端點。預設關閉，避免未驗證的模型產生 GPU 費用"
@@ -46,7 +38,7 @@ variable "asr_ce_model_data_url" {
 }
 
 variable "asr_ce_instance_type" {
-  description = "CE 端點的推論機型。CE 為 whisper-large-v2 微調（CTranslate2），需 GPU"
+  description = "CE 端點的推論機型"
   type        = string
   default     = "ml.g5.xlarge"
 }
@@ -58,7 +50,7 @@ variable "asr_ce_min_instances" {
 }
 
 variable "asr_ce_max_instances" {
-  description = "CE 端點最大實例數（依流量自動擴充上限）"
+  description = "CE 端點最大實例數"
   type        = number
   default     = 4
 }
@@ -75,8 +67,26 @@ variable "asr_formo_model_data_url" {
   default     = ""
 }
 
+variable "asr_formo_prompt_id" {
+  description = "固定在 Formo SageMaker container 部署設定的客語腔調 prompt ID"
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.asr_formo_prompt_id == "" || contains([
+      "htia_sixian",
+      "htia_hailu",
+      "htia_dapu",
+      "htia_raoping",
+      "htia_zhaoan",
+      "htia_nansixian",
+    ], var.asr_formo_prompt_id)
+    error_message = "asr_formo_prompt_id 必須是核准的六種客語腔調 prompt ID 之一。"
+  }
+}
+
 variable "asr_formo_instance_type" {
-  description = "Formo 端點的推論機型。Formo 約 20 億參數，記憶體需求高於 CE"
+  description = "Formo 端點的推論機型"
   type        = string
   default     = "ml.g5.2xlarge"
 }
@@ -97,4 +107,255 @@ variable "asr_target_invocations_per_instance" {
   description = "每個實例的目標每分鐘呼叫數；超過即向外擴充"
   type        = number
   default     = 20
+}
+
+# --- RAG（Bedrock Knowledge Base）---
+
+variable "kb_embedding_model_id" {
+  description = "Knowledge Base embedding 模型 ID（需先在 Bedrock console 開通 model access）"
+  type        = string
+  default     = "cohere.embed-multilingual-v3"
+}
+
+variable "kb_embedding_dimension" {
+  description = "Embedding 向量維度，需與 kb_embedding_model_id 的輸出維度一致"
+  type        = number
+  default     = 1024
+}
+
+variable "kb_chunk_max_tokens" {
+  description = "資料來源分塊大小（token 數）"
+  type        = number
+  default     = 300
+}
+
+variable "kb_chunk_overlap_percentage" {
+  description = "分塊重疊比例（%）"
+  type        = number
+  default     = 20
+}
+
+# --- 生活記錄事件萃取（Module B）---
+
+variable "bedrock_model_id" {
+  description = <<-EOT
+    萃取 pipeline 的主對話模型（Converse modelId 或 inference profile）。
+    預設走 Anthropic 在 Bedrock 的旗艦模型 + global cross-Region inference profile：
+    台灣沒有 Bedrock 區域，global CRIS 的可用性與吞吐優於綁單一區域。
+    要固定區域改成 us./apac. 前綴；要省成本改 Sonnet／Haiku。
+  EOT
+  type        = string
+  default     = "global.anthropic.claude-opus-4-6-v1:0"
+}
+
+variable "bedrock_classifier_model_id" {
+  description = "RAC 分類階段的模型；留空沿用 bedrock_model_id。schema 固定、輸出短，可換便宜模型"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_extractor_model_id" {
+  description = "single-pass 萃取階段的模型；留空沿用 bedrock_model_id。品質瓶頸在這一段，不建議降級"
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_chunker_model_id" {
+  description = "llm_prompt 分塊模式的模型；留空沿用 bedrock_model_id"
+  type        = string
+  default     = ""
+}
+
+variable "embedding_model_id" {
+  description = "概念檢索與 turn 切分使用的 embedding 模型"
+  type        = string
+  default     = "amazon.titan-embed-text-v2:0"
+}
+
+variable "embedding_dim" {
+  description = "embedding 維度；必須與向量索引建立時的維度一致"
+  type        = number
+  default     = 1024
+}
+
+variable "concept_vector_bucket" {
+  description = "S3 Vectors vector bucket 名稱（由 build_concept_vector_index.py 建立）"
+  type        = string
+  default     = "ai-elder-care-vectors"
+}
+
+variable "concept_vector_index" {
+  description = "概念向量索引名稱；帶模型與維度，換模型即換索引"
+  type        = string
+  default     = "uco-concepts-titan-v2-1024"
+}
+
+variable "event_slot_minutes" {
+  description = "canonical event key 的 Slot 粒度（分鐘）"
+  type        = number
+  default     = 30
+}
+
+variable "routine_grace_minutes" {
+  description = "occurrence 由 pending 轉 missed 的寬限（分鐘）；routines、摘要與統計共用"
+  type        = number
+  default     = 120
+}
+
+variable "chunker_type" {
+  description = "分塊策略：llm_prompt | embedding_depth | pairwise_v2"
+  type        = string
+  default     = "llm_prompt"
+}
+
+variable "extraction_mode" {
+  description = "萃取階段是否啟用硬約束 schema：prompt_guided | structured_output"
+  type        = string
+  default     = "prompt_guided"
+}
+
+variable "rac_top_k" {
+  description = "概念檢索回傳的候選節點數"
+  type        = number
+  default     = 14
+}
+
+variable "batch_lambda_timeout" {
+  description = "batch extractor 的 timeout（秒）；SQS visibility timeout 由此推導"
+  type        = number
+  default     = 300
+}
+
+variable "session_idle_minutes" {
+  description = "active session 閒置多久後由週期性 closer 收斂"
+  type        = number
+  default     = 10
+}
+
+variable "session_sweep_minutes" {
+  description = "session sweep 的執行間隔（分鐘）；應短於 batch lease"
+  type        = number
+  default     = 5
+}
+
+variable "session_max_turns" {
+  description = "單一 session 可接納的 turn 數上限；不得高於 100（close 驗證與 BatchGet 的單次上限）"
+  type        = number
+  default     = 100
+}
+
+variable "session_max_inflight_turns" {
+  description = "同時處理中的 turn 數上限；預設 1 讓 turn 按接納順序提交"
+  type        = number
+  default     = 1
+}
+
+variable "session_max_input_bytes" {
+  description = "單一 session 累計輸入位元組上限；避免 session item 逼近 DynamoDB 400 KB"
+  type        = number
+  default     = 200000
+}
+
+variable "request_lease_seconds" {
+  description = "/chat turn 的 request lease 長度（秒）；必須大於 chat Lambda 的 timeout"
+  type        = number
+  default     = 60
+}
+
+variable "api_throttle_rate_limit" {
+  description = "API Gateway stage 的每秒請求上限（防呆與成本上限，非效能調校）"
+  type        = number
+  default     = 50
+}
+
+variable "api_throttle_burst_limit" {
+  description = "API Gateway stage 的突發請求上限"
+  type        = number
+  default     = 100
+}
+
+variable "metrics_namespace" {
+  description = "EMF 指標的 CloudWatch namespace"
+  type        = string
+  default     = "AiElderCare/Extraction"
+}
+
+# --- 每日摘要（Module B，見 docs/feature_daily-summarization.md）---
+
+variable "summary_generator_version" {
+  description = "寫入 daily_summaries.generator_version 的版本戳記"
+  type        = string
+  default     = "summary-generator-1"
+}
+
+variable "bedrock_summary_model_id" {
+  description = "摘要生成階段的模型；留空沿用 bedrock_model_id"
+  type        = string
+  default     = ""
+}
+
+variable "summary_alert_lookback_days" {
+  description = "alerts 判斷跨日趨勢時回看的天數（含當日）；設 1 等於停用跨日線索"
+  type        = number
+  default     = 7
+}
+
+variable "summary_max_events" {
+  description = "進 prompt 的當日事件數上限；防萃取異常時 prompt 無上限成長"
+  type        = number
+  default     = 120
+}
+
+variable "summary_wait_minutes" {
+  description = <<-EOT
+    partial 摘要的重算等待窗口（分鐘）。超過就停止重算：batch 卡在 failed 是 DLQ
+    reconciler 與告警的責任，不該讓摘要無限重算燒模型費用。
+  EOT
+  type        = number
+  default     = 180
+}
+
+variable "summary_nightly_cron" {
+  description = <<-EOT
+    每晚生成當日摘要的排程。EventBridge cron 一律 UTC，因此台灣時間要自己減 8 小時：
+    預設 15:50 UTC = 23:50+08:00，排在日界前讓照護者當晚就看得到當天摘要。
+  EOT
+  type        = string
+  default     = "cron(50 15 * * ? *)"
+}
+
+variable "summary_backfill_days" {
+  description = "backfill sweep 回看幾天的摘要（含當日）"
+  type        = number
+  default     = 2
+}
+
+variable "summary_backfill_minutes" {
+  description = "backfill sweep 的執行間隔（分鐘）；必須短於 summary_wait_minutes"
+  type        = number
+  default     = 30
+}
+
+variable "summary_sweep_limit" {
+  description = "單次 sweep 處理的長者數上限，避免 Lambda 超時"
+  type        = number
+  default     = 50
+}
+
+variable "summary_lambda_timeout" {
+  description = "api_summaries 的 timeout（秒）；POST /summaries/generate 會同步呼叫模型"
+  type        = number
+  default     = 60
+}
+
+variable "summary_generator_timeout" {
+  description = "排程 summary_generator 的 timeout（秒）；一次跑多位長者"
+  type        = number
+  default     = 600
+}
+
+variable "summary_partial_alarm_threshold" {
+  description = "每小時 partial 摘要數超過此值且連續三小時即告警（batch 可能卡住）"
+  type        = number
+  default     = 10
 }

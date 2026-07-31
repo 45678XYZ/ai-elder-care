@@ -36,9 +36,10 @@ check "asr_endpoints_require_all_parameters" {
       var.asr_ce_model_data_url != "" &&
       var.asr_formo_image_uri != "" &&
       var.asr_formo_model_data_url != "" &&
+      var.asr_formo_prompt_id != "" &&
       var.asr_model_artifact_bucket != ""
     )
-    error_message = "啟用 ASR 端點（asr_enable_endpoints = true）時，必須同時提供 asr_ce_image_uri、asr_ce_model_data_url、asr_formo_image_uri、asr_formo_model_data_url 與 asr_model_artifact_bucket。缺少任一參數即安全失敗。"
+    error_message = "啟用 ASR 端點時，必須同時提供 CE／Formo image、model data、Formo prompt ID 與 artifact bucket。"
   }
 }
 
@@ -185,6 +186,7 @@ resource "aws_sagemaker_model" "asr_formo" {
       ASR_MODEL_ID       = "formospeech/whisper-large-v3-taiwanese-hakka"
       ASR_MODEL_REVISION = "main"
       ASR_LANGUAGES      = "hak"
+      FORMO_PROMPT_ID    = var.asr_formo_prompt_id
     }
   }
 
@@ -311,4 +313,11 @@ resource "aws_iam_policy" "invoke_asr_endpoints" {
       ]
     }]
   })
+}
+
+resource "aws_iam_role_policy_attachment" "chat_asr_invoke" {
+  count = local.asr_endpoints_enabled
+
+  role       = aws_iam_role.lambda_backend_role.name
+  policy_arn = aws_iam_policy.invoke_asr_endpoints[0].arn
 }

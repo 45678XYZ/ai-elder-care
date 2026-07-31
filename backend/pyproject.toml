@@ -10,17 +10,28 @@ requires-python = ">=3.11"
 # 執行期依賴（Lambda 部署包依此安裝；boto3 為 Lambda 執行環境內建，本機開發需要）
 dependencies = [
   "boto3",
+  "numpy>=2.0",
   "pydantic",
+  "soundfile>=0.13",
+  "av>=14",
 ]
 
 [project.optional-dependencies]
 # 開發期工具，不進部署包：pip install -e ".[dev]"
+# moto 用於在本機驗證 DynamoDB 條件式寫入與 GSI 查詢，版本釘住避免行為隨版本漂移
 dev = [
   "pytest==8.3.5",
   "hypothesis==6.122.3",
+  "moto[dynamodb]==5.2.2",
+]
+# 離線訓練工作流（training/ 與 scripts/segmenter_v2_*.py）；不進 Lambda 部署包
+training = [
+  "scikit-learn>=1.5",
+  "numpy>=2.0",
 ]
 
 [tool.setuptools.packages.find]
+# 只收 src*：training/ 是離線工作流，不隨部署包出貨
 include = ["src*"]
 
 [tool.pytest.ini_options]
