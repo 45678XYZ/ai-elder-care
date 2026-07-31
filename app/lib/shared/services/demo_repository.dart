@@ -59,17 +59,33 @@ class DemoRepository implements CareRepository {
   Future<ChatReply> chat({
     required String elderId,
     required String lang,
-    required String text,
+    String? text,
+    String? audioBase64,
   }) async {
+    // 音檔那條 demo 轉錄不了——ASR 在後端，本機沒有任何東西聽得懂客語。畫面因此
+    // 會顯示這句說明而不是長輩真正說的話，那是誠實的：不知道就說不知道，
+    // 隨便編一句「今晡日食飽咧」會讓人以為辨識成功了。
+    if (audioBase64 != null && audioBase64.isNotEmpty) {
+      return ChatReply(
+        conversationId: 'cnv_demo${DateTime.now().millisecondsSinceEpoch}',
+        sessionId: _demoSessionId ??=
+            'ses_demo${DateTime.now().millisecondsSinceEpoch}',
+        transcript: '（示範資料：錄了 ${_approxKb(audioBase64)} KB 的音檔，但語音辨識在後端，這裡聽不懂）',
+        replyText: '我有收到你的聲音，不過現在還沒接上聽得懂的後端。',
+        replyAudioUrl: '',
+        routinesUpdated: false,
+      );
+    }
+
     // 行程比對先做，而且不受回覆文字影響：RAG PoC 沒開的時候，這條路仍然要能走完
     // ——不然「講完話 → 今日畫面自己打勾」在沒有任何後端的預覽環境裡永遠測不到。
-    final matched = await _matchCompletedRoutine(text);
-    final replyText = await _demoReplyText(text, matched);
+    final matched = await _matchCompletedRoutine(text ?? '');
+    final replyText = await _demoReplyText(text ?? '', matched);
     return ChatReply(
       conversationId: 'cnv_demo${DateTime.now().millisecondsSinceEpoch}',
       sessionId: _demoSessionId ??=
           'ses_demo${DateTime.now().millisecondsSinceEpoch}',
-      transcript: text,
+      transcript: text ?? '',
       replyText: replyText,
       // demo 沒有 TTS 音檔；畫面在網址為空時退回裝置端 TTS。
       replyAudioUrl: '',
@@ -79,6 +95,9 @@ class DemoRepository implements CareRepository {
 
   @override
   Future<void> closeChat() async => _demoSessionId = null;
+
+  /// base64 還原成大概幾 KB（每 4 個字元 3 bytes）。只是給人看的量級，不求精確。
+  static int _approxKb(String base64) => (base64.length * 3 ~/ 4) ~/ 1024;
 
   /// demo 的回覆文字：認出行程完成就回確認，否則問本機 RAG PoC，連不上才用罐頭句子。
   ///

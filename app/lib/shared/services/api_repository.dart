@@ -35,7 +35,8 @@ class ApiRepository implements CareRepository {
   Future<ChatReply> chat({
     required String elderId,
     required String lang,
-    required String text,
+    String? text,
+    String? audioBase64,
   }) async {
     var chat = _chat;
     // 換了長者或換了語言就重建：session 綁長者，lang 則決定後端 ASR/TTS 走哪一條，
@@ -44,7 +45,7 @@ class ApiRepository implements CareRepository {
       await closeChat();
       chat = _chat = ChatSession(api: _api, elderId: elderId, lang: lang);
     }
-    return chat.send(text: text);
+    return chat.send(text: text, audioBase64: audioBase64);
   }
 
   @override

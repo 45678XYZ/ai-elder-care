@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../shared/models/chat_reply.dart';
 import '../../shared/services/api_exception.dart';
+import '../../shared/services/audio_recorder_service.dart';
 import '../../shared/services/audio_service.dart';
 import '../../shared/services/care_repository.dart';
 import '../../shared/services/routine_sync.dart';
@@ -39,6 +40,9 @@ class _ChatScreenState extends State<ChatScreen>
   final _speech = SpeechService();
   final _audio = AudioService();
 
+  /// 客語用：裝置端 ASR 聽不懂客語，改錄音送後端辨識。
+  final _recorder = AudioRecorderService();
+
   /// listening／speaking 的脈動外環動畫（§8：600–900ms、可被 disableAnimations 關閉）。
   late final AnimationController _pulse;
 
@@ -65,6 +69,12 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// 沒聽懂時給長者的提示。內容固定，方便去重（連續失敗不重複洗版）。
   static const _notHeardHint = '我剛剛沒聽清楚，可以再說一次，或用打字。';
+
+  /// 客語那條在 transcript 回來之前，長輩泡泡先放這個。
+  ///
+  /// 用刪節號而不是留空字串：空泡泡在畫面上是一塊看不出用途的深色方塊，
+  /// 「⋯」讓長輩知道那是他剛講的話、正在處理。
+  static const _pendingElderBubble = '⋯';
 
   /// listening 已聆聽秒數。
   Timer? _listenTimer;
@@ -94,6 +104,9 @@ class _ChatScreenState extends State<ChatScreen>
     _pulse.dispose();
     _speech.cancel();
     _audio.dispose();
+    // 錄到一半離開畫面：音檔要丟掉，不是留在暫存區。語音屬個資（docs/pii.md），
+    // 而且那段話已經沒有人要了。
+    _recorder.dispose();
     // 離開對話畫面要關 session：凍結對話快照並啟動離線事件整理（api.md）。
     // 不 await——dispose 不能是 async，而這件事本來就不必擋住畫面收掉；
     // 萬一沒送到，後端的 idle closer 最終也會收斂它。
@@ -101,17 +114,24 @@ class _ChatScreenState extends State<ChatScreen>
     super.dispose();
   }
 
+  /// 這台裝置能不能用語音。兩種語言問的是不同的東西。
+  ///
+  /// 客語走錄音，所以要問**錄音**權限；問 `speech_to_text` 沒有意義——它初始化成功
+  /// 只代表裝置支援語音辨識，跟能不能錄音是兩件事，而客語根本不會用到它。
+  /// 反過來也一樣：華語裝置端辨識不通時，就算錄得到音也沒有用。
   Future<void> _initSpeech() async {
     var ok = false;
     try {
-      ok = await _speech.init(
-        // 辨識失敗對長者只有一種有用的說法：沒聽清楚，再說一次或改打字。
-        // 原始錯誤碼幫不上忙，但要留在歷史裡，長輩往回捲才知道哪一句沒進去。
-        onError: (_) {
-          if (!mounted) return;
-          _appendNotHeardHint();
-        },
-      );
+      ok = AppSession.instance.isHakka
+          ? await _recorder.hasPermission()
+          : await _speech.init(
+              // 辨識失敗對長者只有一種有用的說法：沒聽清楚，再說一次或改打字。
+              // 原始錯誤碼幫不上忙，但要留在歷史裡，長輩往回捲才知道哪一句沒進去。
+              onError: (_) {
+                if (!mounted) return;
+                _appendNotHeardHint();
+              },
+            );
     } catch (_) {
       ok = false; // 平台不支援或測試環境無外掛，退回打字備援
     }
@@ -147,11 +167,14 @@ class _ChatScreenState extends State<ChatScreen>
     _turnSeq++;
     setState(() => _conversationActive = false);
     await _speech.stop();
+    // 錄到一半按停止：整段丟掉而不是送出。長輩按停止的意思是「不要了」，
+    // 把半句話送去辨識並記進資料，跟他的意圖相反。
+    await _recorder.cancel();
     await _audio.stop();
     if (mounted) setState(() => _setPhase(_Phase.idle));
   }
 
-  /// 聆聽一句話；靜音斷句後拿到最終文字就送出。
+  /// 聆聽一句話；靜音斷句後拿到最終文字（華語）或音檔（客語）就送出。
   Future<void> _listenTurn() async {
     if (!_conversationActive || !_micAvailable) return;
     // 只清「正在辨識中」的暫存，不動 _messages——歷史要留著。
@@ -159,6 +182,8 @@ class _ChatScreenState extends State<ChatScreen>
       _setPhase(_Phase.listening);
       _question = '';
     });
+
+    if (AppSession.instance.isHakka) return _recordTurn();
 
     var handled = false; // 每輪只處理一次最終結果
     await _speech.listen(
@@ -171,22 +196,66 @@ class _ChatScreenState extends State<ChatScreen>
           if (q.isEmpty) {
             if (_conversationActive) _listenTurn();
           } else {
-            _handleQuestion(q, continueLoop: true);
+            _handleQuestion(text: q, continueLoop: true);
           }
         }
       },
     );
   }
 
-  /// 送問題到後端，顯示答案並唸出來；[continueLoop] 為 true 且迴圈開啟時唸完自動再聆聽。
-  Future<void> _handleQuestion(String question,
-      {required bool continueLoop}) async {
+  /// 客語：錄音送後端辨識。
+  ///
+  /// 與華語那條的差別不只是資料形態——**畫面上不會有逐字稿**。裝置端 ASR 邊聽邊給
+  /// 文字，錄音沒有；長輩說了什麼要等 `ChatReply.transcript` 回來才知道。所以聆聽
+  /// 期間泡泡區是空的，只有狀態文字與秒數在動（那個本來就有）。
+  Future<void> _recordTurn() async {
+    final started = await _recorder.start(onDone: _onRecordingDone);
+    if (!started && mounted) {
+      // 沒有麥克風權限。講清楚並停掉迴圈，不然它會一輪一輪空轉。
+      setState(() => _conversationActive = false);
+      _appendHint('需要麥克風才能聽您說話，請到手機設定開啟。');
+      setState(() => _setPhase(_Phase.idle));
+    }
+  }
+
+  /// 錄音自己停了（講完、沒開口、或到 60 秒上限）。
+  Future<void> _onRecordingDone(AudioRecorderStopReason reason) async {
+    final audio = await _recorder.stop();
+    if (!mounted) return;
+
+    // 一直沒開口：要講出來，否則長輩只看到「我在聽」忽然變回待機，不知道發生什麼事。
+    if (reason == AudioRecorderStopReason.noSpeech || audio == null) {
+      _appendHint(_notHeardHint);
+      if (_conversationActive) {
+        _listenTurn();
+      } else {
+        setState(() => _setPhase(_Phase.idle));
+      }
+      return;
+    }
+
+    await _handleQuestion(audioBase64: audio, continueLoop: true);
+  }
+
+  /// 送這一輪到後端，顯示答案並唸出來；[continueLoop] 為 true 且迴圈開啟時唸完自動再聆聽。
+  ///
+  /// [text] 與 [audioBase64] 擇一：華語送裝置端辨識好的文字，客語送音檔。
+  Future<void> _handleQuestion({
+    String? text,
+    String? audioBase64,
+    required bool continueLoop,
+  }) async {
     final seq = ++_turnSeq;
     await _speech.stop();
     // 問題定案，移進歷史；暫存的辨識文字清掉，避免同一句出現兩次。
+    //
+    // 音檔那條還不知道長輩說了什麼——泡泡先留白（`_pendingElderBubble`），等
+    // transcript 回來再補。先放一顆空泡泡而不是什麼都不放，是為了讓長輩看得到
+    // 「我剛才那句進去了」，畫面不會在思考期間完全空著。
+    final bubbleIndex = _messages.length;
     setState(() {
       _setPhase(_Phase.thinking);
-      _messages.add(_Message(isElder: true, text: question));
+      _messages.add(_Message(isElder: true, text: text ?? _pendingElderBubble));
       _question = '';
     });
     _scrollToBottom();
@@ -195,8 +264,19 @@ class _ChatScreenState extends State<ChatScreen>
       final reply = await CareRepo.instance.chat(
         elderId: AppSession.instance.selectedElderId ?? '',
         lang: AppSession.instance.isHakka ? 'hak' : 'zh-TW',
-        text: question,
+        text: text,
+        audioBase64: audioBase64,
       );
+
+      // 音檔那條的逐字稿由後端 ASR 給，回來才補上長輩那顆泡泡。
+      if (text == null &&
+          mounted &&
+          seq == _turnSeq &&
+          reply.transcript.trim().isNotEmpty &&
+          bubbleIndex < _messages.length) {
+        setState(() => _messages[bubbleIndex] =
+            _Message(isElder: true, text: reply.transcript));
+      }
 
       // 長輩用講的完成或新增了行程。重整不等回應也不擋這一輪對話——它只是背景把
       // 今日畫面與本地通知換成新的（見 RoutineSync），對話本身不該為它停下來。
@@ -247,7 +327,7 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _submitText(String raw) async {
     final q = raw.trim();
     if (q.isEmpty || _phase != _Phase.idle) return;
-    await _handleQuestion(q, continueLoop: false);
+    await _handleQuestion(text: q, continueLoop: false);
   }
 
   void _openTextInput() {
@@ -316,10 +396,12 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// 加一則「沒聽清楚」提示。連續失敗時不重複加，否則長輩會被同一句洗版。
-  void _appendNotHeardHint() {
-    if (_messages.isNotEmpty && _messages.last.text == _notHeardHint) return;
-    setState(() =>
-        _messages.add(const _Message(isElder: false, text: _notHeardHint)));
+  void _appendNotHeardHint() => _appendHint(_notHeardHint);
+
+  /// 加一則 AI 側的提示訊息；與上一則相同就不重複加。
+  void _appendHint(String message) {
+    if (_messages.isNotEmpty && _messages.last.text == message) return;
+    setState(() => _messages.add(_Message(isElder: false, text: message)));
     _scrollToBottom();
   }
 

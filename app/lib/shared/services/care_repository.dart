@@ -24,7 +24,11 @@ import 'demo_repository.dart';
 abstract interface class CareRepository {
   // ---- 對話（長者模式）----
 
-  /// `POST /chat` — 送一句話並取得 AI 回覆。
+  /// `POST /chat` — 送一句話並取得 AI 回覆。[text] 與 [audioBase64] 擇一。
+  ///
+  /// 兩條路對應兩種語言（framework.md）：華語由裝置端 ASR 轉好文字走 [text]，音檔不上傳；
+  /// 客語裝置端辨識不了，錄音走 [audioBase64] 交給後端 ASR。長輩實際說了什麼，
+  /// **音檔那條要看 [ChatReply.transcript]** ——App 自己不知道。
   ///
   /// `session_id` 與 `client_request_id` 由實作代管（見 [ChatSession]）：冪等鍵重送必須
   /// 沿用同一個值，那條規則不該散落在畫面裡。
@@ -35,7 +39,8 @@ abstract interface class CareRepository {
   Future<ChatReply> chat({
     required String elderId,
     required String lang,
-    required String text,
+    String? text,
+    String? audioBase64,
   });
 
   /// `POST /chat/sessions/{id}/close` — 結束目前對話 session。

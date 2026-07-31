@@ -90,7 +90,8 @@ class _FakeRepo implements CareRepository {
   Future<ChatReply> chat({
     required String elderId,
     required String lang,
-    required String text,
+    String? text,
+    String? audioBase64,
   }) async =>
       throw UnimplementedError();
 
