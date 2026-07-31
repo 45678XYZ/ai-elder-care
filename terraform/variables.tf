@@ -66,7 +66,7 @@ variable "bedrock_model_id" {
     要固定區域改成 us./apac. 前綴；要省成本改 Sonnet／Haiku。
   EOT
   type        = string
-  default     = "global.anthropic.claude-opus-4-6-v1:0"
+  default     = "global.anthropic.claude-opus-5"
 }
 
 variable "bedrock_classifier_model_id" {
