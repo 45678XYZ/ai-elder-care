@@ -8,6 +8,7 @@ import 'package:ai_elder_care/elder/screens/today_screen.dart';
 import 'package:ai_elder_care/elder/widgets/greeting_slot.dart';
 import 'package:ai_elder_care/shared/screens/role_select_screen.dart';
 import 'package:ai_elder_care/shared/services/calendar_tear_store.dart';
+import 'package:ai_elder_care/shared/services/care_repository.dart';
 import 'package:ai_elder_care/shared/services/lunar_date.dart';
 import 'package:ai_elder_care/shared/services/session_store.dart';
 import 'package:ai_elder_care/theme/app_theme.dart';
@@ -32,6 +33,9 @@ void main() {
     AppSession.instance
       ..elders = const []
       ..selectedElderId = null;
+    // 資料來源也要重來一份：demo 那個實作是有狀態的（停用的行程會留在記憶體裡），
+    // 沿用同一個實例的話，前一個測試停用掉的行程會出現在下一個測試的初始資料裡。
+    CareRepo.overrideWith(null);
   });
 
   /// 掛上畫面並等資料載完（DemoData 有刻意的延遲）。

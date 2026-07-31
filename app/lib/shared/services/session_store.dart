@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/caregiver.dart';
 import '../models/elder.dart';
-import 'demo_data.dart';
+import 'care_repository.dart';
 
 /// App 執行期的長者情境（Demo 用）。
 ///
@@ -110,7 +110,7 @@ class AppSession {
   /// 客語裝置端 ASR 不支援，走錄音送後端；華語走裝置端辨識。
   ///
   /// 順序與 [displayName] 一致、理由也一樣：[lang] 只有這個帳號自己走過 /setup 時
-  /// 才有值，而 [selectedElder] 目前是 [DemoData] 無條件灌進來的假名冊（永遠非 null、
+  /// 才有值，而未接後端時 [selectedElder] 是 demo 假名冊無條件灌進來的（永遠非 null、
   /// 永遠是 `zh-TW`）。原本的順序讓假名冊蓋過本人選的語言——長者選了客語也永遠判成華語。
   ///
   /// 目前還看不出後果：客語分流尚未實作（chat_screen 仍一律走華語迴圈），所以這是
@@ -124,7 +124,7 @@ class AppSession {
   ///
   /// 為什麼「自己填的」排在 [selectedElder] 前面：[elderNickname]／[elderName] 只有在
   /// **這個帳號自己走過 /setup** 時才有值（見 loadForAccount），也就是長者本人填的稱呼；
-  /// 而 [elders] 目前是 [DemoData] 無條件灌進來的假名冊（陳阿蘭／林金水），對長者帳號來說
+  /// 而未接後端時 [elders] 是 demo 假名冊無條件灌進來的（陳阿蘭／林金水），對長者帳號來說
   /// 那是別人的資料。原本的順序讓假名冊蓋過本人填的名字，長者不管改成什麼、登入後都被叫
   /// 「阿蘭嬤」。照護者帳號不受影響：他們不走 /setup，這兩個欄位是空的，照樣落到
   /// [selectedElder]（切換長輩才會跟著換稱呼）。
@@ -182,15 +182,14 @@ class AppSession {
   /// 確保 [me] 已載入並回傳；未登入時回 null（沒有帳號可以問「我是誰」）。
   ///
   /// 只在照護者模式呼叫——`GET /me` 對長者帳號回 403 `FORBIDDEN`。
-  ///
-  /// TODO: 後端上線後改為 `api.getMe()`，此處的 DemoData 一併移除。
   Future<Caregiver?> ensureMeLoaded() async {
     final cached = me;
     if (cached != null) return cached;
     // 登入時由 [loadForAccount] 帶進來的 Cognito `sub`。
+    // 真後端從 token 認人，sub 只有 demo 那條路用得到（見 CareRepository.me）。
     final sub = _accountId;
     if (sub == null) return null;
-    return me = await DemoData.me(sub: sub);
+    return me = await CareRepo.instance.me(sub: sub);
   }
 
   /// 連結一位照護者到這個長者帳號。已連結過的回 false，讓畫面能給出不同回饋。
@@ -216,11 +215,8 @@ class AppSession {
   }
 
   /// 載入長者清單並確保 [selectedElderId] 有效（沒選過或選的已不在清單時挑第一位）。
-  ///
-  /// TODO: 後端上線後改為 `api.getAllElders()`，此處的 DemoData 一併移除。
   Future<void> loadElders() async {
-    final page = await DemoData.elders();
-    elders = page.items;
+    elders = await CareRepo.instance.elders();
     if (elders.isEmpty) {
       selectedElderId = null;
       return;

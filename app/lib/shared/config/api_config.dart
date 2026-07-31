@@ -19,4 +19,19 @@ class ApiConfig {
     'API_BASE_URL',
     defaultValue: 'http://10.0.2.2:8000',
   );
+
+  /// 畫面的資料要走真後端還是 demo 假資料（見 `CareRepository`）。
+  ///
+  /// 預設 false——正式後端還沒部署，預設打真 API 會讓每一頁都是錯誤畫面。
+  /// 後端上線後用 `--dart-define=USE_BACKEND=true` 一次切換全部畫面：
+  ///
+  /// ```
+  /// flutter run --dart-define=API_BASE_URL=https://xxx.execute-api.ap-northeast-1.amazonaws.com \
+  ///             --dart-define=USE_BACKEND=true
+  /// ```
+  ///
+  /// 保留這個開關而不是直接把 demo 資料刪掉，是為了 demo 當天：真後端當場連不上時，
+  /// 不帶這個 flag 重開就能回到可以完整走完流程的假資料，不必改程式碼重新編譯邏輯。
+  static const bool useBackend =
+      bool.fromEnvironment('USE_BACKEND', defaultValue: false);
 }

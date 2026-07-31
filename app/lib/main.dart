@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'app_router.dart';
 import 'shared/services/auth_service.dart';
-import 'shared/services/demo_data.dart';
+import 'shared/services/care_repository.dart';
 import 'shared/services/notification_service.dart';
 import 'shared/services/session_store.dart';
 import 'theme/app_theme.dart';
@@ -41,8 +41,12 @@ Future<void> main() async {
 /// 失敗不擋任何流程——提醒排不上不該讓 App 起不來，下次啟動會再試一次。
 Future<void> syncReminders() async {
   try {
-    // TODO: 後端上線後改為 api.getRoutines(elderId: AppSession.instance.selectedElderId!)
-    final routines = await DemoData.routines();
+    // 提醒是排「某一位長輩」的行程，所以得先知道是誰；未登入或還沒有長者資料時
+    // 直接跳過，等使用者登入後由管理頁那條路重排。
+    await AppSession.instance.ensureEldersLoaded();
+    final elderId = AppSession.instance.selectedElderId;
+    if (elderId == null) return;
+    final routines = await CareRepo.instance.routines(elderId: elderId);
     await NotificationService.instance.syncRoutines(routines);
   } catch (_) {
     // 忽略：沒有提醒比起不了 App 好

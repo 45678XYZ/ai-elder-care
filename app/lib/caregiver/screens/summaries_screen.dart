@@ -2,7 +2,7 @@
 
 import '../../shared/models/daily_summary.dart';
 import '../../shared/models/api_page.dart';
-import '../../shared/services/demo_data.dart';
+import '../../shared/services/care_repository.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
@@ -40,24 +40,37 @@ class _SummariesScreenState extends State<SummariesScreen> {
 
   Future<ApiPage<DailySummary>> _fetch() async {
     await AppSession.instance.ensureEldersLoaded();
-    // TODO: 後端上線後改為 api.getSummaries(elderId: AppSession.instance.selectedElderId!)
-    return DemoData.summaries();
+    return CareRepo.instance
+        .summaries(elderId: AppSession.instance.selectedElderId!);
   }
 
   void _reload() => setState(_load);
 
   /// 手動生成（Demo 用）。§13：>300ms 要有可見 loading，成功要有明確回饋。
+  ///
+  /// 生成完重拉列表而不是直接把回傳的那筆塞進畫面：`POST /summaries/generate` 回的是
+  /// 單一物件，而這一頁顯示的是最近幾天的列表，重拉才能保證兩者一致。
   Future<void> _generate() async {
     setState(() => _generating = true);
     try {
-      // TODO: 後端上線後改為 api.generateSummary(elderId: ...)
-      await Future<void>.delayed(DemoData.latency);
+      await CareRepo.instance
+          .generateSummary(elderId: AppSession.instance.selectedElderId!);
       if (!mounted) return;
       _reload();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: AppColors.barDark,
           content: Text('已重新產生今日摘要', style: TextStyle(color: AppColors.onDark)),
+        ),
+      );
+    } catch (e) {
+      // 生成失敗要講出來：不講的話照護者會以為畫面上這份就是剛生成的最新結果。
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.barDark,
+          content: Text('產生摘要失敗：$e',
+              style: const TextStyle(color: AppColors.onDark)),
         ),
       );
     } finally {

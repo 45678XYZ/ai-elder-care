@@ -8,7 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../shared/models/caregiver.dart';
 import '../../shared/models/elder.dart';
 import '../../shared/models/routine.dart';
-import '../../shared/services/demo_data.dart';
+import '../../shared/services/care_repository.dart';
 import '../../shared/services/notification_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
@@ -49,8 +49,8 @@ class _EldersScreenState extends State<EldersScreen> {
 
   Future<List<Routine>> _fetch() async {
     await AppSession.instance.ensureEldersLoaded();
-    // TODO: 後端上線後改為 api.getRoutines(elderId: AppSession.instance.selectedElderId!)
-    final list = await DemoData.routines();
+    final list = await CareRepo.instance
+        .routines(elderId: AppSession.instance.selectedElderId!);
     _routines
       ..clear()
       ..addAll(list);
@@ -75,32 +75,43 @@ class _EldersScreenState extends State<EldersScreen> {
 
     // 冪等鍵：這一次新增從頭到尾用同一個值，重送不會建出第二筆。
     final clientRequestId = _uuid.v4();
-    // TODO: 後端上線後改為
-    //   api.createRoutine(clientRequestId: clientRequestId, fields: draft.toJson())
-    setState(() {
-      _routines.add(Routine(
-        routineId: 'rtn_${clientRequestId.substring(0, 8)}',
-        elderId: AppSession.instance.selectedElderId ?? DemoData.elderId,
-        title: draft.title,
-        type: draft.type,
-        schedule: draft.schedule,
-        remind: draft.remind,
-        createdBy: 'caregiver',
-        createdAt: DateTime.now(),
-      ));
-    });
+    final Routine created;
+    try {
+      created = await CareRepo.instance.createRoutine(
+        clientRequestId: clientRequestId,
+        elderId: AppSession.instance.selectedElderId!,
+        fields: draft.toJson(),
+      );
+    } catch (e) {
+      // 失敗不能靜悄悄：照護者會以為行程已經建好了，之後也不會再回來看一次。
+      if (mounted) _showError('新增行程失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    setState(() => _routines.add(created));
     // 行程變了就重排提醒，否則新增的項目要等下次啟動才會響
     unawaited(NotificationService.instance.syncRoutines(_routines));
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: AppColors.barDark,
-        content: Text('已新增「${draft.title}」',
+        content: Text('已新增「${created.title}」',
             style: const TextStyle(color: AppColors.onDark)),
       ),
     );
 
-    if (draft.remind) await _ensureNotificationPermission();
+    if (created.remind) await _ensureNotificationPermission();
+  }
+
+  /// 寫入失敗的統一提示。
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.barDark,
+        content: Text(message, style: const TextStyle(color: AppColors.onDark)),
+      ),
+    );
   }
 
   /// 勾了「要提醒」才問通知權限。
@@ -141,61 +152,59 @@ class _EldersScreenState extends State<EldersScreen> {
   ///
   /// 這是全 App 唯一能改語言的地方：介面文字一律華語、長者端不提供切換，
   /// 這個值只決定長輩說話與聽回覆走華語還是客語（客語裝置端無法辨識，改走錄音送後端）。
-  void _changeLang(Elder elder, String lang) {
+  Future<void> _changeLang(Elder elder, String lang) async {
     if (elder.langPreference == lang) return;
-    // TODO: 後端上線後改為
-    //   api.updateElder(elder.elderId, {'lang_preference': lang})
+
+    final Elder updated;
+    try {
+      updated = await CareRepo.instance
+          .updateElder(elder.elderId, {'lang_preference': lang});
+    } catch (e) {
+      if (mounted) _showError('切換語言失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    // 全 App 的長者資料只有 AppSession 一份，改完要就地換掉那一筆，
+    // 否則長者端的語音分流（AppSession.isHakka）讀到的還是舊值。
     final i = AppSession.instance.elders
-        .indexWhere((e) => e.elderId == elder.elderId);
+        .indexWhere((e) => e.elderId == updated.elderId);
     if (i < 0) return;
     setState(() {
       AppSession.instance.elders = [
         ...AppSession.instance.elders.sublist(0, i),
-        Elder(
-          elderId: elder.elderId,
-          name: elder.name,
-          nickname: elder.nickname,
-          birthYear: elder.birthYear,
-          gender: elder.gender,
-          langPreference: lang,
-          addressRegion: elder.addressRegion,
-          healthNotes: elder.healthNotes,
-          family: elder.family,
-          habitNote: elder.habitNote,
-          createdAt: elder.createdAt,
-          updatedAt: DateTime.now(),
-        ),
+        updated,
         ...AppSession.instance.elders.sublist(i + 1),
       ];
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: AppColors.barDark,
-        content: Text('已改為${lang == 'hak' ? '客語' : '華語'}，長輩下次說話時生效',
+        content: Text(
+            '已改為${updated.langPreference == 'hak' ? '客語' : '華語'}，長輩下次說話時生效',
             style: const TextStyle(color: AppColors.onDark)),
       ),
     );
   }
 
   /// 停用／啟用。PATCH 每次修改都要**新的** client_request_id（同值代表同一次修改）。
-  void _toggleActive(Routine r) {
-    // TODO: 後端上線後改為
-    //   api.updateRoutine(r.routineId, clientRequestId: _uuid.v4(), fields: {'active': !r.active})
-    final i = _routines.indexWhere((e) => e.routineId == r.routineId);
-    if (i < 0) return;
-    setState(() {
-      _routines[i] = Routine(
-        routineId: r.routineId,
-        elderId: r.elderId,
-        title: r.title,
-        type: r.type,
-        schedule: r.schedule,
-        remind: r.remind,
-        createdBy: r.createdBy,
-        active: !r.active,
-        createdAt: r.createdAt,
+  Future<void> _toggleActive(Routine r) async {
+    final Routine updated;
+    try {
+      updated = await CareRepo.instance.updateRoutine(
+        r.routineId,
+        clientRequestId: _uuid.v4(),
+        fields: {'active': !r.active},
       );
-    });
+    } catch (e) {
+      if (mounted) _showError('${r.active ? '停用' : '啟用'}失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    final i = _routines.indexWhere((e) => e.routineId == updated.routineId);
+    if (i < 0) return;
+    setState(() => _routines[i] = updated);
     // 停用要立刻讓提醒消失，不能等下次啟動
     unawaited(NotificationService.instance.syncRoutines(_routines));
   }
@@ -698,9 +707,8 @@ class _RoutineDraft {
   final RoutineSchedule schedule;
   final bool remind;
 
-  /// 送往 `POST /routines` 的欄位（`client_request_id` 由呼叫端另外帶）。
+  /// 送往 `POST /routines` 的欄位（`client_request_id` 與 `elder_id` 由呼叫端另外帶）。
   Map<String, dynamic> toJson() => {
-        'elder_id': AppSession.instance.selectedElderId,
         'title': title,
         'type': type,
         'schedule': schedule.toJson(),

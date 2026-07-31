@@ -26,6 +26,29 @@ class Routine {
   final bool active;
   final DateTime? createdAt;
 
+  /// 複製並覆寫部分欄位（對應 `PATCH /routines/{id}` 可改的那幾個）。
+  ///
+  /// [routineId]、[elderId]、[createdBy]、[createdAt] 刻意不開放覆寫：
+  /// 它們在 api.md 裡就不是 PATCH 可改的欄位。
+  Routine copyWith({
+    String? title,
+    String? type,
+    RoutineSchedule? schedule,
+    bool? remind,
+    bool? active,
+  }) =>
+      Routine(
+        routineId: routineId,
+        elderId: elderId,
+        title: title ?? this.title,
+        type: type ?? this.type,
+        schedule: schedule ?? this.schedule,
+        remind: remind ?? this.remind,
+        createdBy: createdBy,
+        active: active ?? this.active,
+        createdAt: createdAt,
+      );
+
   factory Routine.fromJson(Map<String, dynamic> json) => Routine(
         routineId: json['routine_id'] as String? ?? '',
         elderId: json['elder_id'] as String? ?? '',

@@ -39,6 +39,37 @@ class Elder {
   /// 後端只在成功變更時刷新；建立當下與 [createdAt] 相同。
   final DateTime? updatedAt;
 
+  /// 複製並覆寫部分欄位（對應 `PATCH /elders/{id}` 的部分更新語意）。
+  ///
+  /// 可為 null 的欄位省略時保留原值，**不提供「改成 null」**：api.md 的 PATCH 是
+  /// 部分更新，沒有清空單一欄位的語意，這裡也就不做得比契約更多。
+  Elder copyWith({
+    String? name,
+    String? nickname,
+    int? birthYear,
+    String? gender,
+    String? langPreference,
+    String? addressRegion,
+    List<String>? healthNotes,
+    List<FamilyMember>? family,
+    String? habitNote,
+    DateTime? updatedAt,
+  }) =>
+      Elder(
+        elderId: elderId,
+        name: name ?? this.name,
+        nickname: nickname ?? this.nickname,
+        birthYear: birthYear ?? this.birthYear,
+        gender: gender ?? this.gender,
+        langPreference: langPreference ?? this.langPreference,
+        addressRegion: addressRegion ?? this.addressRegion,
+        healthNotes: healthNotes ?? this.healthNotes,
+        family: family ?? this.family,
+        habitNote: habitNote ?? this.habitNote,
+        createdAt: createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+
   factory Elder.fromJson(Map<String, dynamic> json) => Elder(
         elderId: json['elder_id'] as String? ?? '',
         name: json['name'] as String? ?? '',

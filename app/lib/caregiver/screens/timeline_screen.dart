@@ -1,8 +1,8 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import '../../shared/models/life_event.dart';
 import '../../shared/models/api_page.dart';
-import '../../shared/services/demo_data.dart';
+import '../../shared/services/care_repository.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
@@ -49,8 +49,11 @@ class _TimelineScreenState extends State<TimelineScreen> {
 
   Future<ApiPage<LifeEvent>> _fetchFirstPage() async {
     await AppSession.instance.ensureEldersLoaded();
-    // TODO: 後端上線後改為 api.getEvents(elderId: ..., type: _filter?.name)
-    final page = await DemoData.events();
+    // `EventCategory` 的 name 與 api.md 的 `type` 字串一一對應，可直接當參數送。
+    final page = await CareRepo.instance.events(
+      elderId: AppSession.instance.selectedElderId!,
+      type: _filter?.name,
+    );
     _items
       ..clear()
       ..addAll(page.items);
@@ -65,8 +68,12 @@ class _TimelineScreenState extends State<TimelineScreen> {
     if (token == null || _loadingMore) return;
     setState(() => _loadingMore = true);
     try {
-      // 游標原樣帶回，不解析內容（api.md 共通分頁規則）
-      final page = await DemoData.events(nextToken: token);
+      // 游標原樣帶回，不解析內容；查詢條件必須與取得游標時完全一致（api.md 共通分頁規則）
+      final page = await CareRepo.instance.events(
+        elderId: AppSession.instance.selectedElderId!,
+        type: _filter?.name,
+        nextToken: token,
+      );
       if (!mounted) return;
       setState(() {
         _items.addAll(page.items);
@@ -77,6 +84,20 @@ class _TimelineScreenState extends State<TimelineScreen> {
     }
   }
 
+  /// 換分類要整份重拉，不能只在本地篩已載入的那幾頁。
+  ///
+  /// 兩個理由：資料會長大，本地篩只會篩出「已載入範圍內的那一類」，看起來像少了紀錄；
+  /// 而且 `next_token` 綁著取得它的那組查詢條件，換了 `type` 還沿用舊游標是錯的。
+  void _changeFilter(EventCategory? c) {
+    if (_filter == c) return;
+    setState(() {
+      _filter = c;
+      _load();
+    });
+  }
+
+  /// 本地再篩一次：後端已依 `type` 過濾，這裡是為了未接後端時（demo 資料不吃 `type`）
+  /// 分類按鈕仍然有作用。兩邊同時成立，不會互相扣掉資料。
   List<LifeEvent> get _visible => _filter == null
       ? _items
       : _items.where((e) => EventCategory.fromType(e.type) == _filter).toList();
@@ -95,7 +116,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
             ),
             _FilterBar(
               selected: _filter,
-              onChanged: (c) => setState(() => _filter = c),
+              onChanged: _changeFilter,
             ),
             Expanded(
               child: AsyncView<ApiPage<LifeEvent>>(
@@ -107,8 +128,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
                 builder: (context, _) {
                   final events = _visible;
                   if (events.isEmpty) {
-                    return _NoMatch(
-                        onClear: () => setState(() => _filter = null));
+                    return _NoMatch(onClear: () => _changeFilter(null));
                   }
                   return ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),

@@ -2,7 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../../shared/models/stats.dart';
-import '../../shared/services/demo_data.dart';
+import '../../shared/services/care_repository.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
@@ -39,8 +39,8 @@ class _StatsScreenState extends State<StatsScreen> {
 
   Future<Stats> _fetch() async {
     await AppSession.instance.ensureEldersLoaded();
-    // TODO: 後端上線後改為 api.getStats(elderId: ..., days: 7)
-    return DemoData.stats();
+    return CareRepo.instance
+        .stats(elderId: AppSession.instance.selectedElderId!, days: 7);
   }
 
   void _reload() => setState(_load);

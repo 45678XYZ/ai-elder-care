@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/models/routine.dart';
-import '../../shared/services/demo_data.dart';
+import '../../shared/services/care_repository.dart';
 import '../../shared/services/lunar_date.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/services/taiwan_holiday.dart';
@@ -46,8 +46,17 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   void _load() {
-    // TODO: 後端上線後改為 api.getDailyRoutines(elderId: ..., date: ...)
-    _future = DemoData.dailyRoutines(_dateKey(DateTime.now()));
+    _future = _fetch();
+  }
+
+  Future<DailyRoutineView> _fetch() async {
+    final date = _dateKey(DateTime.now());
+    await AppSession.instance.ensureEldersLoaded();
+    final elderId = AppSession.instance.selectedElderId;
+    // 帳號還沒有對應的長者資料時回空清單，不丟錯：長者看到「今天沒有安排」是可理解的，
+    // 看到一頁錯誤訊息加重試鈕不是。真的缺資料由 router 的 /setup 那條路處理。
+    if (elderId == null) return DailyRoutineView(date: date);
+    return CareRepo.instance.dailyRoutines(elderId: elderId, date: date);
   }
 
   void _reload() => setState(_load);
@@ -62,8 +71,7 @@ class _TodayScreenState extends State<TodayScreen> {
     HapticFeedback.mediumImpact();
     setState(() => _justCompleted.add(o.routineId));
     try {
-      // TODO: 後端上線後改為 api.completeRoutine(o.routineId)
-      await DemoData.completeRoutine(o);
+      await CareRepo.instance.completeRoutine(o);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

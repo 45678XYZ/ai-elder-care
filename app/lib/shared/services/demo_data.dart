@@ -7,15 +7,16 @@ import '../models/routine.dart';
 import '../models/session_close.dart';
 import '../models/stats.dart';
 
-/// Demo 假資料——後端端點尚未實作時，讓畫面能做完並看見真實排版。
+/// Demo 假資料的**初始內容**——後端端點尚未實作時，讓畫面能做完並看見真實排版。
 ///
-/// 刻意回傳與 [ApiClient] **完全相同的型別**（`ApiPage<T>`、`DailyRoutineView`…），
-/// 所以之後把畫面裡的 `DemoData.xxx()` 換成 `api.xxx()` 即可，畫面本身不用改。
+/// 畫面不直接用這裡：一律走 `CareRepository`，由 `DemoRepository` 決定要不要拿這份
+/// 初始資料。回傳型別與 `ApiClient` **完全相同**（`ApiPage<T>`、`DailyRoutineView`…），
+/// 所以兩種資料來源對畫面而言沒有差別。
 ///
 /// 資料內容照 docs/api.md 的欄位與 enum，日期一律相對今天產生，
 /// 這樣 demo 當天不會出現「三個月前的紀錄」。
 ///
-/// TODO: 後端上線後整檔刪除，改由 ApiClient 供資料。
+/// TODO: 正式資料齊備後整檔連同 `DemoRepository` 刪除。
 abstract final class DemoData {
   /// 假的網路延遲：讓 loading 狀態真的會出現，不會一閃而過看不出有沒有做。
   static const latency = Duration(milliseconds: 400);
