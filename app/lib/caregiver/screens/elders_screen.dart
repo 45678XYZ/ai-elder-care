@@ -254,6 +254,35 @@ class _EldersScreenState extends State<EldersScreen> {
     _replaceElder(updated);
   }
 
+  /// 編輯生活習慣（`PATCH /elders/{id}` 的 `habit_note`）。
+  ///
+  /// **這個欄位對話中的 AI 也會寫**（`update_elder_profile` 的
+  /// `habit_note_to_append`，長輩講「我不吃牛肉」就會被接到字串後面）。
+  /// 這裡是整份取代，照護者按下儲存時若 AI 剛好補了一句，那句會被蓋掉。
+  ///
+  /// 前端解不掉：後端把它當一整段字串在拼，沒有 per-item 概念，做不到像
+  /// health_notes 那樣各碰各的。所以對話框裡明講這件事，讓照護者知道自己在
+  /// 覆寫整段——真正的修法是後端把生活習慣也拆成可單獨增刪的結構。
+  Future<void> _editHabitNote(Elder elder) async {
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => _HabitNoteDialog(initial: elder.habitNote ?? ''),
+    );
+    if (text == null || !mounted) return;
+
+    final Elder updated;
+    try {
+      updated = await CareRepo.instance
+          .updateElder(elder.elderId, {'habit_note': text});
+    } catch (e) {
+      if (mounted) _showError('儲存失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    _replaceElder(updated);
+  }
+
   /// 刪除一筆健康註記（`DELETE /elders/{id}/health_notes/{note_id}`）。
   ///
   /// 先問一次再刪：健康資訊刪掉之後照護者不會記得原本寫了什麼，而 AI 補上的那幾筆
@@ -408,6 +437,7 @@ class _EldersScreenState extends State<EldersScreen> {
                           onLangChanged: (lang) => _changeLang(elder, lang),
                           onAddNote: () => _addHealthNote(elder),
                           onRemoveNote: (n) => _removeHealthNote(elder, n),
+                          onEditHabit: () => _editHabitNote(elder),
                         ),
                       const SizedBox(height: AppSpacing.lg),
                       SectionHeader(
@@ -493,6 +523,7 @@ class _ElderProfileCard extends StatefulWidget {
     required this.onLangChanged,
     required this.onAddNote,
     required this.onRemoveNote,
+    required this.onEditHabit,
   });
 
   final Elder elder;
@@ -502,6 +533,7 @@ class _ElderProfileCard extends StatefulWidget {
 
   final VoidCallback onAddNote;
   final ValueChanged<HealthNote> onRemoveNote;
+  final VoidCallback onEditHabit;
 
   @override
   State<_ElderProfileCard> createState() => _ElderProfileCardState();
@@ -641,16 +673,21 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
           // 一半露在外面反而更亂，所以「新增」也一起收。
           _ProfileRow(
             label: '健康狀況',
-            trailing: TextButton(
-              onPressed: () => setState(() => _editing = !_editing),
-              style: TextButton.styleFrom(
-                minimumSize: const Size(48, 48),
-                padding: EdgeInsets.zero,
-                foregroundColor: AppColors.accentText,
+            // 卡片上有兩個「編輯」（另一個是生活習慣），tooltip 講清楚是哪一個——
+            // 讀螢幕的人只聽到兩次「編輯」會分不出來。
+            trailing: Tooltip(
+              message: _editing ? '完成編輯健康狀況' : '編輯健康狀況',
+              child: TextButton(
+                onPressed: () => setState(() => _editing = !_editing),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  padding: EdgeInsets.zero,
+                  foregroundColor: AppColors.accentText,
+                ),
+                child: Text(_editing ? '完成' : '編輯',
+                    style:
+                        text.labelSmall?.copyWith(color: AppColors.accentText)),
               ),
-              child: Text(_editing ? '完成' : '編輯',
-                  style:
-                      text.labelSmall?.copyWith(color: AppColors.accentText)),
             ),
             // 平時是緊湊的膠囊，按「編輯」才展開成一列一筆。
             // 膠囊排得下三四項而不會把卡片撐高，但塞不下刪除鈕與來源說明——
@@ -716,11 +753,29 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
             ),
             const SizedBox(height: AppSpacing.md),
           ],
-          if (elder.habitNote != null)
-            _ProfileRow(
-              label: '生活習慣',
-              child: Text(elder.habitNote!, style: text.bodyMedium),
+          // 空的時候也要留著這一列：原本 habitNote 為 null 就整列不見，等於連
+          // 「這裡可以填」都看不到——App 建立的長輩永遠是 null，那一列從來沒出現過。
+          _ProfileRow(
+            label: '生活習慣',
+            trailing: Tooltip(
+              message: '編輯生活習慣',
+              child: TextButton(
+                onPressed: widget.onEditHabit,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  padding: EdgeInsets.zero,
+                  foregroundColor: AppColors.accentText,
+                ),
+                child: Text('編輯',
+                    style:
+                        text.labelSmall?.copyWith(color: AppColors.accentText)),
+              ),
             ),
+            child: (elder.habitNote?.trim().isNotEmpty ?? false)
+                ? Text(elder.habitNote!, style: text.bodyMedium)
+                : Text('尚未填寫',
+                    style: text.bodySmall?.copyWith(color: AppColors.chevron)),
+          ),
         ],
       ),
     );
@@ -1002,6 +1057,71 @@ class _HealthNoteDialogState extends State<_HealthNoteDialog> {
           onPressed: _submit,
           style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
           child: const Text('新增'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 編輯生活習慣的輸入框。回傳去頭尾空白後的文字；取消回 null。
+///
+/// 允許存成空字串（等於清空）——`PATCH` 沒有把欄位改回 null 的語意，空字串是
+/// 契約內能表達「這裡沒東西」的方式。
+class _HabitNoteDialog extends StatefulWidget {
+  const _HabitNoteDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_HabitNoteDialog> createState() => _HabitNoteDialogState();
+}
+
+class _HabitNoteDialogState extends State<_HabitNoteDialog> {
+  late final _ctrl = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return AlertDialog(
+      backgroundColor: AppColors.cardAlt,
+      title: Text('生活習慣', style: text.titleMedium),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _ctrl,
+            autofocus: true,
+            style: text.bodyLarge,
+            minLines: 3,
+            maxLines: 6,
+            decoration: InputDecoration(
+              hintText: '例如：早睡早起，喜歡去公園散步',
+              hintStyle: text.bodyLarge?.copyWith(color: AppColors.chevron),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          // 存下去會覆寫整段，包含 AI 期間補上的內容——照護者有權知道
+          Text('※ AI 也會從長輩的對話補充這裡，儲存會覆蓋整段',
+              style: text.labelSmall?.copyWith(color: AppColors.chevron)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_ctrl.text.trim()),
+          style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
+          child: const Text('儲存'),
         ),
       ],
     );

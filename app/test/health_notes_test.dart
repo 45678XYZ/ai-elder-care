@@ -20,10 +20,12 @@ Finder _inDialog(String label) => find.descendant(
     );
 
 /// 進入健康狀況的編輯模式。增刪鈕平時是收起來的。
+///
+/// 用 tooltip 定位：卡片上還有生活習慣的「編輯」，找文字會抓到兩個。
 Future<void> _enterEdit(WidgetTester tester) async {
-  await tester.ensureVisible(find.text('編輯'));
+  await tester.ensureVisible(find.byTooltip('編輯健康狀況'));
   await tester.pump(const Duration(milliseconds: 300));
-  await tester.tap(find.text('編輯'));
+  await tester.tap(find.byTooltip('編輯健康狀況'));
   await tester.pump(const Duration(milliseconds: 300));
 }
 
@@ -103,7 +105,7 @@ void main() {
       await pumpManage(tester);
       await _enterEdit(tester);
 
-      await tester.tap(find.text('完成'));
+      await tester.tap(find.byTooltip('完成編輯健康狀況'));
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.byTooltip('刪除「高血壓」'), findsNothing);
