@@ -438,3 +438,71 @@
       "required": ["elder_id"]
     }
     ```
+
+## 4. 各工具回傳內容與系統影響 (Tool Impacts & Returns)
+
+為了確保 Bedrock Agent 能夠正確調用並理解各項工具的執行結果，以下整理 `tools.py` 內所有工具的「使用方式」、「回傳內容 (Return)」及「副作用/影響範圍 (Impacts)」：
+
+### 4.1 行程管理類 (Routine Management)
+
+#### `get_today_routines`
+*   **使用方式**：傳入 `elder_id` 與特定日期 (`date`)。
+*   **回傳內容**：`{"status": "success", "data": {...}}`，`data` 包含當日所有的例行行程與其完成狀態 (pending/done/missed)。
+*   **影響範圍**：無副作用 (唯讀)。主要影響大腦是否能正確提供當日的行程關懷。
+
+#### `complete_routine`
+*   **使用方式**：傳入 `elder_id`, `routine_id` 標記行程完成。
+*   **回傳內容**：`{"status": "success", "data": {...}}`，`data` 包含剛寫入的事件詳細內容。
+*   **影響範圍**：會寫入 `events` 表（紀錄 type=`routine_completion`）。這將導致 `get_recent_events` 查詢時出現該完成紀錄，並且會間接影響 `get_daily_summaries` 對於行程完成度的計算。
+
+#### `create_routine`
+*   **使用方式**：傳入標題、時間、頻率等來建立新行程。
+*   **回傳內容**：`{"status": "success", "data": {...}}`，回傳完整建立的 routine 項目，包含產生的 `routine_id`。
+*   **影響範圍**：寫入 `routines` 表。會補齊完整的防呆欄位（如 `schema_version`, `change_request_id`, `canonical_action_key`）。這會直接改變長者未來的行程，App 行事曆上將出現此新增項目。
+
+#### `update_routine`
+*   **使用方式**：傳入欲修改的 `routine_id` 及更動欄位（如 `time`, `title`, `active`, `remind`）。
+*   **回傳內容**：`{"status": "success", "data": {...}}`，回傳更新後的新版本。
+*   **影響範圍**：對 `routines` 表進行 Transaction 升版更新 (`is_current` 轉移)。會保留舊的建檔記錄，但未來日期的行程將依照新設定執行。
+
+#### `deactivate_routine`
+*   **使用方式**：傳入 `routine_id` 進行停用。
+*   **回傳內容**：同 `update_routine`，回傳停用後的新版本。
+*   **影響範圍**：透過底層 `_apply_routine_update` 設定 `"active": False`。停用後，未來日子將不再出現此行程，但歷史紀錄不受影響。
+
+#### `remind_pending_routines`
+*   **使用方式**：傳入 `elder_id` 查詢當日。
+*   **回傳內容**：`{"status": "success", "pending_count": int, "pending_routines": [...]}`。
+*   **影響範圍**：無副作用 (唯讀)。通常觸發於需要主動關懷長者是否忘記吃藥等情境。
+
+### 4.2 事件與摘要類 (Events & Summaries)
+
+#### `get_recent_events`
+*   **使用方式**：傳入 `elder_id` 與可選的 `event_type`。
+*   **回傳內容**：`{"status": "success", "count": int, "data": [...]}`。回傳最多 20 筆事件紀錄。
+*   **影響範圍**：無副作用 (唯讀)。
+
+#### `get_elder_profile`
+*   **使用方式**：僅需傳入 `elder_id`。
+*   **回傳內容**：`{"status": "success", "data": {...}}`，包含長輩性別、語言偏好、`health_notes`、`family`，以及修復後的 `habit_note`。
+*   **影響範圍**：無副作用 (唯讀)。大腦可藉此學習長輩的喜好並用於後續對話。
+
+#### `get_daily_summaries`
+*   **使用方式**：傳入 `elder_id` 與要回顧的 `days`（最高 7 天）。
+*   **回傳內容**：`{"status": "success", "count": int, "summaries": [...]}`。包含 overview、routines 執行率等。
+*   **影響範圍**：無副作用 (唯讀)。主要用於協助大腦追蹤長輩的連續性健康趨勢。
+
+#### `get_recent_conversations`
+*   **使用方式**：傳入 `elder_id` 與 `limit` (預設 8 句，最高 15 句)。
+*   **回傳內容**：`{"status": "success", "count": int, "turns": [{"time": "...", "elder": "...", "ai": "..."}, ...]}`。
+*   **影響範圍**：無副作用 (唯讀)。提供斷線或 Session 更換後的短期記憶恢復。
+
+### 4.3 安全與警報類 (Safety & Alerts)
+
+#### `notify_caregiver`
+*   **使用方式**：傳入 `category` ("emergency", "critical_escalation", "mitigation", "routine", "summary") 及通知訊息 `message`。
+*   **回傳內容**：`{"status": "success", "message_id": "...", "detail": "..."}`。若在冷卻期內，可能回傳 `"status": "throttled"`。
+*   **影響範圍**：
+    *   **Side-effect 1 (SNS 推播)**：將觸發 AWS SNS，實際發送 Email / SMS 給家屬。
+    *   **Side-effect 2 (資料庫寫入)**：若為 emergency/escalation/mitigation，會以 canonical key (`SAFETY#...`) 寫入 `events` 表，產生 `type=safety` 事件。
+    *   **Side-effect 3 (記憶體狀態鎖)**：影響 Lambda 內存的 `_emergency_state` 進行 5 分鐘的冷卻期鎖定，避免同一狀況重複洗版。
