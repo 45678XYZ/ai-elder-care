@@ -254,6 +254,82 @@ class _EldersScreenState extends State<EldersScreen> {
     _replaceElder(updated);
   }
 
+  /// 新增一位家屬。
+  ///
+  /// 家屬走 `PATCH` 整份取代就夠了，不像 health_notes 要另開單筆端點——
+  /// `update_elder_profile` 沒有寫 `family` 的參數（docs/llm_tools.md），
+  /// 這個欄位只有照護者在改，沒有併發覆蓋的問題。
+  Future<void> _addFamilyMember(Elder elder) async {
+    final member = await showDialog<FamilyMember>(
+      context: context,
+      builder: (ctx) => const _FamilyMemberDialog(),
+    );
+    if (member == null || !mounted) return;
+
+    await _saveFamily(elder, [...elder.family, member], '新增失敗');
+  }
+
+  /// 刪除一位家屬。
+  ///
+  /// `FamilyMember` 沒有 ID（api.md 的結構就是三個欄位），只能用位置指定。
+  /// 這裡沒有併發寫入，位置在送出前不會被別人推移。
+  Future<void> _removeFamilyMember(Elder elder, int index) async {
+    final member = elder.family[index];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardAlt,
+        title: Text('刪除「${member.name}」？',
+            style: Theme.of(ctx).textTheme.titleMedium),
+        content: Text(
+          '刪掉之後 AI 跟長輩聊天時不會再提到這位家人。',
+          style: Theme.of(ctx).textTheme.bodyLarge,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
+            child: const Text('刪除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final remaining = [
+      for (var i = 0; i < elder.family.length; i++)
+        if (i != index) elder.family[i],
+    ];
+    await _saveFamily(elder, remaining, '刪除失敗');
+  }
+
+  Future<void> _saveFamily(
+    Elder elder,
+    List<FamilyMember> family,
+    String errorPrefix,
+  ) async {
+    final Elder updated;
+    try {
+      updated = await CareRepo.instance.updateElder(
+        elder.elderId,
+        {
+          'family': [for (final m in family) m.toJson()]
+        },
+      );
+    } catch (e) {
+      if (mounted) _showError('$errorPrefix：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    _replaceElder(updated);
+  }
+
   /// 編輯生活習慣（`PATCH /elders/{id}` 的 `habit_note`）。
   ///
   /// **這個欄位對話中的 AI 也會寫**（`update_elder_profile` 的
@@ -438,6 +514,8 @@ class _EldersScreenState extends State<EldersScreen> {
                           onAddNote: () => _addHealthNote(elder),
                           onRemoveNote: (n) => _removeHealthNote(elder, n),
                           onEditHabit: () => _editHabitNote(elder),
+                          onAddFamily: () => _addFamilyMember(elder),
+                          onRemoveFamily: (i) => _removeFamilyMember(elder, i),
                         ),
                       const SizedBox(height: AppSpacing.lg),
                       SectionHeader(
@@ -524,6 +602,8 @@ class _ElderProfileCard extends StatefulWidget {
     required this.onAddNote,
     required this.onRemoveNote,
     required this.onEditHabit,
+    required this.onAddFamily,
+    required this.onRemoveFamily,
   });
 
   final Elder elder;
@@ -534,6 +614,10 @@ class _ElderProfileCard extends StatefulWidget {
   final VoidCallback onAddNote;
   final ValueChanged<HealthNote> onRemoveNote;
   final VoidCallback onEditHabit;
+  final VoidCallback onAddFamily;
+
+  /// 依位置刪除——`FamilyMember` 沒有 ID。
+  final ValueChanged<int> onRemoveFamily;
 
   @override
   State<_ElderProfileCard> createState() => _ElderProfileCardState();
@@ -545,6 +629,10 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
   /// 刪除鈕常態掛在每一筆上，卡片看起來像隨時準備刪東西，也容易誤觸——
   /// 那是破壞性動作，不該跟閱讀共用同一個畫面。
   bool _editing = false;
+
+  /// 家屬是否在編輯模式。與健康狀況各自獨立：兩個都展開會讓卡片變得很長，
+  /// 而照護者一次通常只在改一件事。
+  bool _editingFamily = false;
 
   /// 已經被這位照護者確認過的 AI 記錄（見 [HealthNoteAckStore]）。
   Set<String> _acked = const {};
@@ -734,25 +822,57 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
                       ),
           ),
           const SizedBox(height: AppSpacing.md),
-          if (elder.family.isNotEmpty) ...[
-            _ProfileRow(
-              label: '家屬',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final f in elder.family)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: Text(
-                        '${f.relation}　${f.name}${f.note == null ? '' : '（${f.note}）'}',
-                        style: text.bodyMedium,
-                      ),
-                    ),
-                ],
+          // 與健康狀況同一套：平時唯讀，按「編輯」才出現增刪。
+          _ProfileRow(
+            label: '家屬',
+            trailing: Tooltip(
+              message: _editingFamily ? '完成編輯家屬' : '編輯家屬',
+              child: TextButton(
+                onPressed: () =>
+                    setState(() => _editingFamily = !_editingFamily),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  padding: EdgeInsets.zero,
+                  foregroundColor: AppColors.accentText,
+                ),
+                child: Text(_editingFamily ? '完成' : '編輯',
+                    style:
+                        text.labelSmall?.copyWith(color: AppColors.accentText)),
               ),
             ),
-            const SizedBox(height: AppSpacing.md),
-          ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (elder.family.isEmpty && !_editingFamily)
+                  Text('尚未填寫',
+                      style:
+                          text.bodySmall?.copyWith(color: AppColors.chevron)),
+                for (var i = 0; i < elder.family.length; i++)
+                  _FamilyMemberRow(
+                    member: elder.family[i],
+                    editing: _editingFamily,
+                    onDelete: () => widget.onRemoveFamily(i),
+                  ),
+                if (_editingFamily)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: widget.onAddFamily,
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                        padding: EdgeInsets.zero,
+                        foregroundColor: AppColors.accentText,
+                      ),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: Text('新增一位',
+                          style: text.labelSmall
+                              ?.copyWith(color: AppColors.accentText)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
           // 空的時候也要留著這一列：原本 habitNote 為 null 就整列不見，等於連
           // 「這裡可以填」都看不到——App 建立的長輩永遠是 null，那一列從來沒出現過。
           _ProfileRow(
@@ -979,7 +1099,9 @@ class _HealthNoteRow extends StatelessWidget {
           iconSize: 18,
           color: AppColors.chevron,
           tooltip: '刪除「${note.text}」',
-          icon: const Icon(Icons.close),
+          // 用垃圾桶不用 ✕：這一按是真的刪掉資料，而 ✕ 在列表上常常是
+          // 「關閉」「收合」的意思，兩者的後果差很多。
+          icon: const Icon(Icons.delete_outline),
         ),
       ],
     );
@@ -1045,6 +1167,164 @@ class _HealthNoteDialogState extends State<_HealthNoteDialog> {
         decoration: InputDecoration(
           hintText: '例如：高血壓',
           hintStyle: text.bodyLarge?.copyWith(color: AppColors.chevron),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: _submit,
+          style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
+          child: const Text('新增'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 家屬的一列。編輯模式才顯示刪除。
+class _FamilyMemberRow extends StatelessWidget {
+  const _FamilyMemberRow({
+    required this.member,
+    required this.editing,
+    required this.onDelete,
+  });
+
+  final FamilyMember member;
+  final bool editing;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final label =
+        '${member.relation}　${member.name}${member.note == null || member.note!.isEmpty ? '' : '（${member.note}）'}';
+
+    if (!editing) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Text(label, style: text.bodyMedium),
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: Text(label, style: text.bodyMedium),
+          ),
+        ),
+        IconButton(
+          onPressed: onDelete,
+          // 照護者模式的觸控下限是 48dp（CLAUDE.md）
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          padding: EdgeInsets.zero,
+          iconSize: 18,
+          color: AppColors.chevron,
+          tooltip: '刪除「${member.name}」',
+          icon: const Icon(Icons.delete_outline),
+        ),
+      ],
+    );
+  }
+}
+
+/// 新增一位家屬的輸入框。關係與姓名必填，備註選填；取消回 null。
+class _FamilyMemberDialog extends StatefulWidget {
+  const _FamilyMemberDialog();
+
+  @override
+  State<_FamilyMemberDialog> createState() => _FamilyMemberDialogState();
+}
+
+class _FamilyMemberDialogState extends State<_FamilyMemberDialog> {
+  final _relationCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _noteCtrl = TextEditingController();
+
+  /// 缺必填時的提示。送出後才顯示，不要一打開就紅一片。
+  String? _error;
+
+  @override
+  void dispose() {
+    _relationCtrl.dispose();
+    _nameCtrl.dispose();
+    _noteCtrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final relation = _relationCtrl.text.trim();
+    final name = _nameCtrl.text.trim();
+    if (relation.isEmpty || name.isEmpty) {
+      setState(() => _error = '關係和姓名都要填');
+      return;
+    }
+    final note = _noteCtrl.text.trim();
+    Navigator.of(context).pop(FamilyMember(
+      relation: relation,
+      name: name,
+      note: note.isEmpty ? null : note,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return AlertDialog(
+      backgroundColor: AppColors.cardAlt,
+      title: Text('新增家屬', style: text.titleMedium),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _relationCtrl,
+              autofocus: true,
+              style: text.bodyLarge,
+              textInputAction: TextInputAction.next,
+              decoration: InputDecoration(
+                labelText: '關係',
+                hintText: '例如：兒子',
+                hintStyle: text.bodyLarge?.copyWith(color: AppColors.chevron),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: _nameCtrl,
+              style: text.bodyLarge,
+              textInputAction: TextInputAction.next,
+              decoration: InputDecoration(
+                labelText: '姓名',
+                hintText: '例如：陳志明',
+                hintStyle: text.bodyLarge?.copyWith(color: AppColors.chevron),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: _noteCtrl,
+              style: text.bodyLarge,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: '備註（選填）',
+                hintText: '例如：在台北工作，每週三來訪',
+                hintStyle: text.bodyLarge?.copyWith(color: AppColors.chevron),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(_error!,
+                  style:
+                      text.labelSmall?.copyWith(color: AppColors.accentText)),
+            ],
+          ],
         ),
       ),
       actions: [

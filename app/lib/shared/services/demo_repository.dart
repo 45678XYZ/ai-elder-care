@@ -249,12 +249,23 @@ class DemoRepository implements CareRepository {
     final i = list.indexWhere((e) => e.elderId == elderId);
     if (i < 0) throw StateError('demo 資料裡沒有這位長者：$elderId');
 
+    // `family` 與 `health_notes` 在 PATCH 的語意是整份取代（api.md）；沒帶就不動。
+    final rawFamily = fields['family'] as List<dynamic>?;
+    final rawNotes = fields['health_notes'];
+
     final updated = list[i].copyWith(
       name: fields['name'] as String?,
       nickname: fields['nickname'] as String?,
       langPreference: fields['lang_preference'] as String?,
       addressRegion: fields['address_region'] as String?,
       habitNote: fields['habit_note'] as String?,
+      family: rawFamily == null
+          ? null
+          : [
+              for (final f in rawFamily)
+                if (f is Map<String, dynamic>) FamilyMember.fromJson(f),
+            ],
+      healthNotes: rawNotes == null ? null : _healthNotes(rawNotes),
       updatedAt: DateTime.now(),
     );
     list[i] = updated;

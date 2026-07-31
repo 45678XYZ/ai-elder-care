@@ -160,4 +160,13 @@ class FamilyMember {
         name: json['name'] as String? ?? '',
         note: json['note'] as String?,
       );
+
+  /// 送 `PATCH /elders/{id}` 的 `family` 時用。
+  ///
+  /// 空的 note 不送，讓後端保持它自己的預設，不要塞一個空字串進去。
+  Map<String, dynamic> toJson() => {
+        'relation': relation,
+        'name': name,
+        if (note != null && note!.trim().isNotEmpty) 'note': note,
+      };
 }
