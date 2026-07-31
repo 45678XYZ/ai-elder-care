@@ -13,7 +13,8 @@
 
 三個設計選擇撐起冪等性：
 
-- **身分穩定**：`conversation_id` 由 `elder_id + idempotency_key` 穩定產生，因此「同一個請求」
+- **身分穩定**：`conversation_id` 由 `elder_id + client_request_id` 穩定產生，因此「同一個請求」
+
   重送時必然指向同一筆 item，冪等判定只是一次強一致 GetItem，不需要額外索引或掃描。
 - **request lease**：`processing` 帶租約。租約未到期代表另一個 invocation 還在飛，重送回 409；
   到期才可接管，讓「Lambda 被砍掉」的 turn 不會永遠卡住 session 的 inflight reservation。
