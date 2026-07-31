@@ -54,7 +54,7 @@ APPROVED_GATE = ModelProductionGate(
     access_granted=True,
     quota_cleared=True,
     runtime_capacity_verified=True,
-    approval_record_ref="docs/adr/asr-model-validation.md",
+    approval_record_ref="docs/adr/asr-ce-production-approval.md",
 )
 
 APPROVED_CE_METADATA = ModelMetadata(

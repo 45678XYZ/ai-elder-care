@@ -173,8 +173,14 @@ locals {
 }
 ```
 
-- `asr_enable_endpoints = false` 時：只有 `hak_mock` enabled，遠端 provider disabled
-- `asr_enable_endpoints = true` 時：遠端 provider enabled，endpoint_name 從 SageMaker resource 取得
+- `asr_enable_endpoints = false` 時：不注入設定，Lambda 使用只有 `hak_mock`
+  可服務的安全預設。
+- `asr_enable_endpoints = true` 時：Terraform 會填入 endpoint 與遠端 provider，
+  但模型仍須另外通過個別 ADR 與五項 production gate。
+- 建立 endpoint 不代表模型獲准上線；目前 CE、Formo 都是
+  `colab_validation_only`／`not_approved`，因此不建立 remote provider。
+- 模型固定規格與目前核准狀態見
+  [`docs/asr/model-catalog.md`](./model-catalog.md)。
 
 ---
 

@@ -16,7 +16,8 @@ YYYY-MM-DD
 
 ## Scope
 
-本 ADR 記錄 ASR 模型候選評估與驗證決策，範圍限於 Colab 驗證階段的模型能力確認，不涵蓋 production deployment 或 AWS 服務選定。
+本 ADR 記錄單一 ASR 模型的驗證結果與 production 核准決策。每個模型必須使用
+獨立 ADR，不得以一份共同紀錄代替不同授權、存取與容量條件。
 
 ## Candidate Models
 
@@ -34,17 +35,16 @@ YYYY-MM-DD
 
 ## AWS Capability Gate Status
 
-本節為外部核准紀錄，不推定任何 AWS 服務、Region 或 deployment decision。
+五項 gate 全部核准後，模型才可標記為 production。核准前 Terraform 與
+`ASR_CONFIG_JSON` 必須維持 fail closed。
 
-| Gate Item | Approved | Approver | Date |
-|-----------|----------|----------|------|
-| Region zh-TW support | pending | - | - |
-| Service input/output mode | pending | - | - |
-| Canonical PCM compatibility | pending | - | - |
-| Timeout and Cancellation | pending | - | - |
-| IAM | pending | - | - |
-| S3 necessity | pending | - | - |
-| S3 result handling and cleanup | pending | - | - |
+| Gate Item | Approved | Evidence／阻礙 |
+|---|---|---|
+| `colab_validation_passed` | false | - |
+| `license_cleared` | false | - |
+| `access_granted` | false | - |
+| `quota_cleared` | false | - |
+| `runtime_capacity_verified` | false | - |
 
 ## Decision
 
@@ -60,13 +60,13 @@ YYYY-MM-DD
 
 ## Non Goals
 
-- Taiwan-Tongues-ASR-CE production invocation 在本期為禁止事項，不得對真實使用者音訊執行模型推論。
-- FormoSpeech Whisper-v3 production invocation 在本期為禁止事項，不得對真實使用者音訊執行模型推論。
-- AWS capability gate 僅為外部核准紀錄，不推定任何服務、Region 或 deployment decision。
-- 本 ADR 不涵蓋 production endpoint 建立、AWS adapter 實作選定或正式部署資源配置。
+- 核准前不得對真實使用者音訊執行 production invocation。
+- 本 ADR 不建立 endpoint、不修改公開 API，也不改變 remote-only 架構。
+- Evidence 不得包含完整逐字稿、token、音訊、prompt 或 provider 原始回應。
 
 ## Follow Up Actions
 
-- [ ] 完成 AWS Capability Gate 各項目核准
-- [ ] 確認模型授權與存取限制是否允許後續階段使用
-- [ ] 根據 Colab 驗證結果決定下一期模型選定方向
+- [ ] 完成 Colab 人工驗證
+- [ ] 確認授權與模型存取權
+- [ ] 確認 SageMaker 額度與 runtime 容量
+- [ ] 五項 gate 通過後更新 ADR 決策

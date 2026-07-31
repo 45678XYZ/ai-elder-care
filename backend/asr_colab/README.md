@@ -2,6 +2,9 @@
 
 本文件定義 `taiwan_tongues_asr_ce/` 與 `formospeech_whisper_v3/` 兩個 Colab 驗證套件**必須共同遵守**的驗證流程規則、結構化證據輸出格式、匿名 fixture provenance 格式與安全禁止事項。
 
+模型 ID、語言、授權、存取方式與核准狀態統一見
+[`docs/asr/model-catalog.md`](../../docs/asr/model-catalog.md)；本目錄不重複定義模型規格。
+
 ---
 
 ## 1. 目的與範圍

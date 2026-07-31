@@ -1,32 +1,24 @@
-# FormoSpeech Whisper-v3 簡介
+# FormoSpeech Whisper-v3 Container 實作筆記
 
-`formospeech/whisper-large-v3-taiwanese-hakka` 是由 **FormoSpeech** 團隊開發的**臺灣客語語音識別（ASR）微調模型**。
+模型 ID、支援語言、授權、存取方式、prompt allowlist 與核准狀態統一見
+[`docs/asr/model-catalog.md`](../../docs/asr/model-catalog.md)。本文件只保留
+SageMaker inference container 的實作注意事項。
 
-這套模型的亮點與規格簡述如下：
+## 推論格式
 
-## 1. 模型核心與設計目的
+- 使用 transformers 載入模型 artifact。
+- Container 對 Lambda 的介面必須遵守
+  [`docs/asr/sagemaker-inference-contract.md`](../../docs/asr/sagemaker-inference-contract.md)。
+- Container 收到 mono／16 kHz／PCM S16LE；不可把模型載入邏輯放進 Lambda。
 
-- **基礎模型**：基於 OpenAI 的 `openai/whisper-large-v3` 進行微調。
-- **主要目的**：驗證在多腔調微調時，加入各腔調專屬的 Prompt ID 是否能提升客語語音辨識的準確率與效果。
+## Prompt 部署邊界
 
-## 2. 支援的臺灣客語腔調
+- Prompt ID 必須固定在 container 環境變數或 SageMaker deployment 設定。
+- Lambda request 不得攜帶 prompt ID。
+- 尚未選定 prompt 前，Formo endpoint 必須維持未啟用。
 
-模型針對臺灣主要的 6 種客語腔調進行訓練，推論時可輸入對應的 Prompt ID 來優化辨識結果：
+## 存取與日誌
 
-- **四縣腔** (`htia_sixian`)
-- **海陸腔** (`htia_hailu`)
-- **大埔腔** (`htia_dapu`)
-- **饒平腔** (`htia_raoping`)
-- **詔安腔** (`htia_zhaoan`)
-- **南四縣腔** (`htia_nansixian`)
-
-## 3. 訓練與開源授權規格
-
-- **訓練參數**：Batch size 32、3 個 Epochs、Learning rate 7e-5、總訓練步數 42,549 steps。
-- **模型規模**：約 20 億參數（2B parameters）。
-- **開源授權**：**CC BY-NC 4.0**（僅供非商業用途使用，且需註明出處）。
-- **使用限制**：屬於受控模式（Gated Model），需登入 Hugging Face 帳號並同意條款申請存取權限後，使用 Token 才可進行推論。(目前權限還在申請中)
-
-## 4. 連結
-
-[Hugging Face](https://huggingface.co/formospeech/whisper-large-v3-taiwanese-hakka)
+- HF token 只可在 artifact 建置或短生命週期 runtime 中使用，不得傳入 Lambda。
+- 不得把 HF token、音訊、逐字稿、prompt ID 或 provider 原始回應寫入日誌。
+- 模型仍未核准前，本文件不得被視為 production deployment 授權。

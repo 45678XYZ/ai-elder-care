@@ -9,11 +9,14 @@
 | 文件 | 職責 | 什麼時候讀 |
 |---|---|---|
 | **本文件** (`docs/asr/framework.md`) | 架構層：設計原則、元件邊界、策略概覽 | 任何 ASR 修改之前 |
+| [`docs/asr/model-catalog.md`](./model-catalog.md) | 模型固定規格、生命週期狀態與核准 ADR | 查詢或變更模型時 |
 | [`docs/asr/config-schema.md`](./config-schema.md) | `ASR_CONFIG_JSON` 的完整 JSON schema 與語意 | 設定 ASR 或修改 Terraform 時 |
 | [`docs/asr/security-and-pii.md`](./security-and-pii.md) | 安全邊界、PII 禁則、日誌限制 | 碰到音訊、回應或遙測時 |
 | [`docs/asr/sagemaker-inference-contract.md`](./sagemaker-inference-contract.md) | Container I/O 契約、health check、錯誤格式 | 實作或修改 inference container 時 |
 | [`backend/src/shared/asr/README.md`](../../backend/src/shared/asr/README.md) | 程式碼層：檔案職責、併發實作、測試對應 | 修改 Python 程式碼時 |
 | [`docs/adr/asr-remote-only.md`](../adr/asr-remote-only.md) | 決策紀錄：為什麼做這些選擇 | 想了解歷史決策背景時 |
+| [`docs/adr/asr-ce-production-approval.md`](../adr/asr-ce-production-approval.md) | CE production gate 與證據 | 評估 CE 上線資格時 |
+| [`docs/adr/asr-formo-production-approval.md`](../adr/asr-formo-production-approval.md) | Formo production gate 與證據 | 評估 Formo 上線資格時 |
 | [`.kiro/skills/developing-ai-elder-care-asr/SKILL.md`](../../.kiro/skills/developing-ai-elder-care-asr/SKILL.md) | AI agent 護欄：精簡指引指向上述文件 | AI agent 修改 ASR 時自動啟用 |
 
 ---
@@ -158,6 +161,9 @@ Terraform 從 endpoint 名稱、allowed providers、routing 和 gates 組裝此 
 
 Terraform 組裝 `ASR_CONFIG_JSON` 並注入 Chat Lambda 的環境變數。
 同時附加 resource-scoped `sagemaker:InvokeEndpoint` IAM policy。
+
+建立 endpoint 與核准模型是兩個獨立條件。模型目錄或個別 ADR 顯示未核准時，
+即使 endpoint 資源存在，Lambda 仍不得建立 remote provider 或執行外呼。
 
 ---
 

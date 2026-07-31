@@ -6,18 +6,8 @@
 
 **本套件不做、也不宣稱 CE 的 production invocation。**
 
----
-
-## 模型資訊
-
-| 項目 | 值 |
-|------|------|
-| Model ID | `adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0` |
-| 支援語言 | `zh`（華語）、`hak`（客語） |
-| License | `other` |
-| 使用限制 | `colab_validation_only` |
-| 基底架構 | Whisper-large-v2 + CTranslate2 / faster-whisper |
-| HF Token | **不需要**（CE 非 gated model） |
+模型固定規格與核准狀態見
+[`docs/asr/model-catalog.md`](../../../docs/asr/model-catalog.md)。
 
 ---
 

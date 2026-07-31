@@ -8,22 +8,18 @@ Terraform → Python config contract test。
 - 合法的 remote-only 設定能被正確解析
 - 解析後的 AsrConfig 包含預期的 routes、providers、metadata
 - endpoint_name 被正確帶入 provider config
-- production gate 全部核准後能建立 SageMaker provider 實例
+- 未核准模型不會建立 SageMaker provider 實例
 """
 from __future__ import annotations
 
 import json
 
-import pytest
-
 from src.shared.asr.composition import build_provider_registry
 from src.shared.asr.config import (
     AsrConfig,
-    ConfigParseError,
     ProviderKind,
     parse_asr_config,
 )
-from src.shared.asr.remote_endpoints import SageMakerAsrProvider
 
 
 def _terraform_asr_config_json(
@@ -76,31 +72,31 @@ def _terraform_asr_config_json(
                 "revision": "v2.0",
                 "license": "other",
                 "access_status": "open",
-                "usage_restriction": "production",
-                "approval_state": "approved",
+                "usage_restriction": "colab_validation_only",
+                "approval_state": "not_approved",
                 "production_gate": {
-                    "colab_validation_passed": True,
-                    "license_cleared": True,
-                    "access_granted": True,
-                    "quota_cleared": True,
-                    "runtime_capacity_verified": True,
-                    "approval_record_ref": "docs/adr/asr-model-validation.md",
+                    "colab_validation_passed": False,
+                    "license_cleared": False,
+                    "access_granted": False,
+                    "quota_cleared": False,
+                    "runtime_capacity_verified": False,
+                    "approval_record_ref": None,
                 },
             },
             "formospeech_whisper_v3": {
                 "model_id": "formospeech/whisper-large-v3-taiwanese-hakka",
                 "revision": "main",
                 "license": "CC BY-NC 4.0",
-                "access_status": "open",
-                "usage_restriction": "production",
-                "approval_state": "approved",
+                "access_status": "gated",
+                "usage_restriction": "colab_validation_only",
+                "approval_state": "not_approved",
                 "production_gate": {
-                    "colab_validation_passed": True,
-                    "license_cleared": True,
-                    "access_granted": True,
-                    "quota_cleared": True,
-                    "runtime_capacity_verified": True,
-                    "approval_record_ref": "docs/adr/asr-model-validation.md",
+                    "colab_validation_passed": False,
+                    "license_cleared": False,
+                    "access_granted": False,
+                    "quota_cleared": False,
+                    "runtime_capacity_verified": False,
+                    "approval_record_ref": None,
                 },
             },
         },
@@ -158,30 +154,30 @@ class TestTerraformConfigContract:
         assert config.providers["ce_remote"].endpoint_name == "custom-ce-ep"
         assert config.providers["formo_remote"].endpoint_name == "custom-formo-ep"
 
-    def test_production_gates_are_approved(self) -> None:
-        """Terraform 設定的 production gate 全部核准。"""
+    def test_production_gates_are_closed(self) -> None:
+        """尚無核准證據時，Terraform 的 production gate 全部關閉。"""
         data = json.loads(_terraform_asr_config_json())
         config = parse_asr_config(data)
         for meta in config.model_metadata.values():
-            assert meta.is_production_allowed is True
+            assert meta.is_production_allowed is False
+            assert meta.production_gate.is_approved is False
+            assert meta.production_gate.approval_record_ref is None
 
-    def test_builds_sagemaker_provider_instances(self) -> None:
-        """核准的設定可建立 SageMakerAsrProvider 實例。"""
+    def test_does_not_build_unapproved_sagemaker_providers(self) -> None:
+        """即使有 endpoint_name，未核准模型也不建立遠端 provider。"""
         data = json.loads(_terraform_asr_config_json())
         config = parse_asr_config(data)
         registry = build_provider_registry(config)
-        assert "ce_remote" in registry
-        assert "formo_remote" in registry
-        assert isinstance(registry["ce_remote"], SageMakerAsrProvider)
-        assert isinstance(registry["formo_remote"], SageMakerAsrProvider)
+        assert set(registry) == {"hak_mock"}
 
-    def test_ce_endpoint_name_matches_registry(self) -> None:
-        """建立的 provider 實例持有正確的 endpoint name。"""
+    def test_formo_metadata_is_gated_and_not_approved(self) -> None:
+        """Formo 的存取與核准狀態符合中央模型目錄。"""
         data = json.loads(_terraform_asr_config_json())
         config = parse_asr_config(data)
-        registry = build_provider_registry(config)
-        assert registry["ce_remote"].endpoint_name == "ai-elder-care-asr-ce"
-        assert registry["formo_remote"].endpoint_name == "ai-elder-care-asr-formo"
+        metadata = config.model_metadata["formospeech_whisper_v3"]
+        assert metadata.access_status.value == "gated"
+        assert metadata.usage_restriction.value == "colab_validation_only"
+        assert metadata.approval_state.value == "not_approved"
 
     def test_concurrency_policy_is_respected(self) -> None:
         """spill_wait_ms 從 JSON 正確解析。"""

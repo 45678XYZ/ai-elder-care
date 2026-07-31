@@ -6,30 +6,13 @@
 
 **本套件不執行 Production Invocation、不呼叫 AWS adapter、不連接任何實際 AWS 服務/SDK/network。**
 
-## 模型中繼資料
-
-| 欄位 | 值 |
-|------|-----|
-| Model ID | `formospeech/whisper-large-v3-taiwanese-hakka` |
-| 授權 | CC BY-NC 4.0 |
-| 存取方式 | Gated Model（需申請 HuggingFace 存取權限） |
-| 用途限制 | `colab_validation_only` |
-| 支援語言 | 臺灣客語（hak） |
-| 參數規模 | 約 20 億（2B parameters） |
-| 基礎模型 | openai/whisper-large-v3 |
+模型固定規格、prompt allowlist 與核准狀態見
+[`docs/asr/model-catalog.md`](../../../docs/asr/model-catalog.md)。
 
 ## 支援的 Formo Prompt ID
 
-推論時必須指定客語腔調 Prompt ID，僅接受以下六個精確值：
-
-- `htia_sixian` — 四縣腔
-- `htia_hailu` — 海陸腔
-- `htia_dapu` — 大埔腔
-- `htia_raoping` — 饒平腔
-- `htia_zhaoan` — 詔安腔
-- `htia_nansixian` — 南四縣腔
-
-不接受空白、大小寫變形、前後空白或 Unicode lookalike。
+Notebook 必須使用中央模型目錄所列的精確 allowlist 驗證 prompt，不接受空白、
+大小寫變形、前後空白或 Unicode lookalike；prompt 值不得出現在 evidence。
 
 ## 前置條件
 

@@ -10,7 +10,8 @@
 - ASR 設定規格見 [`docs/asr/config-schema.md`](../../../../docs/asr/config-schema.md)。
 - SageMaker 容器契約見 [`docs/asr/sagemaker-inference-contract.md`](../../../../docs/asr/sagemaker-inference-contract.md)。
 - 安全與 PII 邊界見 [`docs/asr/security-and-pii.md`](../../../../docs/asr/security-and-pii.md)。
-- 模型規格見 [`asr-lambda/docs/`](../../../../asr-lambda/docs/)。
+- 模型固定規格與核准狀態見
+  [`docs/asr/model-catalog.md`](../../../../docs/asr/model-catalog.md)。
 
 ---
 

@@ -5,6 +5,7 @@
 - 系統框架：[docs/framework.md](docs/framework.md)
 - API 規格：[docs/api.md](docs/api.md)
 - ASR 子系統架構：[docs/asr/framework.md](docs/asr/framework.md)
+- ASR 模型目錄：[docs/asr/model-catalog.md](docs/asr/model-catalog.md)
 - 開發流程：[docs/workflow.md](docs/workflow.md)
 - 開發慣例：[docs/conventions.md](docs/conventions.md)
 
@@ -15,7 +16,7 @@
 ├── .agents/        # Codex 專案 skills
 ├── AGENTS.md       # Codex 全專案工作規範
 ├── app/            # Flutter（elder/ caregiver/ 兩組頁面 + shared services）
-├── asr-lambda/     # ASR 模型規格文件與本機 conda 環境
+├── asr-lambda/     # SageMaker inference container 開發文件與本機 conda 環境
 ├── backend/        # Python Lambda handlers（chat, summary, apis）＋ ASR 領域模組
 ├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, SageMaker ASR
 ├── data/           # 模擬長者 persona、情境對話腳本、seed 腳本、knowledge/ 衛教文件

@@ -451,7 +451,7 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 ai-elder-care/
 ├── .kiro/          # Kiro 設定與 specs
 ├── app/            # Flutter
-├── asr-lambda/     # ASR 模型規格文件與本機 conda 環境
+├── asr-lambda/     # SageMaker inference container 開發文件與本機 conda 環境
 ├── backend/        # Python Lambda handlers
 │   ├── src/shared/asr/   # ASR 領域模組（見該目錄 README）
 │   └── asr_colab/        # 兩個模型的人工 Colab 驗證包

@@ -16,10 +16,14 @@
 SageMaker **real-time inference endpoint**（非 async、非 batch transform）。
 
 兩個端點共用相同契約：
-| Endpoint | 模型 | 支援語言 |
-|---|---|---|
-| `ai-elder-care-asr-ce` | Taiwan-Tongues-ASR-CE v2.0 | zh-TW, hak |
-| `ai-elder-care-asr-formo` | FormoSpeech Whisper-v3 | hak |
+
+| Endpoint | Metadata key |
+|---|---|
+| `ai-elder-care-asr-ce` | `taiwan_tongues_ce` |
+| `ai-elder-care-asr-formo` | `formospeech_whisper_v3` |
+
+模型 ID、支援語言、授權與核准狀態見
+[`docs/asr/model-catalog.md`](./model-catalog.md)。
 
 ---
 
@@ -213,14 +217,8 @@ def test_invalid_audio_returns_error():
 
 ---
 
-## 11. CE 與 Formo 的差異
+## 11. 模型差異的邊界
 
-| 面向 | CE | Formo |
-|---|---|---|
-| 語言 | zh-TW, hak | hak only |
-| 方言 prompt | 不需要 | 固定於 container |
-| 模型框架 | CTranslate2 (faster-whisper) | transformers |
-| 授權 | other（開放） | CC BY-NC 4.0（限非商業） |
-| 存取 | open | gated（需 HF token 下載） |
-
-兩者面對 Lambda 的介面**完全相同**——差異只保留於 endpoint container 內。
+CE 與 Formo 的模型框架、語言、授權、存取方式與核准狀態以
+[`docs/asr/model-catalog.md`](./model-catalog.md) 為準。這些差異只存在於
+endpoint container 與部署流程；兩者面對 Lambda 的 I/O 契約完全相同。

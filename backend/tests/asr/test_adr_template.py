@@ -11,6 +11,8 @@ Tests for ADR Template Validator — evidence.py validate_adr_template_headings�
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from src.shared.asr.evidence import (
@@ -96,6 +98,24 @@ class TestAdrTemplateComplete:
         )
         result = validate_adr_template_headings(template)
         assert result == []
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "docs/adr/asr-ce-production-approval.md",
+            "docs/adr/asr-formo-production-approval.md",
+        ],
+    )
+    def test_model_approval_adrs_exist_and_are_complete(
+        self, relative_path: str
+    ) -> None:
+        """個別模型 ADR 必須存在、完整，且目前明確標示未核准。"""
+        repo_root = Path(__file__).resolve().parents[3]
+        adr_path = repo_root / relative_path
+        content = adr_path.read_text(encoding="utf-8")
+
+        assert validate_adr_template_headings(content) == []
+        assert "未核准" in content
 
 
 # ─────────────────────────────────────────────────────────────────

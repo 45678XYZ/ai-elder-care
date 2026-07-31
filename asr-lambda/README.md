@@ -8,12 +8,12 @@
 
 ## 涵蓋模型
 
-| 模型 | 推論框架 | 用途限制 |
-|------|----------|----------|
-| [Taiwan-Tongues-ASR-CE v2.0](https://huggingface.co/adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0) | `faster-whisper` (CTranslate2) | 僅限 Colab 驗證 |
-| [FormoSpeech Whisper-v3](https://huggingface.co/formospeech/whisper-large-v3-taiwanese-hakka) | `transformers` (HuggingFace) | 僅限 Colab 驗證、需 gated access |
+模型 ID、語言、授權、存取方式與核准狀態統一以
+[`docs/asr/model-catalog.md`](../docs/asr/model-catalog.md) 為準。
+本目錄只記錄 container 開發方式：
 
-> 兩個模型目前皆為 `colab_validation_only`，不做 production invocation。
+- [`docs/Taiwan-Tongues-ASR-CE.md`](docs/Taiwan-Tongues-ASR-CE.md)
+- [`docs/FormoSpeech Whisper-v3.md`](docs/FormoSpeech%20Whisper-v3.md)
 
 ## 前置需求
 
@@ -65,7 +65,8 @@ python -c "from transformers import WhisperForConditionalGeneration; print('tran
 
 ## 與 backend/ 的關係
 
-- `backend/src/shared/asr/` 中的 Canonical Audio 處理（mono/16 kHz/16-bit PCM 轉換）依賴本環境的音訊處理套件。
+- `backend/src/shared/asr/` 是 Lambda remote-only 領域套件，不依賴本環境的模型推論套件。
+- 本環境用來讓 inference container 接收 Lambda 產生的 mono／16 kHz／PCM S16LE。
 - `backend/tests/asr/` 的測試使用 `pytest==8.3.5` 與 `hypothesis==6.122.3`，與本環境版本一致。
 - Colab 驗證包（`backend/asr_colab/`）有各自獨立的 `requirements.lock`，本環境僅供本機開發使用。
 

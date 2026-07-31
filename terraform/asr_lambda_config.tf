@@ -15,6 +15,8 @@
 locals {
   # ASR_CONFIG_JSON — 由 Terraform 從 endpoint 名稱與設定組裝。
   # 啟用時產生完整的 remote-only 設定；未啟用時產生安全預設（僅 hak_mock 可用）。
+  # 建立 endpoint 不等於模型已核准；個別模型 ADR 未通過前，production gate
+  # 必須維持關閉，build_provider_registry() 不會建立遠端 provider。
   asr_config_json = var.asr_enable_endpoints ? jsonencode({
     routes = {
       "hak" = {
@@ -59,31 +61,31 @@ locals {
         revision          = "v2.0"
         license           = "other"
         access_status     = "open"
-        usage_restriction = "production"
-        approval_state    = "approved"
+        usage_restriction = "colab_validation_only"
+        approval_state    = "not_approved"
         production_gate = {
-          colab_validation_passed    = true
-          license_cleared            = true
-          access_granted             = true
-          quota_cleared              = true
-          runtime_capacity_verified  = true
-          approval_record_ref        = "docs/adr/asr-model-validation.md"
+          colab_validation_passed   = false
+          license_cleared           = false
+          access_granted            = false
+          quota_cleared             = false
+          runtime_capacity_verified = false
+          approval_record_ref       = null
         }
       }
       formospeech_whisper_v3 = {
         model_id          = "formospeech/whisper-large-v3-taiwanese-hakka"
         revision          = "main"
         license           = "CC BY-NC 4.0"
-        access_status     = "open"
-        usage_restriction = "production"
-        approval_state    = "approved"
+        access_status     = "gated"
+        usage_restriction = "colab_validation_only"
+        approval_state    = "not_approved"
         production_gate = {
-          colab_validation_passed    = true
-          license_cleared            = true
-          access_granted             = true
-          quota_cleared              = true
-          runtime_capacity_verified  = true
-          approval_record_ref        = "docs/adr/asr-model-validation.md"
+          colab_validation_passed   = false
+          license_cleared           = false
+          access_granted            = false
+          quota_cleared             = false
+          runtime_capacity_verified = false
+          approval_record_ref       = null
         }
       }
     }
@@ -98,5 +100,5 @@ locals {
     concurrency = {
       spill_wait_ms = 250
     }
-  }) : ""  # 未啟用時不注入 — Lambda 會使用 default_config()（僅 hak_mock）
+  }) : "" # 未啟用時不注入 — Lambda 會使用 default_config()（僅 hak_mock）
 }

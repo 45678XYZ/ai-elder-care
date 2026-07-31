@@ -1,52 +1,32 @@
-# Taiwan-Tongues-ASR-CE 簡介
+# Taiwan-Tongues-ASR-CE Container 實作筆記
 
-## 1. 模型簡介新
+模型 ID、支援語言、授權、存取方式與核准狀態統一見
+[`docs/asr/model-catalog.md`](../../docs/asr/model-catalog.md)。本文件只保留
+SageMaker inference container 的實作注意事項。
 
-- **基底模型**：基於 `openai/whisper-large-v2` 進行微調與優化。
-- **部署格式**：已轉換為 **CTranslate2 / faster-whisper** 格式（提供 `model.bin` 等推論檔），專門用於高效能推論與批次語音轉錄。
+## 推論格式
 
-## 2. 支援語言與代碼 (輸出文字不確定是哪種語言)
+- 使用 CTranslate2／faster-whisper 載入模型 artifact。
+- Container 對 Lambda 的介面必須遵守
+  [`docs/asr/sagemaker-inference-contract.md`](../../docs/asr/sagemaker-inference-contract.md)。
+- Container 收到 mono／16 kHz／PCM S16LE；不可把模型載入邏輯放進 Lambda。
 
-模型共支援 5 種語言：
+## 輸出注意事項
 
-- **華語（Mandarin Chinese）**：`zh`
-- **台語/台灣閩南語（Taiwanese Hokkien）**：`nan`
-- **客語（Hakka）**：`hak`
-- **英語（English）**：`en`
-- **印尼語（Indonesian）**：`id`
+- 回應固定為 `{ "text": "..." }`，文字必須非空白。
+- 模型輸出文字使用的語言不保證；container 不得自行宣稱語言轉換成功。
+- 不得記錄音訊、逐字稿或 provider 原始回應。
 
-## 3. 使用注意事項
+## 本機載入範例
 
-- **授權規範**：標示為 `other`，商業使用或二次散布前需留意發布規範與許可合約。
-
-## 4. 快速使用範例 (Python)
-
-安裝套件後即可直接透過 `faster-whisper` 載入模型：
-
-Python
-
-```
+```python
 from faster_whisper import WhisperModel
 
-# 載入推論模型
 model = WhisperModel(
     "adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0",
     device="cuda",
-    compute_type="float16"
+    compute_type="float16",
 )
-
-# 執行語音轉錄（以印尼語為例，可替換為 zh, nan, hak, en, id）
-segments, info = model.transcribe(
-    "audio.wav",
-    language="id",
-    task="transcribe"
-)
-
-for segment in segments:
-    print(segment.text)
 ```
 
-## 5. 模型連結
-
-* [Hugging Face](https://huggingface.co/adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0)
-* [GitHub](https://github.com/adi-gov-tw/Taiwan-Tongues-ASR-CE)
+這段只用於 container 開發與人工驗證，不可放入 Lambda 執行路徑。
