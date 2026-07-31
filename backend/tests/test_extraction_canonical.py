@@ -12,7 +12,7 @@ from src.extraction.canonical import (
     normalize_subject,
     normalize_text,
     routine_completion_key,
-    safety_episode_key,
+    safety_alert_key,
     slot_label,
     validate_lexicon,
 )
@@ -196,11 +196,11 @@ def test_routine_completion_key_requires_both_parts():
         routine_completion_key("rtn_001", "")
 
 
-def test_safety_episode_key():
-    key = safety_episode_key("ses_01J8", "浴室跌倒")
-    assert key == "SAFETY#ses_01J8#浴室跌倒"
+def test_safety_alert_key():
+    key = safety_alert_key("alert_01J8")
+    assert key == "SAFETY#alert_01J8"
     with pytest.raises(CanonicalError):
-        safety_episode_key("", "浴室跌倒")
+        safety_alert_key("")
 
 
 def test_event_id_is_stable_and_scoped_to_elder():

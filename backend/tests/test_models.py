@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from src.shared.models import (
     SUMMARY_SECTION_KEYS,
     ConversationCreate,
-    ConversationResponse,
+    DailySummaryCreate,
     DailySummaryResponse,
     ElderCreate,
     ElderResponse,
@@ -97,72 +97,25 @@ def test_elder_response_model():
 
 
 def test_conversation_create_model():
-    """測試 ConversationCreate 模型長者發話 vs 系統主動提醒模式、雙語音與三階段時間戳記。"""
-    # 模式 1: 長者主動發話
+    """測試 ConversationCreate 模型長者發話單一模式與核心欄位。"""
     cc_elder = ConversationCreate(
         elder_id="eld_001",
+        session_id="ses_01J8",
         elder_transcript="我吃過血壓藥了",
         ai_respond_text="真棒！我幫你記下來了。",
-        elder_audio_s3_key="audio/eld_001/input_001.m4a",
-        ai_respond_audio_url="https://s3.amazonaws.com/reply.mp3",
+        ai_respond_audio_s3_key="tts/cnv_001.mp3",
         elder_received_at="2026-07-24T17:30:00+08:00",
         ai_responded_at="2026-07-24T17:30:01+08:00",
     )
-    assert cc_elder.source == "elder_initiated"
-    assert cc_elder.user_status == "replied"
-    assert cc_elder.system_status == "success"
-    assert cc_elder.ai_prompt_text is None
+    assert cc_elder.session_id == "ses_01J8"
     assert cc_elder.elder_transcript == "我吃過血壓藥了"
-    assert cc_elder.ai_prompt_audio_url is None
-    assert cc_elder.elder_audio_s3_key == "audio/eld_001/input_001.m4a"
-    assert cc_elder.ai_respond_audio_url == "https://s3.amazonaws.com/reply.mp3"
+    assert cc_elder.ai_respond_text == "真棒！我幫你記下來了。"
+    assert cc_elder.ai_respond_audio_s3_key == "tts/cnv_001.mp3"
     assert cc_elder.elder_received_at == "2026-07-24T17:30:00+08:00"
     assert cc_elder.ai_responded_at == "2026-07-24T17:30:01+08:00"
 
-    # 模式 2: 系統主動提醒（長者逾時無回應）
-    cc_sys_no_resp = ConversationCreate(
-        elder_id="eld_001",
-        source="system_routine_inquiry",
-        user_status="no_response",
-        routine_id="rtn_001",
-        ai_prompt_text="阿蘭嬤，吃血壓藥時間到了喔！",
-        ai_prompt_audio_url="https://s3.amazonaws.com/prompt_rtn001.mp3",
-        prompt_sent_at="2026-07-24T17:00:00+08:00",
-    )
-    assert cc_sys_no_resp.source == "system_routine_inquiry"
-    assert cc_sys_no_resp.user_status == "no_response"
-    assert cc_sys_no_resp.elder_transcript is None
-    assert cc_sys_no_resp.ai_prompt_text == "阿蘭嬤，吃血壓藥時間到了喔！"
-    assert cc_sys_no_resp.ai_prompt_audio_url == "https://s3.amazonaws.com/prompt_rtn001.mp3"
-    assert cc_sys_no_resp.prompt_sent_at == "2026-07-24T17:00:00+08:00"
-
-    # 模式 3: 系統處理失敗紀錄
-    cc_failed = ConversationCreate(
-        elder_id="eld_001",
-        system_status="failed",
-        error_message="Polly TTS synthesis timeout",
-    )
-    assert cc_failed.system_status == "failed"
-    assert cc_failed.error_message == "Polly TTS synthesis timeout"
-
-
-def test_conversation_response_model():
-    """測試 ConversationResponse 完整結構。"""
-    cr = ConversationResponse(
-        conversation_id="cnv_999",
-        elder_id="eld_001",
-        created_at="2026-07-24T17:30:00+08:00",
-        elder_transcript="昨天睡得很好",
-        ai_respond_text="太棒了！保持規律作息喔。",
-        ai_respond_audio_url="https://s3.amazonaws.com/response.mp3",
-    )
-    assert cr.conversation_id == "cnv_999"
-    assert cr.elder_id == "eld_001"
-    assert cr.created_at == "2026-07-24T17:30:00+08:00"
-    assert cr.ai_respond_audio_url == "https://s3.amazonaws.com/response.mp3"
-
-
 def test_event_models():
+
     """測試 EventCreate 與 EventResponse 模型。"""
     ec = EventCreate(
         elder_id="eld_001",
@@ -317,4 +270,46 @@ def test_routine_request_models_reject_unknown_fields():
         RoutineComplete(date="2026/07/25")
 
     assert RoutineComplete().date is None
+
+
+def test_daily_summary_models():
+    """測試 DailySummaryCreate (DB 寫入模型) 與 DailySummaryResponse (API 回應模型) 驗證與序列化。"""
+    sections = {key: None for key in SUMMARY_SECTION_KEYS}
+    sections["diet"] = "三餐正常"
+
+    dsc = DailySummaryCreate(
+        elder_id="eld_001",
+        date="2026-07-31",
+        overview="今日狀態良好",
+        sections=sections,
+        routines={"completed": 1, "missed": 0, "items": []},
+        alerts=[],
+        interaction_count=3,
+        data_status="complete",
+        pending_session_count=0,
+        input_through_at="2026-07-31T23:50:00+08:00",
+        generated_at="2026-07-31T23:50:05+08:00",
+    )
+    assert dsc.elder_id == "eld_001"
+    assert dsc.data_status == "complete"
+    assert dsc.sections["diet"] == "三餐正常"
+
+    dsr = DailySummaryResponse(
+        elder_id="eld_001",
+        date="2026-07-31",
+        overview="今日狀態良好",
+        sections=sections,
+        routines={"completed": 1, "missed": 0, "items": []},
+        alerts=[],
+        interaction_count=3,
+        data_status="complete",
+        pending_session_count=0,
+        generated_at="2026-07-31T23:50:05+08:00",
+    )
+    dumped = dsr.model_dump()
+    assert dumped["elder_id"] == "eld_001"
+    assert "input_through_at" not in dumped
+    assert "completeness_rank" not in dumped
+    assert dumped["sections"]["diet"] == "三餐正常"
+
 

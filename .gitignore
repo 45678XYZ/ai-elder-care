@@ -49,3 +49,10 @@ build/
 # --- misc ---
 .DS_Store
 .env
+
+# --- 本地端測試與 Runner 產出 (Local Runner & Offline Pipeline) ---
+backend/local_runner/data/
+backend/local_runner/outputs/
+backend/local_runner/storage/
+.env.local
+

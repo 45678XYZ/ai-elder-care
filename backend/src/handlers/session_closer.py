@@ -1,18 +1,18 @@
-"""POST /chat/sessions/{session_id}/close — Session 關閉與週期性收斂。規格見 docs/api.md 與 docs/framework.md。
+"""Session 關閉與離線 materialization 觸發器。規格見 docs/api.md 與 docs/framework.md。
 
-處理途徑與流程：
-1. POST /chat/sessions/{session_id}/close（API 入口）：
-   - 權限驗證：限長者本人呼叫（長者 mode，帶 elder_id claim）
-   - 安全遮蔽：不存在或非本人存取一律回 404 SESSION_NOT_FOUND，不以 403 暴露 session 存在性
-   - 狀態轉移：執行 active/closing → closed 條件式轉移與 snapshot 凍結驗證（若有 inflight turn 則回 409）
-   - 非同步派送：將 closed session 派送至 SQS batch queue
-
-2. EventBridge 排程掃描（run_sweep 入口）：
+Session 關閉採雙管道設計：
+1. EventBridge 排程掃描（run_sweep 入口） — 週期性收斂，確保未明確關閉的 session 最終仍會收斂：
    - 閒置收斂 (idle)：收斂超過 SESSION_IDLE_MINUTES 未關閉的 active session，避免未關閉 session 導致一般事件無法離線 materialize
    - inflight 收斂：接管租約已到期的 processing turn（安全 terminal failure）並修復已終態 turn 殘留的 reservation
    - 漏投補發 (pending)：補投已 closed 但因網路/SQS 暫時異常未成功 SendMessage 的 BATCH#PENDING 訊息
    - Lease 過期重投 (processing)：重新派送租約過期的 BATCH#PROCESSING 訊息，交由 consumer 條件式接管
+
+2. POST /chat/sessions/{session_id}/close（API 入口） — 前端主動關閉：
+   App 在停止免手持互動、離開對話畫面或切換長者時呼叫，可即時關閉 session 並啟動離線
+   batch materialization，不必等待 EventBridge 週期到來。適用於即時展示等需要快速收斂的場景。
+   邏輯與條件式寫入與 sweep_idle_sessions 完全一致。
 """
+
 
 from typing import Any
 import json
@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 BATCH_QUEUE_URL = os.environ.get("BATCH_QUEUE_URL", "")
 
 # 超過此門檻時間（分鐘）無互動的 active session 將由週期性掃描自動收斂。
-# 與 /chat 判斷「這個 session 還能不能接納新 turn」共用同一個門檻，兩處各讀一次 env 會漂移
+# 與 /chat 判斷「這個 session 還能不能接納新 turn」共用同一個門檻
 SESSION_IDLE_MINUTES = sessions.SESSION_IDLE_MINUTES
+
 
 # 單次 sweep 掃描與處理的 session 數量上限，避免 Lambda 執行超時
 SWEEP_LIMIT = int(os.environ.get("SESSION_SWEEP_LIMIT", "25"))
@@ -47,19 +48,28 @@ def get_sqs_client():
 
 
 def handler(event, context):
-    """Session closer Lambda 入口；依事件來源分派至 API 請求或 EventBridge 排程掃描。"""
+    """Session closer Lambda 入口；依事件來源分派至 EventBridge 排程掃描或 API 請求。
+
+    雙管道設計：EventBridge 排程負責週期性收斂，API 入口供前端主動即時關閉。
+    """
     if event.get("source") == "aws.events" or event.get("sweep"):
         return run_sweep(event)
     return handle_close_request(event)
 
 
 # -----------------------------------------------------------------------------
-# API：明確關閉
+# API：明確關閉（前端主動呼叫，可即時關閉 session 不必等待 EventBridge 週期）
 # -----------------------------------------------------------------------------
 
 
 def handle_close_request(event, *, sqs_client=None) -> dict[str, Any]:
-    """處理 POST /chat/sessions/{session_id}/close 明確關閉請求。"""
+    """處理 POST /chat/sessions/{session_id}/close 明確關閉請求。
+
+    App 在停止免手持互動、離開對話畫面或切換長者時呼叫，可即時關閉 session 並啟動
+    離線 batch materialization。邏輯與條件式寫入與 sweep_idle_sessions 完全一致。
+    """
+
+
     session_id = (event.get("pathParameters") or {}).get("session_id") or ""
     if not session_id:
         return responses.error(400, "INVALID_PARAMETER", "缺少 session_id")

@@ -142,6 +142,8 @@ def test_chat_missing_elder_id():
         "requestContext": {"authorizer": {"claims": {"sub": "usr_elder"}}},
     }
     resp = chat.handler(event, None)
+
+
     assert resp["statusCode"] == 400
     assert body_of(resp)["error"]["code"] == "INVALID_PARAMETER"
 
@@ -240,6 +242,7 @@ def test_first_turn_creates_a_session_and_completes(stack):
     assert session["turn_ids"] == [body["conversation_id"]]
     assert session["inflight_turn_count"] == 0
     assert session["state"] == sessions.STATE_ACTIVE
+
 
 
 def test_completed_turn_is_countable_as_an_interaction(stack):

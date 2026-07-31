@@ -1,3 +1,7 @@
+# EventBridge
+#   - 每晚觸發 summary_generator（台灣時間）
+#   - 週期性重算仍為 partial 的摘要（等待窗口內）
+#   - 週期性 session closer：idle close、BATCH#PENDING 補投、BATCH#PROCESSING lease 過期重投
 # EventBridge Scheduler：每晚 22:00 (台灣時間 UTC+8 = UTC 14:00) 觸發照護者晚報
 #
 # 架構說明：
@@ -162,3 +166,89 @@ resource "aws_lambda_permission" "allow_scheduler_invoke_daily_digest" {
   principal     = "scheduler.amazonaws.com"
   source_arn    = aws_scheduler_schedule.daily_digest_schedule.arn
 }
+
+# --- 每日摘要（見 docs/feature_daily-summarization.md §7）---
+
+# cron 一律 UTC，因此台灣時間要自己減 8 小時；預設 23:50+08:00 → 15:50 UTC。
+# 排在日界前而不是隔天，是為了讓照護者當晚就看得到當天的摘要；仍有未完成 batch 時寫
+# partial，後續由 backfill 重算補成 complete。
+resource "aws_cloudwatch_event_rule" "summary_nightly" {
+  name                = "${var.project_name}-summary-nightly"
+  description         = "每晚生成當日摘要（台灣時間）"
+  schedule_expression = var.summary_nightly_cron
+}
+
+resource "aws_cloudwatch_event_target" "summary_nightly" {
+  rule      = aws_cloudwatch_event_rule.summary_nightly.name
+  target_id = "summary-generator-nightly"
+  arn       = module.summary_generator.lambda_function_arn
+
+  input = jsonencode({ mode = "nightly" })
+}
+
+resource "aws_lambda_permission" "summary_nightly" {
+  statement_id  = "AllowEventBridgeSummaryNightly"
+  action        = "lambda:InvokeFunction"
+  function_name = module.summary_generator.lambda_function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.summary_nightly.arn
+}
+
+# 重算 sweep：把等待窗口內仍為 partial 的摘要補成 complete。
+# 間隔要短於 SUMMARY_WAIT_MINUTES，否則窗口內可能一次都沒重算到。
+resource "aws_cloudwatch_event_rule" "summary_backfill" {
+  name                = "${var.project_name}-summary-backfill"
+  description         = "重算等待窗口內仍為 partial 的摘要"
+  schedule_expression = "rate(${var.summary_backfill_minutes} minutes)"
+}
+
+resource "aws_cloudwatch_event_target" "summary_backfill" {
+  rule      = aws_cloudwatch_event_rule.summary_backfill.name
+  target_id = "summary-generator-backfill"
+  arn       = module.summary_generator.lambda_function_arn
+
+  input = jsonencode({ mode = "backfill" })
+}
+
+resource "aws_lambda_permission" "summary_backfill" {
+  statement_id  = "AllowEventBridgeSummaryBackfill"
+  action        = "lambda:InvokeFunction"
+  function_name = module.summary_generator.lambda_function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.summary_backfill.arn
+}
+
+# =============================================================================
+# 5. Session closer sweep（EventBridge 週期性收斂 — Session 關閉唯一來源）
+# =============================================================================
+# Session 關閉
+# POST /chat/sessions/{session_id}/close
+# 此 sweep 執行：idle close、BATCH#PENDING 補投、BATCH#PROCESSING lease 過期重投。
+
+resource "aws_cloudwatch_event_rule" "session_sweep" {
+  name                = "${var.project_name}-session-sweep"
+  description         = "週期性收斂閒置 session 與 batch recovery（idle close / pending requeue / lease expiry）"
+  schedule_expression = "rate(${var.session_sweep_minutes} minutes)"
+}
+
+resource "aws_cloudwatch_event_target" "session_sweep" {
+  rule      = aws_cloudwatch_event_rule.session_sweep.name
+  target_id = "session-closer-sweep"
+  arn       = module.session_closer.lambda_function_arn
+
+  input = jsonencode({
+    source = "aws.events"
+    sweep  = true
+  })
+}
+
+resource "aws_lambda_permission" "session_sweep" {
+  statement_id  = "AllowEventBridgeSessionSweep"
+  action        = "lambda:InvokeFunction"
+  function_name = module.session_closer.lambda_function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.session_sweep.arn
+}
+
+
+

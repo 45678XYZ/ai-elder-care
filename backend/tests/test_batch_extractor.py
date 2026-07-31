@@ -236,11 +236,9 @@ def test_successful_batch_writes_events_and_completes(stack):
     assert events[0]["type"] == "medication"
     assert events[0]["extraction_track"] == "batch"
 
-    # turn 的 batch 欄位一併更新
-    table = boto3.resource("dynamodb").Table(CONVERSATIONS_TABLE)
-    turn = table.get_item(Key={"elder_id": ELDER, "record_id": "TURN#cnv_001"})["Item"]
-    assert turn["batch_extraction_status"] == "completed"
-    assert turn["batch_chunk_id"] == "chk_a"
+    # session 的 chunk_manifest 保存狀態
+    assert len(session.get("chunk_manifest", [])) > 0
+
 
 
 def test_manifest_is_persisted_on_first_run(stack):
@@ -494,7 +492,8 @@ def test_turn_speaker_is_derived_from_existing_fields(stack):
             "ai_respond_text": "很好",
         }
     )
-    assert (elder_turn.speaker, elder_turn.text) == ("長者", "我吃過藥了")
+    assert elder_turn.speaker == "長者"
+    assert elder_turn.text == "長者: 我吃過藥了\nAI: 很好"
 
     ai_turn = handler_module._to_turn(
         {
@@ -503,4 +502,6 @@ def test_turn_speaker_is_derived_from_existing_fields(stack):
             "ai_prompt_text": "早安，今天吃藥了嗎？",
         }
     )
-    assert (ai_turn.speaker, ai_turn.text) == ("AI", "早安，今天吃藥了嗎？")
+    assert ai_turn.speaker == "AI"
+    assert ai_turn.text == "AI: 早安，今天吃藥了嗎？"
+

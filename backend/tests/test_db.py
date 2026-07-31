@@ -194,26 +194,61 @@ def test_put_event_if_absent_returns_existing(mock_get_resource):
 
 
 @patch("src.shared.db.get_dynamodb_resource")
-def test_save_conversation(mock_get_resource):
-    """測試 Conversations 表之儲存與自動帶入 cnv_ ID/時間戳記。"""
+def test_save_and_get_recent_conversations(mock_get_resource):
+    """測試 Conversations 表之儲存、自動帶入 cnv_ ID/時間戳記與分頁查詢。
+
+    get_recent_conversations 走 GSI `conversations-by-time`：Base table 的 SK 是
+    `record_id`（TURN#/SESSION#），字串排序不等於時間排序，無法取「最近」對話。
+    """
+
     mock_table = MagicMock()
     mock_get_resource.return_value.Table.return_value = mock_table
 
     data = {
         "elder_id": "eld_001",
-        "source": "system_routine_inquiry",
-        "routine_id": "rtn_001",
-        "ai_prompt_text": "吃藥時間到囉！",
-        "elder_transcript": "我吃過了",
+        "elder_transcript": "我吃過血壓藥了",
         "ai_respond_text": "好棒！幫你記下來了。",
     }
     saved = db.save_conversation(data)
     assert saved["elder_id"] == "eld_001"
     assert saved["conversation_id"].startswith("cnv_")
     assert "created_at" in saved
-    assert saved["user_status"] == "replied"
-    assert saved["system_status"] == "success"
-    mock_table.put_item.assert_called_once()
+    # created_at 一律正規化為固定毫秒精度，conversation_time_key 才能正確排序
+    assert saved["created_at"].endswith("+08:00")
+    assert "." in saved["created_at"]  # 帶毫秒
+    assert saved["conversation_time_key"] == f"{saved['created_at']}#{saved['conversation_id']}"
+    # 2. 測試 get_recent_conversations 走 GSI 並按時間倒序
+
+    mock_table.query.return_value = {
+        "Items": [
+            {
+                "conversation_id": "cnv_001",
+                "elder_id": "eld_001",
+                "item_type": "conversation",
+                "created_at": "2026-07-24T17:00:00.000+08:00",
+                "elder_transcript": "今天心情好",
+            }
+        ],
+        "LastEvaluatedKey": {
+            "elder_id": "eld_001",
+            "record_id": "TURN#cnv_001",
+            "conversation_time_key": "2026-07-24T17:00:00.000+08:00#cnv_001",
+        },
+    }
+
+    items, next_token = db.get_recent_conversations("eld_001", limit=1)
+    assert len(items) == 1
+    assert items[0]["conversation_id"] == "cnv_001"
+    assert next_token is not None
+    mock_table.query.assert_called_once()
+    kwargs = mock_table.query.call_args.kwargs
+    # 必須走 GSI conversations-by-time，而非 Base table
+    assert kwargs["IndexName"] == db.CONVERSATIONS_BY_TIME_INDEX
+    assert kwargs["ScanIndexForward"] is False  # 倒序取最新
+    # 顯式過濾 item_type=conversation，防禦 session item 混入
+    assert kwargs["FilterExpression"] == "#it = :conv"
+    assert kwargs["ExpressionAttributeValues"][":conv"] == "conversation"
+
 
 
 @patch("src.shared.db.put_event_if_absent")
