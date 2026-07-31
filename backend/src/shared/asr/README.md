@@ -49,7 +49,7 @@ SageMaker Endpoint 執行。Lambda 只負責將正規化音訊傳送到 SageMake
 ## 2. 資料流
 
 ```
-audio_bytes + input_format + language + deadline + cancellation + context
+audio_bytes + input_format + language + profile dialect? + deadline + cancellation + context
         │
         ▼
   AsrFacade.recognize          ← 單一入口；建立 telemetry emitter
@@ -261,8 +261,8 @@ router 會自動跳過落到下一棒。
 
 ### 基礎設施對應
 
-`terraform/asr_models.tf` provision 兩個 SageMaker real-time endpoint（CE 主力、
-Formo 客語備援）與 target-tracking autoscaling，供 `ProviderKind.REMOTE_MODEL`
+`terraform/asr_models.tf` provision 七個 SageMaker real-time endpoint（CE 與六個固定
+prompt 的 Formo 客語端點）及 target-tracking autoscaling，供 `ProviderKind.REMOTE_MODEL`
 呼叫。預設關閉（`var.asr_enable_endpoints = false`）：模型未經驗證前，
 程式層與基礎設施層都不開，也不產生 GPU 費用。
 
@@ -305,7 +305,7 @@ Formo 客語備援）與 target-tracking autoscaling，供 `ProviderKind.REMOTE_
 |---|---|
 | 兩個模型的 Colab 人工驗證 | **未執行**。效能、實際可裝性、M4A decode 都還沒實測 |
 | Formo gated access | 申請中 |
-| Formo 腔調 prompt 固定在 SageMaker container | 部署前須選定腔調並寫入 container 設定 |
+| Formo 六腔 prompt 固定在 SageMaker container | Terraform 已建立一腔一端點；Lambda 只依 profile route，不傳 prompt |
 | 推論容器 image 與模型 artifact | **不存在**。`terraform/asr_models.tf` 需要 image URI 與 model-data URL 才能 apply |
 | CE 輸出語言不保證 | 模型卡標明輸出文字不確定是哪種語言；本層只保證非空白 |
 | 模型效能評測（WER／CER） | 不在現行範圍 |

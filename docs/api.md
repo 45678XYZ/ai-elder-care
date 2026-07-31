@@ -100,6 +100,10 @@ response 前只執行：
 | `audio.data` | string | base64；單句 ≤ 60 秒，否則 400 `AUDIO_TOO_LONG` |
 | `audio.format` | string | `m4a` \| `wav` |
 
+`lang` 是本輪 Agent、ASR 與 TTS 的明確語言，不從輸入文字自動偵測。`lang=hak` 時，
+後端只讀 elder profile 的 `hakka_dialect`，App 不在 `/chat` 傳腔調；新 turn reserve 時保存
+腔調快照，ASR 與 TTS 共用。
+
 後端 routing 順序固定先做 turn 冪等判定，再做任何 Session 選擇、建立或 inflight reserve：
 
 1. 先以 `elder_id` scope + `client_request_id` 查 existing turn，並比對正規化 `request_hash`。同 scope/ID 但 hash 不同回 409 `IDEMPOTENCY_CONFLICT`。
@@ -138,7 +142,7 @@ response 前只執行：
 | `session_id` | 本 turn 首次接納時實際使用的 session；相同 `client_request_id` replay 一律回原 ID，即使該 session 後續已 closing/closed。只有全新 ID 在指定原 session idle、closing、closed 或達上限時才會取得新 ID |
 | `transcript` | audio 的 ASR 結果；text 則原樣回傳 |
 | `reply_text` | AI 回覆 |
-| `reply_audio_url` | 15 分鐘 S3 presigned URL；回覆語音無法儲存或簽發時為 `null` |
+| `reply_audio_url` | 15 分鐘 S3 presigned URL；TTS 全部失敗、音訊無法儲存或簽發時為 `null`，但文字 turn 仍 completed |
 | `routines_updated` | 本次 response 前已成功建立、修改、停用 routine 或完成 occurrence 時為 true，否則為 false |
 
 `routines_updated` 必須反映已提交的業務結果，不得只代表模型曾提出候選。App 收到 true 後可背景呼叫 `GET /routines` 更新定義與當日狀態。一般 events 尚未產生不影響 200 response；回覆失敗時沿用通用錯誤格式。
@@ -188,7 +192,9 @@ close 以 session 狀態保證冪等，不需要 `client_request_id`：
 
 ## 長者資料
 
-公開欄位 enum：`gender` 只接受 `male|female|other`；`lang_preference` 只接受 `zh-TW|hak`。其他值回 400 `INVALID_PARAMETER`。
+公開欄位 enum：`gender` 只接受 `male|female|other`；`lang_preference` 只接受 `zh-TW|hak`；
+`hakka_dialect` 只接受 `htia_sixian|htia_hailu|htia_dapu|htia_raoping|htia_zhaoan|htia_nansixian`。
+其他值回 400 `INVALID_PARAMETER`。客語腔調是 ASR/TTS 唯一來源，預設 `htia_sixian`。
 
 ### GET /elders — 列表
 
@@ -204,6 +210,7 @@ close 以 session 狀態保證冪等，不需要 `client_request_id`：
       "birth_year": 1948,
       "gender": "female",
       "lang_preference": "zh-TW",
+      "hakka_dialect": "htia_sixian",
       "address_region": "台北市大安區",
       "health_notes": ["高血壓", "膝關節退化"],
       "family": [
@@ -224,13 +231,14 @@ close 以 session 狀態保證冪等，不需要 `client_request_id`：
 
 ### POST /elders — 建立（照護者）
 
-Request 是上述物件去掉 `elder_id`、`caregiver_ids`、`created_at`、`updated_at`；`name` 必填，`lang_preference` 預設 `zh-TW`，未提供或為空的 `health_notes`、`family` 由後端補 `[]`。`elder_id` 由後端以 `"eld_" + uuid4().hex[:12]` 產生；建立者 token `sub` 自動加入 `caregiver_ids`。client 傳 server-owned 欄位回 400 `INVALID_PARAMETER`。
+Request 是上述物件去掉 `elder_id`、`caregiver_ids`、`created_at`、`updated_at`；`name` 必填，`lang_preference` 預設 `zh-TW`，`hakka_dialect` 預設 `htia_sixian`，未提供或為空的 `health_notes`、`family` 由後端補 `[]`。`elder_id` 由後端以 `"eld_" + uuid4().hex[:12]` 產生；建立者 token `sub` 自動加入 `caregiver_ids`。client 傳 server-owned 欄位回 400 `INVALID_PARAMETER`。
 
 Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 ### PATCH /elders/{elder_id} — 更新（照護者）
 
-部分更新公開欄位；不得傳 `elder_id`、`caregiver_ids`、`created_at`、`updated_at`。後端只在成功變更時刷新 `updated_at`，`created_at` 保持不變。Response 200 回更新後物件。
+部分更新公開欄位；`lang_preference` 與 `hakka_dialect` 可同次更新，後續新 turn 的 ASR/TTS
+共同生效。不得傳 `elder_id`、`caregiver_ids`、`created_at`、`updated_at`。後端只在成功變更時刷新 `updated_at`，`created_at` 保持不變。Response 200 回更新後物件。
 
 ---
 

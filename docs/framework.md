@@ -38,12 +38,13 @@ flowchart TB
         summary["daily summary generator Lambda"]
         apis["資料 API Lambda<br/>elders / summaries / events<br/>routines / stats"]
         asr["後端 ASR 模組<br/>Canonical Audio + 路由 + 備援鏈<br/>backend/src/shared/asr"]
-        asrmodels["ASR 推論端點<br/>CE 主力 / Formo 客語備援<br/>預設未啟用"]
+        asrmodels["ASR 推論端點<br/>CE + Formo 六腔固定 prompt<br/>預設未啟用"]
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
         embed["Bedrock embedding model<br/>concept retrieval + turn segmentation"]
         vectors[("S3 Vectors<br/>UCO concept index")]
         rules["deterministic safety rules"]
-        polly["Polly TTS"]
+        tts["後端 TTS 模組<br/>語言/六腔路由 + 同語言備援"]
+        ttsmodels["TTS providers<br/>OmniVoice / VoxHakka / BreezyVoice / Polly"]
         ddb[("DynamoDB<br/>conversations / events / summaries / routines")]
         s3[("S3<br/>TTS 音檔、衛教文件")]
         kb["Bedrock Knowledge Bases"]
@@ -63,8 +64,9 @@ flowchart TB
     model -->|tool calling| tools
     tools -->|routines + safety events| ddb
     chat -->|turn + session| ddb
-    chat -->|reply text| polly
-    polly --> s3
+    chat -->|reply text + lang + profile 腔調| tts
+    tts -.->|僅已核准 route| ttsmodels
+    ttsmodels --> s3
     closer -->|freeze snapshot, then closed| ddb
     closer -->|enqueue after closed| queue
     queue --> batch
@@ -86,6 +88,7 @@ flowchart TB
 - **語音對話迴圈**：App 錄音 → `POST /chat` 後端 ASR 辨識 → 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
 - **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論，只將正規化音訊傳送到 SageMaker Endpoint、驗證回應並將文字交給聊天流程。模型上線需通過逐項人工核准，未核准時一律 fail closed。ASR 子系統完整架構見 [`docs/asr/framework.md`](asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
+- **後端 TTS** 同樣採 remote-only 與設定驅動 route。`lang` 明確決定中文或客語；客語六腔只讀 elder profile 並保存 turn 快照。客語失敗不得改用中文 voice；所有 TTS provider 失敗時仍提交文字 turn，`reply_audio_url=null`。完整規格見 [`docs/tts/framework.md`](tts/framework.md)。
 - Bedrock Agent tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：Agent 在 `InvokeAgent` 回應前自動呼叫 tools Lambda 寫入 completion event 或發送安全通知。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
 - batch extractor 的分類前先做候選概念檢索：以 Bedrock embedding 取查詢向量，向 S3 Vectors 的概念索引取 Top-K 候選後才呼叫分類模型；同一個 embedding 供應者也用於 turn 切分。索引維度在建立時固定，因此 index 名稱帶模型與維度，模型抽換以新索引並存、切換環境變數完成。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
@@ -141,6 +144,7 @@ Base table：PK `elder_id` (String)。
 | `birth_year` | Number | 否 | 出生年份 |
 | `gender` | String | 否 | `male` \| `female` \| `other` |
 | `lang_preference` | String | 是 | `zh-TW` \| `hak` |
+| `hakka_dialect` | String | 是 | ASR/TTS 共用；六腔之一，預設 `htia_sixian` |
 | `address_region` | String | 否 | 居住區域 |
 | `health_notes` | List[String] | 是 | 預設 `[]` |
 | `family` | List[Object] | 是 | 預設 `[]`；元素含 `relation`, `name`, `note` |
@@ -158,6 +162,7 @@ Base table：PK `elder_id` (String)。
   "birth_year": 1948,
   "gender": "female",
   "lang_preference": "zh-TW",
+  "hakka_dialect": "htia_sixian",
   "address_region": "台北市大安區",
   "health_notes": ["高血壓", "膝關節退化"],
   "family": [
@@ -216,6 +221,7 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 | `session_id` | String | 是 | `ses_<identifier>` |
 | `created_at` | String | 是 | 固定毫秒、`+08:00` |
 | `lang` | String | 是 | `zh-TW` \| `hak` |
+| `hakka_dialect` | String | 否 | `lang=hak` 時 reserve 保存的 elder profile 腔調快照 |
 | `input_type` | String | 是 | `text` \| `audio` |
 | `elder_transcript`, `ai_respond_text` | String | 是 | 長者內容、AI 回覆內容 |
 | `ai_respond_audio_s3_key` | String | 否 | 只存 S3 object key (不存公開 URL) |

@@ -78,7 +78,9 @@
 
 ### `routes`（必填）
 
-每個 key 是語言代碼（`zh-TW`、`hak`），值為路由設定：
+每個 key 是語言 route：中文為 `zh-TW`；客語 production 為
+`hak:htia_sixian|htia_hailu|htia_dapu|htia_raoping|htia_zhaoan|htia_nansixian`。
+舊的 generic `hak` 只供 `default_config()` mock／本機測試相容。值為路由設定：
 
 | 欄位 | 型別 | 必填 | 說明 |
 |---|---|---|---|

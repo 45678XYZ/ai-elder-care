@@ -45,8 +45,9 @@ compute type 或 Formo prompt 環境變數。
 
 ### Formo prompt 邊界
 
-Formo 的方言 prompt 固定在 SageMaker endpoint 的 container／部署設定。
-Lambda 不傳 prompt ID。尚未選定 prompt 前，Formo endpoint 必須維持未啟用。
+Formo 六個方言 prompt 各固定在一個 SageMaker endpoint 的 container／部署設定。
+Lambda 只依 turn 保存的 elder profile 腔調選 endpoint，不傳 prompt ID。`asr_enable_endpoints=false`
+時七個 endpoint（CE + Formo 六腔）全部不建立。
 
 ---
 
@@ -58,8 +59,8 @@ flowchart LR
   B -->|"CanonicalAudio"| C{"ASR Router<br/>(router.py)"}
   C -->|"zh-TW"| D["CE SageMaker Endpoint"]
   C -->|"hak (mock)"| M["HakMockProvider"]
-  C -->|"hak (fallback)"| D
-  C -->|"hak (fallback)"| E["Formo SageMaker Endpoint"]
+  C -->|"hak 同語言 fallback"| D
+  C -->|"hak + profile 腔調"| E["Formo 六腔固定 Prompt Endpoints"]
   D --> F["JSON { text }"]
   E --> F
   M --> F
@@ -84,7 +85,7 @@ flowchart LR
 
 ### 路由表結構
 
-每種語言有一條 `RouteConfig`，指定：
+中文有一條 `RouteConfig`；客語 production 設定有六條 `hak:<dialect>` route，指定：
 
 - `provider_identifier`：主 provider
 - `fallback_chain`：依序嘗試的備援 provider（tuple）

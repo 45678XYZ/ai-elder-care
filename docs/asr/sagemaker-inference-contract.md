@@ -132,13 +132,14 @@ Container 的推論必須在 Lambda read timeout 內完成。超時由 botocore 
 
 **Lambda 不傳送 prompt ID。**
 
-Formo 的方言 prompt（`htia_sixian`、`htia_hailu` 等）必須固定在：
+Formo 的六個方言 prompt（`htia_sixian`、`htia_hailu` 等）各自固定在：
 - Container 的環境變數，或
 - SageMaker endpoint 的 deployment 設定
 
-選用哪個 prompt 是部署決策，不是 per-request 參數。Lambda 對此完全不知情。
+Lambda 依 elder profile 腔調選擇對應的固定 endpoint；prompt 仍不是 per-request 參數，
+推論 payload 與 CustomAttributes 都不得出現 prompt ID。
 
-尚未選定 prompt 前，Formo endpoint 必須維持未啟用（`asr_enable_endpoints = false`）。
+`asr_enable_endpoints = false` 時，六個 Formo endpoint 必須全部不存在。
 
 ---
 
