@@ -195,8 +195,9 @@ def _create_routine(event):
 
 
 # -----------------------------------------------------------------------------
-# PATCH /routines/{routine_id}：修改／停用
+# PATCH /routines/{routine_id}：修改
 # -----------------------------------------------------------------------------
+
 
 def _update_routine(event, routine_id: str):
     caller = auth.get_caller(event)
