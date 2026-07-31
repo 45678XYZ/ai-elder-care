@@ -494,15 +494,140 @@ resource "aws_lambda_permission" "close_session" {
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/chat/sessions/*/close"
 }
 
+# --- GET/POST /routines + PATCH/DELETE /routines/{routine_id} + POST /routines/{routine_id}/complete ---
+
+resource "aws_api_gateway_resource" "routines" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "routines"
+}
+
+resource "aws_api_gateway_method" "get_routines" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routines.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+}
+
+resource "aws_api_gateway_integration" "get_routines" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routines.id
+  http_method             = aws_api_gateway_method.get_routines.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.routines.invoke_arn
+}
+
+resource "aws_api_gateway_method" "post_routines" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routines.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+}
+
+resource "aws_api_gateway_integration" "post_routines" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routines.id
+  http_method             = aws_api_gateway_method.post_routines.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.routines.invoke_arn
+}
+
+resource "aws_api_gateway_resource" "routine_id" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.routines.id
+  path_part   = "{routine_id}"
+}
+
+resource "aws_api_gateway_method" "patch_routine" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routine_id.id
+  http_method          = "PATCH"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.path.routine_id" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "patch_routine" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routine_id.id
+  http_method             = aws_api_gateway_method.patch_routine.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.routines.invoke_arn
+}
+
+resource "aws_api_gateway_method" "delete_routine" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routine_id.id
+  http_method          = "DELETE"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.path.routine_id" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "delete_routine" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routine_id.id
+  http_method             = aws_api_gateway_method.delete_routine.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.routines.invoke_arn
+}
+
+resource "aws_api_gateway_resource" "routine_complete" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.routine_id.id
+  path_part   = "complete"
+}
+
+resource "aws_api_gateway_method" "complete_routine" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.routine_complete.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.path.routine_id" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "complete_routine" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.routine_complete.id
+  http_method             = aws_api_gateway_method.complete_routine.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_function.routines.invoke_arn
+}
+
+resource "aws_lambda_permission" "apigw_routines" {
+  statement_id  = "AllowApiGatewayRoutines"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.routines.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/routines*"
+}
+
 # =============================================================================
-# API Gateway Deployment ??Stage嚗1嚗?
+# API Gateway Deployment 及 Stage (v1)
 # =============================================================================
 
 resource "aws_api_gateway_deployment" "api" {
   rest_api_id = aws_api_gateway_rest_api.api.id
 
-  # triggers 閬項????method嚗ntegration嚗???閰望鈭身摰????圈蝵莎?
-  # ??API Gateway ??敹怎?匱蝥????臬????閬箇??航炊
   triggers = {
     redeployment = sha1(jsonencode([
       aws_api_gateway_method.get_events,
@@ -523,6 +648,16 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_integration.post_health_note,
       aws_api_gateway_method.delete_health_note,
       aws_api_gateway_integration.delete_health_note,
+      aws_api_gateway_method.get_routines,
+      aws_api_gateway_integration.get_routines,
+      aws_api_gateway_method.post_routines,
+      aws_api_gateway_integration.post_routines,
+      aws_api_gateway_method.patch_routine,
+      aws_api_gateway_integration.patch_routine,
+      aws_api_gateway_method.delete_routine,
+      aws_api_gateway_integration.delete_routine,
+      aws_api_gateway_method.complete_routine,
+      aws_api_gateway_integration.complete_routine,
       aws_api_gateway_method.get_summaries,
       aws_api_gateway_integration.get_summaries,
       aws_api_gateway_method.generate_summary,
@@ -535,6 +670,7 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_gateway_response.default_5xx,
     ]))
   }
+
 
   lifecycle {
     create_before_destroy = true

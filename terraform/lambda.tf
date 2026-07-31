@@ -297,6 +297,28 @@ resource "aws_lambda_function" "elders" {
   }
 }
 
+# 7. routines Lambda 函數 (GET/POST /routines, PATCH/DELETE /routines/{id}, POST /routines/{id}/complete)
+resource "aws_lambda_function" "routines" {
+  function_name = "${var.project_name}-routines"
+  role          = aws_iam_role.lambda_backend_role.arn
+  handler       = "handlers.routines.handler"
+  runtime       = "python3.11"
+  timeout       = 10
+
+  filename = "${path.module}/build/backend.zip"
+
+  environment {
+    variables = {
+      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+      TABLE_EVENTS               = aws_dynamodb_table.events.name
+      TABLE_ELDERS               = aws_dynamodb_table.elders.name
+      ROUTINE_GRACE_MINUTES      = tostring(var.routine_grace_minutes)
+      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    }
+  }
+}
+
+
 # =============================================================================
 # 5. Cognito Post Confirmation Trigger
 # =============================================================================
