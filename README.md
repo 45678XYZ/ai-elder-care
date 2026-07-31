@@ -3,6 +3,7 @@
 長者的 AI 語音陪伴＋照護者的資訊介面。三大模組：**A 語音互動陪伴、B 生活記錄與智慧摘要、C 照護者資訊介面**（做在同一個 App，登入後依角色切換模式）。
 
 - 系統框架：[docs/framework.md](docs/framework.md)
+- main 分支 ASR／Bedrock Agent／Frontend 相容性整併計畫：[docs/asr-agentcore-frontend-integration-plan.md](docs/asr-agentcore-frontend-integration-plan.md)
 - 對話分塊模型工作流：[docs/feature_segmenter-pairwise-v2.md](docs/feature_segmenter-pairwise-v2.md)
 - API 規格：[docs/api.md](docs/api.md)
 - ASR 子系統架構：[docs/asr/framework.md](docs/asr/framework.md)
