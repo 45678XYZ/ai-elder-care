@@ -646,9 +646,23 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
   @override
   void didUpdateWidget(_ElderProfileCard old) {
     super.didUpdateWidget(old);
-    // 換長輩、或增刪了註記，已確認清單都要重算
-    if (old.elder.elderId != widget.elder.elderId ||
-        old.elder.healthNotes.length != widget.elder.healthNotes.length) {
+
+    // 換長輩就收起編輯模式：那是「我正在改這一位」的狀態，帶到下一位身上會讓
+    // 照護者對著別人的資料看到一排刪除鈕。
+    if (old.elder.elderId != widget.elder.elderId) {
+      setState(() {
+        _editing = false;
+        _editingFamily = false;
+      });
+      _loadAcked();
+      return;
+    }
+
+    // 註記有增刪就重算已確認清單。比 note_id 而不是比長度——刪一筆的同時
+    // AI 補一筆，長度會一樣但內容已經換了。
+    final oldIds = old.elder.healthNotes.map((n) => n.noteId).toSet();
+    final newIds = widget.elder.healthNotes.map((n) => n.noteId).toSet();
+    if (oldIds.length != newIds.length || !oldIds.containsAll(newIds)) {
       _loadAcked();
     }
   }

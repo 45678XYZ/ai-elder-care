@@ -194,9 +194,7 @@ class DemoRepository implements CareRepository {
     if (_elders == null) await elders();
     final list = _elders!;
     final created = Elder(
-      // 真後端是 `"eld_" + uuid4().hex[:12]`；demo 用時間戳湊出同樣長度的十六進位。
-      elderId:
-          'eld_${DateTime.now().microsecondsSinceEpoch.toRadixString(16).padLeft(12, '0').substring(0, 12)}',
+      elderId: _newId('eld_'),
       name: fields['name'] as String? ?? '',
       nickname: fields['nickname'] as String?,
       birthYear: fields['birth_year'] as int?,
@@ -228,19 +226,23 @@ class DemoRepository implements CareRepository {
             ),
       ];
 
-  /// 真後端是 `"hn_" + uuid4().hex[:12]`；demo 用時間戳湊出同樣長度的十六進位。
+  /// demo 用的 ID 產生器。真後端是 `<prefix> + uuid4().hex[:12]`，這裡用時間戳
+  /// 湊出同樣長度的十六進位。
   ///
-  /// 同一微秒可能連續產生多筆（一次建立就送好幾項），補一個遞增值避免撞號——
-  /// note_id 是刪除時的唯一依據，撞了就會刪錯那一筆。
+  /// 兩個關鍵，兩個都踩過：
+  /// - 取**尾端** 12 位。`microsecondsSinceEpoch` 的十六進位有 13 位，取前 12 位
+  ///   會把每次遞增的最低位截掉，連續產生的 ID 會全部一樣。
+  /// - 補一個遞增值。同一微秒內可能連續產生多筆（一次建立就送好幾項健康註記）。
   ///
-  /// 取**尾端** 12 位：`microsecondsSinceEpoch` 的十六進位已經超過 12 位，
-  /// 取前 12 位會把每次遞增的低位截掉，等於所有 ID 都一樣。
-  static int _noteSeq = 0;
-  static String _newNoteId() {
-    final seed = DateTime.now().microsecondsSinceEpoch + _noteSeq++;
+  /// 撞號不是小事：ID 是增刪時的唯一依據，撞了就會動到別筆。
+  static int _idSeq = 0;
+  static String _newId(String prefix) {
+    final seed = DateTime.now().microsecondsSinceEpoch + _idSeq++;
     final hex = seed.toRadixString(16).padLeft(12, '0');
-    return 'hn_${hex.substring(hex.length - 12)}';
+    return '$prefix${hex.substring(hex.length - 12)}';
   }
+
+  static String _newNoteId() => _newId('hn_');
 
   @override
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields) async {

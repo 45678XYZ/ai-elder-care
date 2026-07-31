@@ -108,6 +108,23 @@ void main() {
       expect(created.nickname, isNull);
     });
 
+    test('連續建立不會撞 elder_id', () async {
+      // 時間戳的十六進位有 13 位，取前 12 位會把變動的最低位截掉——連續建立
+      // 會拿到同一個 ID，接著每個 by-id 的操作都會動到錯的長輩。
+      final repo = DemoRepository();
+      final ids = <String>{};
+      for (var i = 0; i < 5; i++) {
+        final created = await repo.createElder({'name': '測試$i'});
+        ids.add(created.elderId);
+      }
+
+      expect(ids, hasLength(5));
+      expect(
+        ids.every((id) => RegExp(r'^eld_[0-9a-f]{12}$').hasMatch(id)),
+        isTrue,
+      );
+    });
+
     test('健康狀況與家人會被帶上', () async {
       final repo = DemoRepository();
       final created = await repo.createElder({
