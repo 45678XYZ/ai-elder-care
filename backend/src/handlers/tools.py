@@ -373,6 +373,68 @@ def handle_get_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
+# 工具 5.1：更新長者的個人檔案、健康注意事項與生活習慣紀錄
+# -----------------------------------------------------------------------------
+
+def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具 5.1：更新長者的個人檔案（如新增健康注意事項、生活習慣或暱稱）。"""
+    elder_id = params.get("elder_id")
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+
+    try:
+        current_profile = db.get_elder(elder_id)
+        if not current_profile:
+            return {"status": "error", "message": f"找不到長者 (ID: {elder_id}) 的個人檔案"}
+
+        patch_data = {}
+
+        # 處理暱稱更新
+        if "nickname" in params and params["nickname"]:
+            patch_data["nickname"] = params["nickname"]
+
+        # 處理健康注意事項 (附加至陣列)
+        if "health_note_to_add" in params and params["health_note_to_add"]:
+            current_health_notes = current_profile.get("health_notes", [])
+            new_note = params["health_note_to_add"].strip()
+            if new_note and new_note not in current_health_notes:
+                current_health_notes.append(new_note)
+                patch_data["health_notes"] = current_health_notes
+
+        # 處理生活習慣紀錄 (附加至字串)
+        if "habit_note_to_append" in params and params["habit_note_to_append"]:
+            current_habit = current_profile.get("habit_note", "").strip()
+            new_habit = params["habit_note_to_append"].strip()
+            if new_habit:
+                if current_habit:
+                    patch_data["habit_note"] = f"{current_habit}\n{new_habit}"
+                else:
+                    patch_data["habit_note"] = new_habit
+
+        if not patch_data:
+            return {"status": "error", "message": "沒有提供任何欲更新的檔案欄位"}
+
+        updated_profile = db.update_elder(elder_id, patch_data)
+        
+        # 準備回傳的簡要格式
+        return {
+            "status": "success",
+            "message": "已成功更新長者個人檔案",
+            "updated_fields": list(patch_data.keys()),
+            "data": {
+                "elder_id": updated_profile.get("elder_id"),
+                "nickname": updated_profile.get("nickname"),
+                "health_notes": updated_profile.get("health_notes", []),
+                "habit_note": updated_profile.get("habit_note", "")
+            }
+        }
+
+    except Exception as e:
+        print(f"[Error] handle_update_elder_profile 失敗: {e}")
+        return {"status": "error", "message": f"更新長者檔案失敗: {str(e)}"}
+
+
+# -----------------------------------------------------------------------------
 # 工具六：查詢長者今日尚未完成 (pending) 的例行行程並回傳提醒事項
 # -----------------------------------------------------------------------------
 
@@ -709,6 +771,7 @@ TOOL_HANDLERS = {
     "deactivate_routine": handle_deactivate_routine,
     "get_recent_events": handle_get_recent_events,
     "get_elder_profile": handle_get_elder_profile,
+    "update_elder_profile": handle_update_elder_profile,
     "remind_pending_routines": handle_remind_pending_routines,
     "notify_caregiver": handle_notify_caregiver,
     "get_daily_summaries": handle_get_daily_summaries,
