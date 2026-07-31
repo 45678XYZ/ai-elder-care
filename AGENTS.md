@@ -29,6 +29,7 @@
 - API contract：`docs/api.md` 是前後端契約；任何 API 行為變更都必須在同一變更中更新該文件。
 - 文件同步：修改文件或新增/移動文件與頂層目錄時，更新 README 結構樹、文件清單與相關文件的交叉連結。
 - 修改程式碼前先閱讀 `docs/framework.md`；完成後依受影響區域執行 `docs/conventions.md` 要求的檢查，例如 `backend/` 使用 `python -m pytest`。
+- IaC 本機驗證可使用 OpenTofu CLI（`tofu init/fmt/validate/plan`），但不得把專案交付物轉成 OpenTofu：檔案維持 `.tf`、文件與架構名稱維持 Terraform，且指令造成的 `.terraform.lock.hcl` registry／hash 改寫須在工作完成前恢復為 Terraform 版本。未經使用者明確指示不得執行 `tofu apply/destroy`，規則等同 Terraform。
 - 與使用者溝通時使用繁體中文。
 
 ## Skills

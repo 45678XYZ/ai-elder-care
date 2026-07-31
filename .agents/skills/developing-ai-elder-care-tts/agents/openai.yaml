@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Elder-Care TTS"
+  short_description: "維護雙語 TTS、客語六腔路由與語音安全邊界"
+  default_prompt: "Use $developing-ai-elder-care-tts to implement or review the TTS subsystem safely."
