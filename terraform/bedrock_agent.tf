@@ -293,6 +293,36 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
           }
       }
 
+      # 工具 5.1：更新長者個人檔案與健康習慣
+      functions {
+        name        = "update_elder_profile"
+        description = "Update the elder's profile, including adding new health notes, appending to lifestyle habits, or changing their nickname based on conversation."
+          parameters {
+            map_block_key = "elder_id"
+            type        = "string"
+            description = "長者的唯一識別 ID，例如 eld_001"
+            required    = true
+          }
+          parameters {
+            map_block_key = "health_note_to_add"
+            type        = "string"
+            description = "欲新增的健康注意事項 (e.g. 發現會對特定藥物過敏、最近膝蓋痛)。將附加至陣列。"
+            required    = false
+          }
+          parameters {
+            map_block_key = "habit_note_to_append"
+            type        = "string"
+            description = "欲補充的生活習慣與喜好 (e.g. 喜歡喝溫開水、不吃牛肉)。將附加至既有字串。"
+            required    = false
+          }
+          parameters {
+            map_block_key = "nickname"
+            type        = "string"
+            description = "長者希望被稱呼的新暱稱。"
+            required    = false
+          }
+      }
+
       # 工具六：主動提醒待辦行程
       functions {
         name        = "remind_pending_routines"

@@ -120,6 +120,23 @@
 
 ---
 
+
+### 2.12 `update_elder_profile` (更新長者個人檔案)
+*   **LLM 描述**：`Update the elder's profile, including adding new health notes, appending to lifestyle habits, or changing their nickname based on conversation.`
+*   **輸入參數 (Input Parameters)**：
+    ```json
+    {
+      "type": "object",
+      "properties": {
+        "elder_id": { "type": "string" },
+        "health_note_to_add": { "type": "string", "description": "欲新增的健康注意事項" },
+        "habit_note_to_append": { "type": "string", "description": "欲補充的生活習慣與喜好" },
+        "nickname": { "type": "string", "description": "長者希望被稱呼的新暱稱" }
+      },
+      "required": ["elder_id"]
+    }
+    ```
+
 ## 3. 對話引導與工具調用實例
 
 以下展示 Agent 如何在對話中判斷意圖並流暢調用對應的工具：
