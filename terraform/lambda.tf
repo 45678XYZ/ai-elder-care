@@ -177,7 +177,7 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["bedrock:InvokeAgent", "bedrock:InvokeModel"]
+        Action   = ["bedrock-agentcore:InvokeAgentRuntime", "bedrock:InvokeModel"]
         Resource = "*"
       },
       {
@@ -232,9 +232,11 @@ resource "aws_lambda_function" "chat" {
 
   environment {
     variables = {
-      S3_AUDIO_BUCKET            = "${var.project_name}-audio"
-      BEDROCK_AGENT_ID           = aws_bedrockagent_agent.elder_companion_agent.id
-      BEDROCK_AGENT_ALIAS_ID     = "TSTALIASID"
+      S3_AUDIO_BUCKET = "${var.project_name}-audio"
+
+      # 對話大腦：AgentCore Runtime 以 ARN 定址、以 endpoint 名稱當 qualifier（見 agentcore.tf）
+      AGENTCORE_RUNTIME_ARN      = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
+      AGENTCORE_ENDPOINT_NAME    = aws_bedrockagentcore_agent_runtime_endpoint.live.name
       AWS_REGION                 = var.aws_region
       SAGEMAKER_CE_ENDPOINT_NAME = ""
       TABLE_ELDERS               = aws_dynamodb_table.elders.name
@@ -254,7 +256,7 @@ resource "aws_lambda_function" "chat" {
   }
 }
 
-# 5. tools Lambda 函數 (Bedrock Action Group 7 大工具箱)
+# 5. tools Lambda 函數（12 個工具箱；由 AgentCore Runtime 以 lambda:InvokeFunction 呼叫）
 resource "aws_lambda_function" "tools" {
   function_name = "${var.project_name}-tools"
   role          = aws_iam_role.lambda_backend_role.arn
