@@ -54,11 +54,11 @@ resource "aws_iam_role_policy" "bedrock_agent_policy" {
 
 # 3. 部署 Bedrock Agent 本體 (使用 Claude 5 Sonnet)
 resource "aws_bedrockagent_agent" "elder_companion_agent" {
-  agent_name                  = "${var.project_name}-companion"
-  
+  agent_name = "${var.project_name}-companion"
+
   # 修正：移除多餘的 3，並建議加上 us. 啟用跨區路由，確保照護系統的高可用性
-  foundation_model            = "us.anthropic.claude-sonnet-5" 
-  
+  foundation_model = "us.anthropic.claude-sonnet-5"
+
   agent_resource_role_arn     = aws_iam_role.bedrock_agent_role.arn
   idle_session_ttl_in_seconds = 1800 # Session 閒置 30 分鐘超時
 
@@ -82,10 +82,10 @@ EOT
 
 # 4. 定義 Action Group (LLM 呼叫特定 API 的工具箱)
 resource "aws_bedrockagent_agent_action_group" "routine_tools" {
-  agent_id             = aws_bedrockagent_agent.elder_companion_agent.id
-  agent_version        = "DRAFT" # 開發期綁定 DRAFT 版本
-  action_group_name    = "ElderCareRoutinesTools"
-  description          = "Tools for managing elder routines and completing daily tasks."
+  agent_id          = aws_bedrockagent_agent.elder_companion_agent.id
+  agent_version     = "DRAFT" # 開發期綁定 DRAFT 版本
+  action_group_name = "ElderCareRoutinesTools"
+  description       = "Tools for managing elder routines and completing daily tasks."
 
   # 綁定 Tools 處理的後端 Lambda 函數
   action_group_executor {
@@ -99,246 +99,246 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
       functions {
         name        = "get_today_routines"
         description = "Retrieve a list of scheduled routines and their completion status for a specific elder on a given date."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "date"
-            type        = "string"
-            description = "查詢的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
-            required    = true
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "date"
+          type          = "string"
+          description   = "查詢的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
+          required      = true
+        }
       }
 
       # 工具二：完成行程
       functions {
         name        = "complete_routine"
         description = "Mark a specific routine as completed and log a life event for the elder."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "routine_id"
-            type        = "string"
-            description = "要完成的行程 ID，例如 rtn_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "date"
-            type        = "string"
-            description = "完成的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
-            required    = true
-          }
-          parameters {
-            map_block_key = "completed_by"
-            type        = "string"
-            description = "完成行程的角色，口語回報一律填 conversation"
-            required    = true
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "routine_id"
+          type          = "string"
+          description   = "要完成的行程 ID，例如 rtn_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "date"
+          type          = "string"
+          description   = "完成的日期，格式為 YYYY-MM-DD，例如 2026-07-20"
+          required      = true
+        }
+        parameters {
+          map_block_key = "completed_by"
+          type          = "string"
+          description   = "完成行程的角色，口語回報一律填 conversation"
+          required      = true
+        }
       }
 
       # 工具三：建立新行程
       functions {
         name        = "create_routine"
         description = "Create a new scheduled routine (either one-time or recurring) for the elder."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "title"
-            type        = "string"
-            description = "行程的標題或內容，例如：吃血壓藥、看心臟科"
-            required    = true
-          }
-          parameters {
-            map_block_key = "type"
-            type        = "string"
-            description = "行程類型分類，例如：medication, diet, activity, wellbeing, other"
-            required    = true
-          }
-          parameters {
-            map_block_key = "time"
-            type        = "string"
-            description = "行程時間，格式為 HH:MM，例如 15:30"
-            required    = true
-          }
-          parameters {
-            map_block_key = "freq"
-            type        = "string"
-            description = "頻率：daily, weekly, once"
-            required    = true
-          }
-          parameters {
-            map_block_key = "date"
-            type        = "string"
-            description = "如果是單次(once)行程，必須提供日期 YYYY-MM-DD；每日或每週則免"
-            required    = false
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "title"
+          type          = "string"
+          description   = "行程的標題或內容，例如：吃血壓藥、看心臟科"
+          required      = true
+        }
+        parameters {
+          map_block_key = "type"
+          type          = "string"
+          description   = "行程類型分類，例如：medication, diet, activity, wellbeing, other"
+          required      = true
+        }
+        parameters {
+          map_block_key = "time"
+          type          = "string"
+          description   = "行程時間，格式為 HH:MM，例如 15:30"
+          required      = true
+        }
+        parameters {
+          map_block_key = "freq"
+          type          = "string"
+          description   = "頻率：daily, weekly, once"
+          required      = true
+        }
+        parameters {
+          map_block_key = "date"
+          type          = "string"
+          description   = "如果是單次(once)行程，必須提供日期 YYYY-MM-DD；每日或每週則免"
+          required      = false
+        }
       }
 
       # 工具三.一：更新行程
       functions {
         name        = "update_routine"
         description = "Update an existing scheduled routine (e.g., change time, title, or frequency) for the elder."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "routine_id"
-            type        = "string"
-            description = "要修改的行程 ID，例如 rtn_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "title"
-            type        = "string"
-            description = "行程的標題或內容"
-            required    = false
-          }
-          parameters {
-            map_block_key = "type"
-            type        = "string"
-            description = "行程類型分類：medication, diet, activity, wellbeing, other"
-            required    = false
-          }
-          parameters {
-            map_block_key = "time"
-            type        = "string"
-            description = "行程時間，格式為 HH:MM"
-            required    = false
-          }
-          parameters {
-            map_block_key = "freq"
-            type        = "string"
-            description = "頻率：daily, weekly, once"
-            required    = false
-          }
-          parameters {
-            map_block_key = "date"
-            type        = "string"
-            description = "單次行程的日期 YYYY-MM-DD"
-            required    = false
-          }
-          parameters {
-            map_block_key = "remind"
-            type        = "boolean"
-            description = "是否發送提醒"
-            required    = false
-          }
-          parameters {
-            map_block_key = "active"
-            type        = "boolean"
-            description = "是否啟用"
-            required    = false
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "routine_id"
+          type          = "string"
+          description   = "要修改的行程 ID，例如 rtn_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "title"
+          type          = "string"
+          description   = "行程的標題或內容"
+          required      = false
+        }
+        parameters {
+          map_block_key = "type"
+          type          = "string"
+          description   = "行程類型分類：medication, diet, activity, wellbeing, other"
+          required      = false
+        }
+        parameters {
+          map_block_key = "time"
+          type          = "string"
+          description   = "行程時間，格式為 HH:MM"
+          required      = false
+        }
+        parameters {
+          map_block_key = "freq"
+          type          = "string"
+          description   = "頻率：daily, weekly, once"
+          required      = false
+        }
+        parameters {
+          map_block_key = "date"
+          type          = "string"
+          description   = "單次行程的日期 YYYY-MM-DD"
+          required      = false
+        }
+        parameters {
+          map_block_key = "remind"
+          type          = "boolean"
+          description   = "是否發送提醒"
+          required      = false
+        }
+        parameters {
+          map_block_key = "active"
+          type          = "boolean"
+          description   = "是否啟用"
+          required      = false
+        }
       }
 
       # 工具三.二：停用/刪除行程
       functions {
         name        = "deactivate_routine"
         description = "Deactivate or cancel an existing scheduled routine for the elder."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "routine_id"
-            type        = "string"
-            description = "要停用的行程 ID，例如 rtn_001"
-            required    = true
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "routine_id"
+          type          = "string"
+          description   = "要停用的行程 ID，例如 rtn_001"
+          required      = true
+        }
       }
 
       # 工具四：查詢近期生活事件歷史
       functions {
         name        = "get_recent_events"
         description = "Retrieve recent life events, activities, and recorded health signals for the elder."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "event_type"
-            type        = "string"
-            description = "可選的事件類型過濾，例如：routine_completion, wellbeing, activity, family, diet, other"
-            required    = false
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "event_type"
+          type          = "string"
+          description   = "可選的事件類型過濾，例如：routine_completion, wellbeing, activity, family, diet, other"
+          required      = false
+        }
       }
 
       # 工具五：查詢長者個人喜好與家屬檔案
       functions {
         name        = "get_elder_profile"
         description = "Retrieve personal preferences, hobbies, health notes, and family members of the elder."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
       }
 
       # 工具 5.1：更新長者個人檔案與健康習慣
       functions {
         name        = "update_elder_profile"
         description = "Update the elder's profile, including adding new health notes, appending to lifestyle habits, or changing their nickname based on conversation."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "health_note_to_add"
-            type        = "string"
-            description = "欲新增的健康注意事項 (e.g. 發現會對特定藥物過敏、最近膝蓋痛)。將附加至陣列。"
-            required    = false
-          }
-          parameters {
-            map_block_key = "habit_note_to_append"
-            type        = "string"
-            description = "欲補充的生活習慣與喜好 (e.g. 喜歡喝溫開水、不吃牛肉)。將附加至既有字串。"
-            required    = false
-          }
-          parameters {
-            map_block_key = "nickname"
-            type        = "string"
-            description = "長者希望被稱呼的新暱稱。"
-            required    = false
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "health_note_to_add"
+          type          = "string"
+          description   = "欲新增的健康注意事項 (e.g. 發現會對特定藥物過敏、最近膝蓋痛)。將附加至陣列。"
+          required      = false
+        }
+        parameters {
+          map_block_key = "habit_note_to_append"
+          type          = "string"
+          description   = "欲補充的生活習慣與喜好 (e.g. 喜歡喝溫開水、不吃牛肉)。將附加至既有字串。"
+          required      = false
+        }
+        parameters {
+          map_block_key = "nickname"
+          type          = "string"
+          description   = "長者希望被稱呼的新暱稱。"
+          required      = false
+        }
       }
 
       # 工具六：主動提醒待辦行程
       functions {
         name        = "remind_pending_routines"
         description = "Check and retrieve pending scheduled routines for the elder to generate warm reminders."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "date"
-            type        = "string"
-            description = "可選的查詢日期，格式為 YYYY-MM-DD，預設為今天"
-            required    = false
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "date"
+          type          = "string"
+          description   = "可選的查詢日期，格式為 YYYY-MM-DD，預設為今天"
+          required      = false
+        }
       }
 
       # 工具七：發送照護者即時緊急警報與摘要通知（醫療級安全機制）
@@ -353,55 +353,55 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
           - summary: Daily health summary report.
           IMPORTANT: Only caregivers (not elders) can fully resolve an alert via the App.
         DESC
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "category"
-            type        = "string"
-            description = "通知類別：emergency | critical_escalation | mitigation | routine | summary"
-            required    = true
-          }
-          parameters {
-            map_block_key = "message"
-            type        = "string"
-            description = "要推播給照護者的詳細訊息內容（請包含事件的人事時地）"
-            required    = true
-          }
-            parameters {
-                map_block_key = "context_event_id"
-                type        = "string"
-                description = "選填。用於 mitigation 或 critical_escalation 時，傳入對應的 alert_id（由系統在 emergency 觸發時回傳），確保 Context Matching 精準收斂到同一筆 type=safety event。alert_id 格式為 alert_<hex>，例如 alert_a1b2c3d4e5f6。"
-                required    = false
-            }
-          parameters {
-            map_block_key = "rag_content"
-            type        = "string"
-            description = "選填。來自 RAG 衛教知識庫的相關急救或照護指南內容。將折疊附加至 Email 附錄（附免責聲明），不影響信件主要人事時地資訊版面。"
-            required    = false
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
+        }
+        parameters {
+          map_block_key = "category"
+          type          = "string"
+          description   = "通知類別：emergency | critical_escalation | mitigation | routine | summary"
+          required      = true
+        }
+        parameters {
+          map_block_key = "message"
+          type          = "string"
+          description   = "要推播給照護者的詳細訊息內容（請包含事件的人事時地）"
+          required      = true
+        }
+        parameters {
+          map_block_key = "context_event_id"
+          type          = "string"
+          description   = "選填。用於 mitigation 或 critical_escalation 時，傳入對應的 alert_id（由系統在 emergency 觸發時回傳），確保 Context Matching 精準收斂到同一筆 type=safety event。alert_id 格式為 alert_<hex>，例如 alert_a1b2c3d4e5f6。"
+          required      = false
+        }
+        parameters {
+          map_block_key = "rag_content"
+          type          = "string"
+          description   = "選填。來自 RAG 衛教知識庫的相關急救或照護指南內容。將折疊附加至 Email 附錄（附免責聲明），不影響信件主要人事時地資訊版面。"
+          required      = false
+        }
       }
 
       # 工具八：查詢長者近幾日每日健康摘要（提供縱向健康趨勢）
       functions {
         name        = "get_daily_summaries"
         description = "Retrieve recent daily health summaries for the elder to understand health trends over multiple days. Use this when the elder or caregiver asks about recent health status, trends, or when you need context about the elder's health over the past few days."
-          parameters {
-            map_block_key = "elder_id"
-            type        = "string"
-            description = "長者的唯一識別 ID，例如 eld_001"
-            required    = true
-          }
-          parameters {
-            map_block_key = "days"
-            type        = "integer"
-            description = "查詢最近幾天的摘要，預設為 3 天（含今天），最多 7 天。例如 days=3 代表今天+昨天+前天。"
-            required    = false
-          }
+        parameters {
+          map_block_key = "elder_id"
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
         }
+        parameters {
+          map_block_key = "days"
+          type          = "integer"
+          description   = "查詢最近幾天的摘要，預設為 3 天（含今天），最多 7 天。例如 days=3 代表今天+昨天+前天。"
+          required      = false
+        }
+      }
 
       # 工具九：回顧本次對話歷史（補救 Bedrock Session 20 分鐘過期問題）
       functions {
@@ -409,20 +409,20 @@ resource "aws_bedrockagent_agent_action_group" "routine_tools" {
         description = "Retrieve the most recent conversation turns with the elder. Use this tool when you feel you have lost context of the current conversation, for example after a session timeout, to recall what was discussed earlier in this session."
         parameters {
           map_block_key = "elder_id"
-          type        = "string"
-          description = "長者的唯一識別 ID，例如 eld_001"
-          required    = true
+          type          = "string"
+          description   = "長者的唯一識別 ID，例如 eld_001"
+          required      = true
         }
         parameters {
           map_block_key = "limit"
-          type        = "integer"
-          description = "要回顧最近幾句對話，預設為 8，最多 15。建議用預設值即可。"
-          required    = false
+          type          = "integer"
+          description   = "要回顧最近幾句對話，預設為 8，最多 15。建議用預設值即可。"
+          required      = false
         }
-    }
       }
     }
   }
+}
 
 # 5. 授權 Bedrock 調用 Tools Lambda
 resource "aws_lambda_permission" "allow_bedrock_to_invoke_tools" {

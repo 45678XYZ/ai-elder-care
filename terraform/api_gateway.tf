@@ -501,8 +501,8 @@ resource "aws_api_gateway_method_settings" "v1" {
     # ?瑁垢?臬???隤餈游?嚗銝鋆蔭??瘙????蝭瘚?脣????砌???
     throttling_rate_limit  = var.api_throttle_rate_limit
     throttling_burst_limit = var.api_throttle_burst_limit
-    metrics_enabled = true
-    logging_level   = "ERROR"
+    metrics_enabled        = true
+    logging_level          = "ERROR"
   }
 }
 

@@ -89,7 +89,7 @@ locals {
     concurrency = {
       spill_wait_ms = 250
     }
-  }) : jsonencode({
+    }) : jsonencode({
     routes = {
       "hak" = {
         route               = "hak_disabled"

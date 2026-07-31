@@ -76,19 +76,19 @@ resource "aws_lambda_function" "daily_digest" {
   role          = aws_iam_role.daily_digest_role.arn
   handler       = "handlers.daily_digest.handler"
   runtime       = "python3.11"
-  timeout       = 120  # 晚報需掃描所有長者，給足夠時間
+  timeout       = 120 # 晚報需掃描所有長者，給足夠時間
   memory_size   = 256
 
   filename = "${path.module}/build/backend.zip"
 
   environment {
     variables = {
-      TABLE_ELDERS          = aws_dynamodb_table.elders.name
-      TABLE_ROUTINES        = aws_dynamodb_table.routines.name
-      TABLE_EVENTS          = aws_dynamodb_table.events.name
-      TABLE_DAILY_SUMMARIES = aws_dynamodb_table.daily_summaries.name
+      TABLE_ELDERS               = aws_dynamodb_table.elders.name
+      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+      TABLE_EVENTS               = aws_dynamodb_table.events.name
+      TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
       CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
-      AWS_REGION_NAME       = var.aws_region
+      AWS_REGION_NAME            = var.aws_region
     }
   }
 }
@@ -133,7 +133,7 @@ resource "aws_scheduler_schedule" "daily_digest_schedule" {
   group_name = "default"
 
   flexible_time_window {
-    mode = "OFF"  # 嚴格固定時間，不允許彈性窗口
+    mode = "OFF" # 嚴格固定時間，不允許彈性窗口
   }
 
   # cron(分 時 日 月 星期 年) — UTC 14:00 = 台灣時間 22:00
@@ -146,8 +146,8 @@ resource "aws_scheduler_schedule" "daily_digest_schedule" {
 
     # 傳給 Lambda 的事件 payload（空 JSON 即可，Lambda 自行查詢所有長者）
     input = jsonencode({
-      source    = "aws.scheduler"
-      task_type = "daily_digest"
+      source            = "aws.scheduler"
+      task_type         = "daily_digest"
       trigger_time_utc8 = "22:00"
     })
 
