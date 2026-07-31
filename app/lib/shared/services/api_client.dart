@@ -19,6 +19,65 @@ enum ChatLanguage {
   const ChatLanguage(this.wireValue);
 
   final String wireValue;
+
+  /// 裝置 TTS fallback 要求的 locale；只做 capability 判斷，不代表已安裝 voice。
+  String get deviceTtsLocale => this == ChatLanguage.zhTw ? 'zh-TW' : 'hak-TW';
+
+  /// 只有裝置回報精確支援要求 locale 時才可嘗試 OS TTS，否則保留文字／重試。
+  bool canUseDeviceTtsFallback(Iterable<String> supportedLocales) {
+    final requiredLocale = deviceTtsLocale.toLowerCase();
+    return supportedLocales.any(
+      (locale) => locale.replaceAll('_', '-').toLowerCase() == requiredLocale,
+    );
+  }
+}
+
+/// 客語 ASR 與 TTS 共用腔調；來源只允許 elder profile。
+enum HakkaDialect {
+  sixian('htia_sixian'),
+  hailu('htia_hailu'),
+  dapu('htia_dapu'),
+  raoping('htia_raoping'),
+  zhaoan('htia_zhaoan'),
+  nansixian('htia_nansixian');
+
+  const HakkaDialect(this.wireValue);
+
+  final String wireValue;
+
+  static HakkaDialect fromWireValue(String value) => values.firstWhere(
+        (dialect) => dialect.wireValue == value,
+        orElse: () => HakkaDialect.sixian,
+      );
+}
+
+/// Elder profile 中供 ASR/TTS 共用的語音偏好投影。
+class ElderVoicePreferences {
+  const ElderVoicePreferences({
+    required this.language,
+    required this.hakkaDialect,
+  });
+
+  factory ElderVoicePreferences.fromJson(Map<String, Object?> json) {
+    final languageValue = json['lang_preference'] as String? ?? 'zh-TW';
+    return ElderVoicePreferences(
+      language: ChatLanguage.values.firstWhere(
+        (language) => language.wireValue == languageValue,
+        orElse: () => ChatLanguage.zhTw,
+      ),
+      hakkaDialect: HakkaDialect.fromWireValue(
+        json['hakka_dialect'] as String? ?? HakkaDialect.sixian.wireValue,
+      ),
+    );
+  }
+
+  final ChatLanguage language;
+  final HakkaDialect hakkaDialect;
+
+  Map<String, Object?> toJson() => {
+        'lang_preference': language.wireValue,
+        'hakka_dialect': hakkaDialect.wireValue,
+      };
 }
 
 /// 上傳音訊的容器格式。後端只接受這兩種。
@@ -62,7 +121,7 @@ class ChatResult {
       sessionId: json['session_id'] as String? ?? '',
       transcript: json['transcript'] as String? ?? '',
       replyText: json['reply_text'] as String? ?? '',
-      replyAudioUrl: json['reply_audio_url'] as String? ?? '',
+      replyAudioUrl: json['reply_audio_url'] as String?,
       routinesUpdated: json['routines_updated'] as bool? ?? false,
     );
   }
@@ -75,8 +134,10 @@ class ChatResult {
   final String transcript;
   final String replyText;
 
-  /// 15 分鐘有效的 S3 presigned URL，可直接串流播放。
-  final String replyAudioUrl;
+  /// 15 分鐘有效的 S3 presigned URL；TTS 全部失敗時為 null，文字回覆仍成立。
+  final String? replyAudioUrl;
+
+  bool get hasReplyAudio => replyAudioUrl?.isNotEmpty ?? false;
 
   /// 為 true 時應背景重拉 `GET /routines` 並重排本地通知。
   final bool routinesUpdated;
@@ -179,6 +240,15 @@ class ApiClient {
     return _post('/chat/sessions/$sessionId/close', const <String, Object?>{});
   }
 
+  /// 更新 elder profile 的語言與客語腔調；後續 turn 的 ASR/TTS 會共同採用。
+  Future<ElderVoicePreferences> updateElderVoicePreferences({
+    required String elderId,
+    required ElderVoicePreferences preferences,
+  }) async {
+    final json = await _patch('/elders/$elderId', preferences.toJson());
+    return ElderVoicePreferences.fromJson(json);
+  }
+
   void close() => _http.close();
 
   // TODO: getElders() / getElder() / createElder() / updateElder()
@@ -210,6 +280,30 @@ class ApiClient {
       throw ApiTransportException('呼叫 $path 失敗：$error');
     }
 
+    return _decode(response, path);
+  }
+
+  Future<Map<String, Object?>> _patch(
+    String path,
+    Map<String, Object?> body, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final token = await idTokenProvider();
+    final http.Response response;
+    try {
+      response = await _http
+          .patch(
+            Uri.parse('$baseUrl$path'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(timeout);
+    } on Exception catch (error) {
+      throw ApiTransportException('呼叫 $path 失敗：$error');
+    }
     return _decode(response, path);
   }
 

@@ -232,6 +232,7 @@ resource "aws_lambda_function" "chat" {
       BEDROCK_AGENT_ALIAS_ID     = "TSTALIASID"
       AWS_REGION                 = var.aws_region
       ASR_CONFIG_JSON            = local.asr_config_json
+      TTS_CONFIG_JSON            = local.tts_config_json
       TABLE_ELDERS               = aws_dynamodb_table.elders.name
       TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
       TABLE_EVENTS               = aws_dynamodb_table.events.name

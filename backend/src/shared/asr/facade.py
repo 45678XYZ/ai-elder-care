@@ -1,7 +1,7 @@
 """
 ASR Facade — ASR 領域套件的單一入口。
 
-只接收六個輸入（audio_bytes、input_format、language、deadline、cancellation、context），
+接收音訊、格式、語言、deadline、取消、correlation context 與選填 profile 客語腔調，
 依序協調 input gate → canonicalizer → router → provider，
 只回傳非空白 Transcript 或 TypedAsrError。
 
@@ -24,6 +24,7 @@ from .types import (
     CanonicalAudio,
     CorrelationContext,
     Deadline,
+    HakkaDialect,
     InputFormat,
     Language,
     Transcript,
@@ -35,8 +36,8 @@ class AsrFacade:
     """
     ASR 領域套件的單一入口 Facade。
 
-    接收 6 個輸入：audio_bytes、input_format、language、deadline、
-    cancellation、context。
+        接收 audio_bytes、input_format、language、deadline、cancellation、context，
+        客語另可帶 profile 腔調選擇固定 prompt endpoint。
 
     依序協調：input gate → canonicalizer → router（含備援鏈與 provider）。
     回傳 Transcript 或 TypedAsrError。
@@ -75,6 +76,7 @@ class AsrFacade:
         deadline: Deadline,
         cancellation: CancellationSignal,
         context: CorrelationContext,
+        hakka_dialect: HakkaDialect | None = None,
     ) -> AsrTerminalResult:
         """
         執行一次 ASR 辨識。
@@ -126,7 +128,7 @@ class AsrFacade:
         # ─── Route → Provider ───
         # 先以設定的 route 名稱填 telemetry，實際服務的 provider 在鏈跑完後覆寫，
         # 因為備援可能讓最終處理者不是設定中的主 provider。
-        route_config = self._router.route_config_for(language)
+        route_config = self._router.route_config_for(language, hakka_dialect)
         if route_config is not None:
             emitter.set_route(route_config.route)
             emitter.set_provider_id(route_config.provider_identifier)
@@ -137,6 +139,7 @@ class AsrFacade:
             deadline=deadline,
             cancellation=cancellation,
             context=context,
+            hakka_dialect=hakka_dialect,
         )
 
         if outcome.attempts:

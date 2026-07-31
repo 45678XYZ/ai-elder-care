@@ -12,21 +12,23 @@ locals {
   # 建立 endpoint 不等於模型已核准；個別模型 ADR 未通過前，production gate
   # 必須維持關閉，build_provider_registry() 不會建立遠端 provider。
   asr_config_json = var.asr_enable_endpoints ? jsonencode({
-    routes = {
-      "hak" = {
-        route               = "hak_primary"
-        provider_identifier = "ce_remote"
-        enabled             = true
-        fallback_chain      = ["formo_remote"]
-      }
+    routes = merge({
       "zh-TW" = {
         route               = "zh_tw_primary"
         provider_identifier = "ce_remote"
         enabled             = true
         fallback_chain      = []
       }
-    }
-    providers = {
+      }, {
+      for dialect, endpoint_name in local.asr_formo_endpoint_names :
+      "hak:${dialect}" => {
+        route               = "hak_${replace(dialect, "htia_", "")}_primary"
+        provider_identifier = "formo_remote_${dialect}"
+        enabled             = true
+        fallback_chain      = ["ce_remote"]
+      }
+    })
+    providers = merge({
       ce_remote = {
         identifier     = "ce_remote"
         status         = "enabled"
@@ -35,15 +37,17 @@ locals {
         endpoint_name  = local.asr_ce_endpoint_name
         max_concurrent = 4
       }
-      formo_remote = {
-        identifier     = "formo_remote"
+      }, {
+      for dialect, endpoint_name in local.asr_formo_endpoint_names :
+      "formo_remote_${dialect}" => {
+        identifier     = "formo_remote_${dialect}"
         status         = "enabled"
         kind           = "remote_model"
         metadata_ref   = "formospeech_whisper_v3"
-        endpoint_name  = local.asr_formo_endpoint_name
+        endpoint_name  = endpoint_name
         max_concurrent = 2
       }
-    }
+    })
     model_metadata = {
       taiwan_tongues_ce = {
         model_id          = "adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0"
@@ -90,20 +94,22 @@ locals {
       spill_wait_ms = 250
     }
     }) : jsonencode({
-    routes = {
-      "hak" = {
-        route               = "hak_disabled"
-        provider_identifier = "production_disabled"
-        enabled             = false
-        fallback_chain      = []
-      }
+    routes = merge({
       "zh-TW" = {
         route               = "zh_tw_disabled"
         provider_identifier = "production_disabled"
         enabled             = false
         fallback_chain      = []
       }
-    }
+      }, {
+      for dialect in local.asr_formo_dialects :
+      "hak:${dialect}" => {
+        route               = "hak_${replace(dialect, "htia_", "")}_disabled"
+        provider_identifier = "production_disabled"
+        enabled             = false
+        fallback_chain      = []
+      }
+    })
     providers = {
       production_disabled = {
         identifier = "production_disabled"

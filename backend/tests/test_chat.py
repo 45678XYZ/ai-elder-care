@@ -19,9 +19,11 @@ TRANSCRIPT = "小助手，我今天已經吃過血壓藥了"
 REPLY = "阿蘭嬤，太棒了！我已經幫您登記好血壓藥囉。"
 
 
-class DummyTTS:
-    def synthesize(self, text):
-        return b"mock-mp3-bytes"
+class DummyTTSFacade:
+    def synthesize(self, **kwargs):
+        from src.shared.tts import SynthesizedAudio
+
+        return SynthesizedAudio(b"mock-mp3-bytes", "test_tts")
 
 
 def _make_event(body_dict, elder_id=ELDER):
@@ -94,9 +96,13 @@ def stack(monkeypatch):
 
         calls = []
         monkeypatch.setattr(
-            chat, "invoke_agent_brain", lambda eid, txt: calls.append(txt) or (REPLY, True, False)
+            chat,
+            "invoke_agent_brain",
+            lambda eid, txt, lang, dialect: calls.append(txt)
+            or (REPLY, True, False),
         )
-        monkeypatch.setattr(chat.TTSFactory, "get_tts_engine", lambda lang: DummyTTS())
+        monkeypatch.setattr(chat.db, "get_elder", lambda elder_id: {"elder_id": elder_id})
+        monkeypatch.setattr(chat, "get_tts_facade", lambda: DummyTTSFacade())
         monkeypatch.setattr(
             chat, "upload_audio_to_s3", lambda audio, conv_id: f"tts/{conv_id}.mp3"
         )
@@ -121,6 +127,44 @@ def post(chat, **overrides):
 
 def body_of(response):
     return json.loads(response["body"])
+
+
+def test_agent_receives_explicit_language_and_dialect(monkeypatch):
+    from src.handlers import chat
+    from src.shared.tts import HakkaDialect
+
+    class Client:
+        def invoke_agent(self, **kwargs):
+            self.kwargs = kwargs
+            return {"completion": [{"chunk": {"bytes": "食飽咧。".encode()}}]}
+
+    client = Client()
+    monkeypatch.setattr(chat, "BEDROCK_AGENT_ID", "agent-1")
+    monkeypatch.setattr(chat, "get_bedrock_agent_runtime", lambda: client)
+
+    reply, _, _ = chat.invoke_agent_brain(
+        ELDER, "食飽吂？", "hak", HakkaDialect.HAILU
+    )
+
+    attributes = client.kwargs["sessionState"]["promptSessionAttributes"]
+    assert attributes == {
+        "response_language": "hak",
+        "hakka_dialect": "htia_hailu",
+    }
+    assert "[回覆語言: hak]" in client.kwargs["inputText"]
+    assert reply == "食飽咧。"
+
+
+def test_local_hakka_agent_fallback_does_not_switch_to_chinese(monkeypatch):
+    from src.handlers import chat
+    from src.shared.tts import HakkaDialect
+
+    monkeypatch.setattr(chat, "BEDROCK_AGENT_ID", "")
+    reply, _, _ = chat.invoke_agent_brain(
+        ELDER, "食飽吂？", "hak", HakkaDialect.SIXIAN
+    )
+
+    assert "𠊎" in reply
 
 
 # -- 輸入校驗（不需要資料庫）----------------------------------------------------
@@ -380,42 +424,47 @@ def test_expired_lease_is_taken_over_and_completed(stack, monkeypatch):
 # -- 失敗路徑 ------------------------------------------------------------------
 
 
-def test_tts_failure_is_terminal_and_frees_the_session(stack, monkeypatch):
+def test_tts_failure_completes_text_turn_and_frees_the_session(stack, monkeypatch):
     chat, db, sessions, turns, _ = stack
 
-    def broken(lang):
-        raise RuntimeError("polly down")
+    class BrokenTTSFacade:
+        def synthesize(self, **kwargs):
+            from src.shared.tts import TtsErrorCategory, TypedTtsError
 
-    monkeypatch.setattr(chat.TTSFactory, "get_tts_engine", broken)
+            return TypedTtsError(
+                TtsErrorCategory.PROVIDER_UNAVAILABLE, "provider down", True
+            )
+
+    monkeypatch.setattr(chat, "get_tts_facade", lambda: BrokenTTSFacade())
     response = post(chat)
-    assert response["statusCode"] == 500
-    assert body_of(response)["error"]["code"] == "INTERNAL_ERROR"
+    assert response["statusCode"] == 200
+    assert body_of(response)["reply_audio_url"] is None
 
     turn = turns.get_turn(ELDER, turns.conversation_id_for(ELDER, REQUEST_ID))
-    assert turn["request_status"] == turns.STATUS_FAILED
-    assert turn["error_code"] == "INTERNAL_ERROR"
+    assert turn["request_status"] == turns.STATUS_COMPLETED
+    assert turn["ai_respond_text"] == REPLY
     session = sessions.get_session(ELDER, turn["session_id"])
-    # 名額必須還回去，否則 session 永遠關不起來
     assert session["inflight_turn_count"] == 0
-    assert session["turn_ids"] == []
+    assert session["turn_ids"] == [turn["conversation_id"]]
     date = turn["created_at"][:10]
-    assert db.list_turn_times(ELDER, date, date) == []
+    assert len(db.list_turn_times(ELDER, date, date)) == 1
 
 
-def test_failed_turn_replays_the_same_error(stack, monkeypatch):
-    """failed 是終態：重試必須換新的 client_request_id，不是重跑同一個。"""
+def test_tts_failure_replays_the_completed_text_result(stack, monkeypatch):
+    """TTS 失敗仍是 completed；同一冪等請求不重跑 Agent。"""
     chat, _, _, _, calls = stack
 
-    def broken(lang):
-        raise RuntimeError("polly down")
+    class BrokenTTSFacade:
+        def synthesize(self, **kwargs):
+            raise RuntimeError("polly down")
 
-    monkeypatch.setattr(chat.TTSFactory, "get_tts_engine", broken)
+    monkeypatch.setattr(chat, "get_tts_facade", lambda: BrokenTTSFacade())
     post(chat)
-    monkeypatch.setattr(chat.TTSFactory, "get_tts_engine", lambda lang: DummyTTS())
+    monkeypatch.setattr(chat, "get_tts_facade", lambda: DummyTTSFacade())
 
     response = post(chat)
-    assert response["statusCode"] == 500
-    assert body_of(response)["error"]["code"] == "INTERNAL_ERROR"
+    assert response["statusCode"] == 200
+    assert body_of(response)["reply_audio_url"] is None
     assert calls == [TRANSCRIPT]
 
 
@@ -437,7 +486,7 @@ def test_unstored_audio_does_not_become_a_dead_link(stack, monkeypatch):
 def test_bedrock_failure_is_recorded_as_failed(stack, monkeypatch):
     chat, _, _, turns, _ = stack
 
-    def broken(elder_id, transcript):
+    def broken(elder_id, transcript, lang, dialect):
         raise RuntimeError("bedrock down")
 
     monkeypatch.setattr(chat, "invoke_agent_brain", broken)

@@ -13,7 +13,7 @@
 5. 若傳入音檔 (audio)，透過 remote-only ASR facade 將音訊轉成文字 transcript；
    未核准路由一律 fail closed，不回落到假逐字稿。
 6. 調用 Amazon Bedrock Agent 大腦進行推導並處理 Tool Calling 觸發。
-7. 依據 lang (zh-TW 或 hak) 調用 TTSFactory 生成語音 (中文 Polly / 客語 OmniVoice 帶 Fallback 降級防護)，並把 MP3 上傳至 S3。
+7. 依 lang 與 elder profile 腔調呼叫受控 TTS route；只允許同語言備援，成功才上傳 MP3。
 8. 以 transaction 提交 `completed` 結果、解除 inflight 名額並把本輪追加進 session，
    再回傳符合 api.md 規範的 Response 200（音訊每次動態簽發 15 分鐘 presigned URL）。
 
@@ -43,6 +43,7 @@ from src.shared.asr.types import (
     CancellationSignal,
     CorrelationContext,
     Deadline,
+    HakkaDialect as AsrHakkaDialect,
     InputFormat,
     Language,
     Transcript,
@@ -50,7 +51,18 @@ from src.shared.asr.types import (
 )
 from src.shared.asr_http import SERVER_SIDE_CATEGORIES, map_asr_error
 from src.shared.models import ChatRequest
-from src.shared.tts import TTSFactory
+from src.shared.tts import (
+    CancellationSignal as TtsCancellationSignal,
+    ConfigParseError as TtsConfigParseError,
+    CorrelationContext as TtsCorrelationContext,
+    Deadline as TtsDeadline,
+    HakkaDialect,
+    Language as TtsLanguage,
+    SynthesizedAudio,
+    TtsErrorCategory,
+    TypedTtsError,
+    get_tts_facade,
+)
 from src.shared.validation import RequestValidationError, validate
 
 
@@ -60,6 +72,9 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 5 * 1024 * 1024
 ASR_RESERVED_TAIL_SECONDS = float(os.environ.get("ASR_RESERVED_TAIL_SECONDS", "8"))
 ASR_DEFAULT_BUDGET_SECONDS = float(os.environ.get("ASR_DEFAULT_BUDGET_SECONDS", "20"))
+TTS_RESERVED_TAIL_SECONDS = float(os.environ.get("TTS_RESERVED_TAIL_SECONDS", "2"))
+TTS_DEFAULT_BUDGET_SECONDS = float(os.environ.get("TTS_DEFAULT_BUDGET_SECONDS", "8"))
+DEFAULT_HAKKA_DIALECT = HakkaDialect.SIXIAN
 
 
 # 環境變數自訂名稱
@@ -119,12 +134,28 @@ def resolve_asr_budget_seconds(context: Any) -> float:
     return max(0.0, min(budget, ASR_DEFAULT_BUDGET_SECONDS))
 
 
+def resolve_tts_budget_seconds(context: Any) -> float:
+    """保留 S3 與 commit 時間後，限制同步 TTS 最多使用八秒。"""
+    remaining_ms = None
+    getter = getattr(context, "get_remaining_time_in_millis", None)
+    if callable(getter):
+        try:
+            remaining_ms = getter()
+        except Exception:
+            remaining_ms = None
+    if not isinstance(remaining_ms, (int, float)):
+        return TTS_DEFAULT_BUDGET_SECONDS
+    budget = remaining_ms / 1000.0 - TTS_RESERVED_TAIL_SECONDS
+    return max(0.0, min(budget, TTS_DEFAULT_BUDGET_SECONDS))
+
+
 def transcribe_audio(
     audio_bytes: bytes,
     audio_format: str,
     lang: str,
     correlation_id: str,
     budget_seconds: float,
+    hakka_dialect: HakkaDialect | None = None,
 ) -> Transcript | TypedAsrError:
     """透過 ASR 領域 facade 辨識音訊，不在 handler 選擇或直接呼叫 endpoint。"""
     try:
@@ -144,11 +175,21 @@ def transcribe_audio(
         deadline=Deadline.after(budget_seconds, time.monotonic),
         cancellation=CancellationSignal(),
         context=CorrelationContext(correlation_id=correlation_id),
+        hakka_dialect=(
+            AsrHakkaDialect.from_str(hakka_dialect.value)
+            if hakka_dialect is not None
+            else None
+        ),
     )
 
 
-def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool, bool]:
-    """呼叫 AWS Bedrock AgentCore (Claude 5 Sonnet) 進行對話推導。
+def invoke_agent_brain(
+    elder_id: str,
+    transcript: str,
+    lang: str,
+    hakka_dialect: HakkaDialect | None,
+) -> Tuple[str, bool, bool]:
+    """呼叫 Bedrock Agents Classic runtime 進行對話推導。
     
     Args:
         elder_id (str): 長者 ID，作為 sessionId 傳入以隔離託管 Memory。
@@ -159,6 +200,12 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool, bool]
     """
     if not BEDROCK_AGENT_ID:
         # 本地開發與未配置 Agent ID 時的保底回覆
+        if lang == "hak":
+            return (
+                f"【模擬回覆】𠊎有收到「{transcript}」。愛記得啉水、照時間歇睏喔！",
+                False,
+                False,
+            )
         return (
             f"【模擬大腦回覆】收到您的訊息：「{transcript}」。已經幫您確認紀錄囉，請記得多喝水、按時休息！",
             False,
@@ -174,13 +221,29 @@ def invoke_agent_brain(elder_id: str, transcript: str) -> Tuple[str, bool, bool]
         wday_str = weekdays[int(time.strftime("%w", tw_time_tuple))]
         tw_time_str = time.strftime(f"%Y-%m-%d %H:%M (週{wday_str})", tw_time_tuple)
 
-        prompt_with_time = f"[目前台灣時間: {tw_time_str}]\n{transcript}"
+        dialect_line = (
+            f"\n[客語腔調: {hakka_dialect.value}]" if hakka_dialect is not None else ""
+        )
+        prompt_with_time = (
+            f"[目前台灣時間: {tw_time_str}]\n"
+            f"[回覆語言: {lang}]{dialect_line}\n"
+            "請嚴格使用指定回覆語言，不要從文字內容自行猜測或切換語言。\n"
+            f"{transcript}"
+        )
 
         response = client.invoke_agent(
             agentId=BEDROCK_AGENT_ID,
             agentAliasId=BEDROCK_AGENT_ALIAS_ID,
             sessionId=elder_id,
-            inputText=prompt_with_time
+            inputText=prompt_with_time,
+            sessionState={
+                "promptSessionAttributes": {
+                    "response_language": lang,
+                    "hakka_dialect": (
+                        hakka_dialect.value if hakka_dialect is not None else ""
+                    ),
+                }
+            },
         )
 
         reply_text = ""
@@ -284,17 +347,23 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # 2. 身份與存取權限驗證
         auth.assert_can_access_elder(event, req.elder_id)
+        # 純輸入驗證先完成，無效或超大音檔不應觸發 profile／session I/O。
+        audio_bytes = decode_audio(req)
 
         # 3. 冪等判定：同一個 client_request_id 永遠對應同一個 turn
-        audio_bytes = decode_audio(req)
         owner = lease_owner(context)
         conversation_id = turns.conversation_id_for(req.elder_id, req.client_request_id)
-        session_id = resume_or_accept(req, conversation_id, request_hash(req, audio_bytes), owner)
+        session_id, turn_dialect = resume_or_accept(
+            req,
+            conversation_id,
+            request_hash(req, audio_bytes),
+            owner,
+        )
 
         # 4. 副作用區：turn 已是 processing，之後每一條路徑都必須把它收成終態
         try:
             transcript, reply_text, routines_updated, safety_alert_triggered, audio_key = run_turn(
-                req, audio_bytes, conversation_id, context
+                req, audio_bytes, conversation_id, turn_dialect, context
             )
         except TurnFailure as failure:
             return fail_turn(req.elder_id, conversation_id, session_id, owner, failure)
@@ -378,6 +447,19 @@ def decode_audio(req: ChatRequest) -> bytes:
     return audio_bytes
 
 
+def resolve_profile_dialect(elder: Dict[str, Any]) -> HakkaDialect:
+    """從 elder profile 讀取六腔；舊資料沒有欄位時相容為四縣腔。"""
+    try:
+        return HakkaDialect.from_str(
+            elder.get("hakka_dialect") or DEFAULT_HAKKA_DIALECT.value
+        )
+    except ValueError:
+        logger.error("elder profile contains an unsupported Hakka dialect")
+        raise RequestValidationError(
+            responses.error(500, "INTERNAL_ERROR", "長者客語腔調設定無效")
+        )
+
+
 def request_hash(req: ChatRequest, audio_bytes: bytes) -> str:
     """本次請求內容的正規化 hash，用來分辨「重送」與「同一個 ID 換了內容」。
 
@@ -395,12 +477,25 @@ def request_hash(req: ChatRequest, audio_bytes: bytes) -> str:
 
 
 def resume_or_accept(
-    req: ChatRequest, conversation_id: str, payload_hash: str, owner: str
-) -> str:
+    req: ChatRequest,
+    conversation_id: str,
+    payload_hash: str,
+    owner: str,
+) -> tuple[str, HakkaDialect | None]:
     """回傳本 turn 所屬的 session ID；已終態或仍在飛的請求在此直接結束流程。"""
     existing = turns.get_turn(req.elder_id, conversation_id)
     if existing is None:
-        return accept_new_turn(req, conversation_id, payload_hash, owner)
+        # profile 只在接納全新 turn 時讀取；terminal replay／lease takeover 沿用 turn
+        # 快照，不受 profile 後續更新或刪除影響。
+        elder = db.get_elder(req.elder_id)
+        if elder is None:
+            raise auth.AuthError(
+                responses.error(404, "ELDER_NOT_FOUND", "找不到指定的長者")
+            )
+        profile_dialect = resolve_profile_dialect(elder)
+        return accept_new_turn(
+            req, conversation_id, payload_hash, owner, profile_dialect
+        )
 
     try:
         turns.assert_same_request(existing, payload_hash)
@@ -414,7 +509,8 @@ def resume_or_accept(
 
     try:
         # 租約到期代表前一個 invocation 已死；接管原 turn 與原 reservation，不重做 routing
-        return turns.take_over(req.elder_id, conversation_id, owner=owner)["session_id"]
+        taken_over = turns.take_over(req.elder_id, conversation_id, owner=owner)
+        return taken_over["session_id"], dialect_from_turn(taken_over)
     except turns.TurnTransitionRejectedError:
         current = turns.get_turn(req.elder_id, conversation_id) or {}
         if current.get("request_status") in turns.TERMINAL_STATUSES:
@@ -423,8 +519,12 @@ def resume_or_accept(
 
 
 def accept_new_turn(
-    req: ChatRequest, conversation_id: str, payload_hash: str, owner: str
-) -> str:
+    req: ChatRequest,
+    conversation_id: str,
+    payload_hash: str,
+    owner: str,
+    profile_dialect: HakkaDialect,
+) -> tuple[str, HakkaDialect | None]:
     """全新請求才走 session 選擇與 reserve。"""
     session = requested_session(req)
     turn = {
@@ -433,6 +533,7 @@ def accept_new_turn(
         "client_request_id": req.client_request_id,
         "request_hash": payload_hash,
         "lang": req.lang,
+        "hakka_dialect": profile_dialect.value if req.lang == "hak" else None,
         "input_type": "audio" if req.audio else "text",
         "source": "elder_initiated",
     }
@@ -444,7 +545,9 @@ def accept_new_turn(
             session = sessions.create_session(req.elder_id)
         try:
             turns.reserve(req.elder_id, session["session_id"], turn=turn, owner=owner)
-            return session["session_id"]
+            return session["session_id"], (
+                profile_dialect if req.lang == "hak" else None
+            )
         except turns.TurnReserveRejectedError:
             session = None
         except turns.TurnInProgressError:
@@ -453,6 +556,20 @@ def accept_new_turn(
 
     logger.error("無法接納新的 turn：conversation_id=%s", conversation_id)
     raise ImmediateResponse(responses.error(500, "INTERNAL_ERROR", "無法建立對話 session"))
+
+
+def dialect_from_turn(turn: Dict[str, Any]) -> HakkaDialect | None:
+    """接管時沿用 reserve 當下快照，避免 profile 更新改變同一冪等 turn。"""
+    if turn.get("lang") != "hak":
+        return None
+    try:
+        return HakkaDialect.from_str(
+            turn.get("hakka_dialect") or DEFAULT_HAKKA_DIALECT.value
+        )
+    except ValueError:
+        raise ImmediateResponse(
+            responses.error(500, "INTERNAL_ERROR", "對話客語腔調快照無效")
+        )
 
 
 def requested_session(req: ChatRequest) -> Dict[str, Any] | None:
@@ -472,6 +589,7 @@ def run_turn(
     req: ChatRequest,
     audio_bytes: bytes,
     conversation_id: str,
+    hakka_dialect: HakkaDialect | None,
     context: Any = None,
 ) -> Tuple[str, str, bool, bool, str | None]:
     """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, safety_alert_triggered, audio key)。
@@ -491,6 +609,7 @@ def run_turn(
                 lang=req.lang,
                 correlation_id=correlation_id,
                 budget_seconds=resolve_asr_budget_seconds(context),
+                hakka_dialect=hakka_dialect,
             )
         except ConfigParseError:
             logger.error(
@@ -511,18 +630,54 @@ def run_turn(
         transcript = asr_result.text
 
     try:
-        reply_text, routines_updated, safety_alert_triggered = invoke_agent_brain(req.elder_id, transcript)
+        reply_text, routines_updated, safety_alert_triggered = invoke_agent_brain(
+            req.elder_id, transcript, req.lang, hakka_dialect
+        )
     except Exception:
         raise TurnFailure(500, "INTERNAL_ERROR", "對話服務目前無法使用")
 
+    tts_correlation_id = str(uuid.uuid4())
     try:
-        audio_reply = TTSFactory.get_tts_engine(req.lang).synthesize(reply_text)
+        tts_result = get_tts_facade().synthesize(
+            text=reply_text,
+            language=TtsLanguage.from_str(req.lang),
+            dialect=hakka_dialect,
+            deadline=TtsDeadline.after(
+                resolve_tts_budget_seconds(context), time.monotonic
+            ),
+            cancellation=TtsCancellationSignal(),
+            context=TtsCorrelationContext(correlation_id=tts_correlation_id),
+        )
+    except (TtsConfigParseError, ValueError):
+        logger.error(
+            "TTS configuration rejected: correlation_id=%s", tts_correlation_id
+        )
+        tts_result = TypedTtsError(
+            category=TtsErrorCategory.ROUTE_NOT_APPROVED,
+            message="TTS configuration rejected.",
+            retryable=False,
+        )
     except Exception:
-        raise TurnFailure(500, "INTERNAL_ERROR", "語音合成失敗")
+        # 不記錄 raw exception：可能含 endpoint、文字或 SDK response。
+        logger.error("TTS invocation failed: correlation_id=%s", tts_correlation_id)
+        tts_result = TypedTtsError(
+            category=TtsErrorCategory.PROVIDER_FAILURE,
+            message="TTS invocation failed.",
+            retryable=False,
+        )
 
-    return transcript, reply_text, routines_updated, safety_alert_triggered, upload_audio_to_s3(
-        audio_reply, conversation_id
-    )
+    audio_key = None
+    if isinstance(tts_result, SynthesizedAudio):
+        audio_key = upload_audio_to_s3(tts_result.data, conversation_id)
+    else:
+        category = getattr(tts_result.category, "value", "internal_error")
+        logger.warning(
+            "TTS unavailable; completing text turn: category=%s correlation_id=%s",
+            category,
+            tts_correlation_id,
+        )
+
+    return transcript, reply_text, routines_updated, safety_alert_triggered, audio_key
 
 
 def fail_turn(

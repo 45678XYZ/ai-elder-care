@@ -56,6 +56,21 @@ class Language(enum.Enum):
         )
 
 
+class HakkaDialect(enum.Enum):
+    """用來選擇已固定 prompt 的客語端點；不會傳入推論 payload。"""
+
+    SIXIAN = "htia_sixian"
+    HAILU = "htia_hailu"
+    DAPU = "htia_dapu"
+    RAOPING = "htia_raoping"
+    ZHAOAN = "htia_zhaoan"
+    NANSIXIAN = "htia_nansixian"
+
+    @classmethod
+    def from_str(cls, value: str) -> "HakkaDialect":
+        return cls(value)
+
+
 # ─────────────────────────────────────────────────────────────────
 # AsrErrorCategory — 完整列舉
 # ─────────────────────────────────────────────────────────────────

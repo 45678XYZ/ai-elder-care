@@ -18,6 +18,7 @@ from moto import mock_aws
 from src.handlers import chat
 from src.shared.asr.composition import reset_asr_facade
 from src.shared.asr.types import AsrErrorCategory, Transcript, TypedAsrError
+from src.shared.tts import SynthesizedAudio
 from src.shared.asr_http import (
     ASR_ERROR_HTTP_MAPPING,
     SERVER_SIDE_CATEGORIES,
@@ -83,16 +84,15 @@ def _reset(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             chat,
             "invoke_agent_brain",
-            lambda elder_id, transcript: ("回覆", False, False),
+            lambda elder_id, transcript, lang, dialect: ("回覆", False, False),
         )
 
-        class _FakeEngine:
-            def synthesize(self, text: str) -> bytes:
-                return b"mp3"
+        class _FakeFacade:
+            def synthesize(self, **kwargs):
+                return SynthesizedAudio(b"mp3", "test_tts")
 
-        monkeypatch.setattr(
-            chat.TTSFactory, "get_tts_engine", staticmethod(lambda lang: _FakeEngine())
-        )
+        monkeypatch.setattr(chat.db, "get_elder", lambda elder_id: {"elder_id": elder_id})
+        monkeypatch.setattr(chat, "get_tts_facade", lambda: _FakeFacade())
         monkeypatch.setattr(
             chat, "upload_audio_to_s3", lambda audio_bytes, conversation_id: "tts/test.mp3"
         )
@@ -403,8 +403,9 @@ def test_remote_endpoint_success_flows_through_chat(
 
     class FakeRemoteFacade:
         """模擬已核准的 remote-only facade。"""
+
         def recognize(self, audio_bytes, input_format, language, deadline,
-                      cancellation, context):
+                      cancellation, context, hakka_dialect=None):
             return Transcript(text="遠端辨識成功的文字")
 
     # 替換 get_asr_facade 回傳我們的假 facade

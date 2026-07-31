@@ -1,8 +1,7 @@
 # ASR 實體模型推論端點（SageMaker real-time）— remote-only 架構
 #
-# 兩個端點構成後端 ASR 備援鏈的實體：
-#   - CE  (Taiwan-Tongues-ASR-CE)：支援 zh 與 hak，是兩種語言的主力
-#   - Formo (FormoSpeech Whisper-v3)：只做客語，是 hak 的備援
+# 七個端點構成後端 ASR 路由：CE 處理中文並作客語同語言備援；Formo 六腔各有
+# 一個固定 prompt 的端點。Lambda 只選 endpoint，絕不在 request 傳 prompt ID。
 #
 # 對應的程式側規則見 backend/src/shared/asr/README.md：
 #   - 「為了錯誤而備援」由 failover.py 的錯誤分類決定要不要換下一棒
@@ -21,9 +20,19 @@
 locals {
   asr_endpoints_enabled = var.asr_enable_endpoints ? 1 : 0
 
-  # 兩個端點共用的名稱前綴，供程式側以環境變數對應。
-  asr_ce_endpoint_name    = "${var.project_name}-asr-ce"
-  asr_formo_endpoint_name = "${var.project_name}-asr-formo"
+  asr_ce_endpoint_name = "${var.project_name}-asr-ce"
+  asr_formo_dialects = toset([
+    "htia_sixian",
+    "htia_hailu",
+    "htia_dapu",
+    "htia_raoping",
+    "htia_zhaoan",
+    "htia_nansixian",
+  ])
+  asr_formo_endpoint_names = {
+    for dialect in local.asr_formo_dialects :
+    dialect => "${var.project_name}-asr-formo-${replace(dialect, "htia_", "")}"
+  }
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -36,10 +45,9 @@ check "asr_endpoints_require_all_parameters" {
       var.asr_ce_model_data_url != "" &&
       var.asr_formo_image_uri != "" &&
       var.asr_formo_model_data_url != "" &&
-      var.asr_formo_prompt_id != "" &&
       var.asr_model_artifact_bucket != ""
     )
-    error_message = "啟用 ASR 端點時，必須同時提供 CE／Formo image、model data、Formo prompt ID 與 artifact bucket。"
+    error_message = "啟用 ASR 端點時，必須同時提供 CE／Formo image、model data 與 artifact bucket。"
   }
 }
 
@@ -173,9 +181,9 @@ resource "aws_sagemaker_endpoint" "asr_ce" {
 # 對應的程式側閘門是 ModelProductionGate.license_cleared。
 # ─────────────────────────────────────────────────────────────────
 resource "aws_sagemaker_model" "asr_formo" {
-  count = local.asr_endpoints_enabled
+  for_each = var.asr_enable_endpoints ? local.asr_formo_endpoint_names : {}
 
-  name               = "${var.project_name}-asr-formo"
+  name               = each.value
   execution_role_arn = aws_iam_role.asr_inference[0].arn
 
   primary_container {
@@ -186,7 +194,8 @@ resource "aws_sagemaker_model" "asr_formo" {
       ASR_MODEL_ID       = "formospeech/whisper-large-v3-taiwanese-hakka"
       ASR_MODEL_REVISION = "main"
       ASR_LANGUAGES      = "hak"
-      FORMO_PROMPT_ID    = var.asr_formo_prompt_id
+      # 每個模型資源固定一個 prompt；Lambda request contract 不含此欄位。
+      FORMO_PROMPT_ID = each.key
     }
   }
 
@@ -199,23 +208,23 @@ resource "aws_sagemaker_model" "asr_formo" {
 }
 
 resource "aws_sagemaker_endpoint_configuration" "asr_formo" {
-  count = local.asr_endpoints_enabled
+  for_each = var.asr_enable_endpoints ? local.asr_formo_endpoint_names : {}
 
-  name = "${var.project_name}-asr-formo"
+  name = each.value
 
   production_variants {
     variant_name           = "primary"
-    model_name             = aws_sagemaker_model.asr_formo[0].name
+    model_name             = aws_sagemaker_model.asr_formo[each.key].name
     initial_instance_count = var.asr_formo_min_instances
     instance_type          = var.asr_formo_instance_type
   }
 }
 
 resource "aws_sagemaker_endpoint" "asr_formo" {
-  count = local.asr_endpoints_enabled
+  for_each = var.asr_enable_endpoints ? local.asr_formo_endpoint_names : {}
 
-  name                 = local.asr_formo_endpoint_name
-  endpoint_config_name = aws_sagemaker_endpoint_configuration.asr_formo[0].name
+  name                 = each.value
+  endpoint_config_name = aws_sagemaker_endpoint_configuration.asr_formo[each.key].name
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -257,23 +266,23 @@ resource "aws_appautoscaling_policy" "asr_ce_invocations" {
 }
 
 resource "aws_appautoscaling_target" "asr_formo" {
-  count = local.asr_endpoints_enabled
+  for_each = var.asr_enable_endpoints ? local.asr_formo_endpoint_names : {}
 
   service_namespace  = "sagemaker"
-  resource_id        = "endpoint/${aws_sagemaker_endpoint.asr_formo[0].name}/variant/primary"
+  resource_id        = "endpoint/${aws_sagemaker_endpoint.asr_formo[each.key].name}/variant/primary"
   scalable_dimension = "sagemaker:variant:DesiredInstanceCount"
   min_capacity       = var.asr_formo_min_instances
   max_capacity       = var.asr_formo_max_instances
 }
 
 resource "aws_appautoscaling_policy" "asr_formo_invocations" {
-  count = local.asr_endpoints_enabled
+  for_each = var.asr_enable_endpoints ? local.asr_formo_endpoint_names : {}
 
-  name               = "${var.project_name}-asr-formo-invocations"
+  name               = "${each.value}-invocations"
   policy_type        = "TargetTrackingScaling"
-  service_namespace  = aws_appautoscaling_target.asr_formo[0].service_namespace
-  resource_id        = aws_appautoscaling_target.asr_formo[0].resource_id
-  scalable_dimension = aws_appautoscaling_target.asr_formo[0].scalable_dimension
+  service_namespace  = aws_appautoscaling_target.asr_formo[each.key].service_namespace
+  resource_id        = aws_appautoscaling_target.asr_formo[each.key].resource_id
+  scalable_dimension = aws_appautoscaling_target.asr_formo[each.key].scalable_dimension
 
   target_tracking_scaling_policy_configuration {
     target_value = var.asr_target_invocations_per_instance
@@ -307,10 +316,10 @@ resource "aws_iam_policy" "invoke_asr_endpoints" {
     Statement = [{
       Effect = "Allow"
       Action = "sagemaker:InvokeEndpoint"
-      Resource = [
-        aws_sagemaker_endpoint.asr_ce[0].arn,
-        aws_sagemaker_endpoint.asr_formo[0].arn,
-      ]
+      Resource = concat(
+        [aws_sagemaker_endpoint.asr_ce[0].arn],
+        [for endpoint in aws_sagemaker_endpoint.asr_formo : endpoint.arn]
+      )
     }]
   })
 }

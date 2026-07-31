@@ -11,7 +11,8 @@ variable "aws_region" {
 }
 
 # --- ASR 實體模型端點（見 asr_models.tf）---
-# 預設不建立 GPU 資源；啟用前必須備妥兩個模型的 image、artifact 與 Formo 部署 prompt。
+# 預設不建立 GPU 資源；啟用前須備妥兩個模型 image 與 artifact。Formo 六腔 prompt
+# 由 Terraform 固定建立，不接受單一可變 prompt 參數。
 
 variable "asr_enable_endpoints" {
   description = "是否建立 ASR 推論端點。預設關閉，避免未驗證的模型產生 GPU 費用"
@@ -67,24 +68,6 @@ variable "asr_formo_model_data_url" {
   default     = ""
 }
 
-variable "asr_formo_prompt_id" {
-  description = "固定在 Formo SageMaker container 部署設定的客語腔調 prompt ID"
-  type        = string
-  default     = ""
-
-  validation {
-    condition = var.asr_formo_prompt_id == "" || contains([
-      "htia_sixian",
-      "htia_hailu",
-      "htia_dapu",
-      "htia_raoping",
-      "htia_zhaoan",
-      "htia_nansixian",
-    ], var.asr_formo_prompt_id)
-    error_message = "asr_formo_prompt_id 必須是核准的六種客語腔調 prompt ID 之一。"
-  }
-}
-
 variable "asr_formo_instance_type" {
   description = "Formo 端點的推論機型"
   type        = string
@@ -107,6 +90,104 @@ variable "asr_target_invocations_per_instance" {
   description = "每個實例的目標每分鐘呼叫數；超過即向外擴充"
   type        = number
   default     = 20
+}
+
+# --- TTS 遠端模型端點（見 tts_models.tf）---
+
+variable "tts_model_artifact_bucket" {
+  description = "存放 TTS model.tar.gz 的 S3 bucket 名稱"
+  type        = string
+  default     = ""
+}
+
+variable "tts_enable_omnivoice_endpoint" {
+  description = "是否建立 OmniVoice 客語六腔 TTS endpoint"
+  type        = bool
+  default     = false
+}
+
+variable "tts_omnivoice_image_uri" {
+  description = "OmniVoice 推論容器 ECR image URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_omnivoice_model_data_url" {
+  description = "OmniVoice model artifact S3 URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_omnivoice_approved" {
+  description = "OmniVoice 的授權、存取、容量、延遲與 staging gate 是否全部核准"
+  type        = bool
+  default     = false
+}
+
+variable "tts_enable_voxhakka_endpoint" {
+  description = "是否建立 VoxHakka 五腔備援 endpoint（不支援南四縣）"
+  type        = bool
+  default     = false
+}
+
+variable "tts_voxhakka_image_uri" {
+  description = "VoxHakka 推論容器 ECR image URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_voxhakka_model_data_url" {
+  description = "VoxHakka model artifact S3 URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_voxhakka_approved" {
+  description = "VoxHakka 的授權、存取、容量、延遲與 staging gate 是否全部核准"
+  type        = bool
+  default     = false
+}
+
+variable "tts_enable_breezyvoice_endpoint" {
+  description = "是否建立台灣華語 BreezyVoice endpoint；預設關閉，須先做品質與 runtime 驗證"
+  type        = bool
+  default     = false
+}
+
+variable "tts_breezyvoice_image_uri" {
+  description = "BreezyVoice 推論容器 ECR image URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_breezyvoice_model_data_url" {
+  description = "BreezyVoice model artifact S3 URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_breezyvoice_approved" {
+  description = "BreezyVoice 的授權、容量、延遲與 staging gate 是否全部核准"
+  type        = bool
+  default     = false
+}
+
+variable "tts_instance_type" {
+  description = "TTS 遠端模型 endpoint 共用推論機型；正式核准前須逐模型實測"
+  type        = string
+  default     = "ml.g5.xlarge"
+}
+
+variable "tts_min_instances" {
+  description = "每個 TTS endpoint 最小實例數"
+  type        = number
+  default     = 1
+}
+
+variable "tts_max_instances" {
+  description = "每個 TTS endpoint 最大實例數"
+  type        = number
+  default     = 2
 }
 
 # --- RAG（Bedrock Knowledge Base）---

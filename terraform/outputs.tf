@@ -13,9 +13,9 @@ output "asr_ce_endpoint_name" {
   value       = join("", aws_sagemaker_endpoint.asr_ce[*].name)
 }
 
-output "asr_formo_endpoint_name" {
-  description = "ASR 客語備援端點名稱；未啟用時為空字串"
-  value       = join("", aws_sagemaker_endpoint.asr_formo[*].name)
+output "asr_formo_endpoint_names" {
+  description = "ASR 客語六腔固定 prompt 端點名稱；未啟用時為空 map"
+  value       = { for dialect, endpoint in aws_sagemaker_endpoint.asr_formo : dialect => endpoint.name }
 }
 
 output "asr_invoke_policy_arn" {
@@ -26,6 +26,17 @@ output "asr_invoke_policy_arn" {
 output "asr_config_json" {
   description = "注入 Chat Lambda 的完整 ASR_CONFIG_JSON"
   value       = local.asr_config_json
+  sensitive   = false
+}
+
+output "tts_endpoint_names" {
+  description = "已建立的 TTS endpoint 名稱；未啟用時為空 map"
+  value       = { for key, endpoint in aws_sagemaker_endpoint.tts : key => endpoint.name }
+}
+
+output "tts_config_json" {
+  description = "注入 Chat Lambda 的完整 TTS_CONFIG_JSON"
+  value       = local.tts_config_json
   sensitive   = false
 }
 

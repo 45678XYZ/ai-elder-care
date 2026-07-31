@@ -39,12 +39,20 @@ from .types import (
     CanonicalAudio,
     CorrelationContext,
     Deadline,
+    HakkaDialect,
     Language,
     TypedAsrError,
 )
 
 # 未路由時 telemetry 使用的固定 sentinel，與 telemetry.py 一致。
 NOT_ROUTED_SENTINEL = "__not_routed__"
+
+
+def _route_key(language: Language, hakka_dialect: HakkaDialect | None) -> str:
+    """客語有腔調時選固定端點 route；無腔調保留舊設定相容性。"""
+    if language is Language.HAK and hakka_dialect is not None:
+        return f"{language.value}:{hakka_dialect.value}"
+    return language.value
 
 
 class AsrRouter:
@@ -81,11 +89,16 @@ class AsrRouter:
     def config(self) -> AsrConfig:
         return self._config
 
-    def route_config_for(self, language: Language) -> RouteConfig | None:
+    def route_config_for(
+        self, language: Language, hakka_dialect: HakkaDialect | None = None
+    ) -> RouteConfig | None:
         """取得語言對應的 route 設定；未設定回 None。"""
         if not isinstance(language, Language):
             return None
-        return self._config.routes.get(language.value)
+        selected = self._config.routes.get(_route_key(language, hakka_dialect))
+        # 舊／local 設定只有 generic `hak` route；production 六腔設定不提供這條，
+        # 因此仍會嚴格落到 profile 對應的固定端點。
+        return selected or self._config.routes.get(language.value)
 
     # ── 路由 ────────────────────────────────────────────────────────
     def route(
@@ -95,10 +108,11 @@ class AsrRouter:
         deadline: Deadline,
         cancellation: CancellationSignal,
         context: CorrelationContext,
+        hakka_dialect: HakkaDialect | None = None,
     ) -> AsrTerminalResult:
         """回傳終態結果。需要嘗試明細時用 `route_detailed`。"""
         return self.route_detailed(
-            audio, language, deadline, cancellation, context
+            audio, language, deadline, cancellation, context, hakka_dialect
         ).result
 
     def route_detailed(
@@ -108,6 +122,7 @@ class AsrRouter:
         deadline: Deadline,
         cancellation: CancellationSignal,
         context: CorrelationContext,
+        hakka_dialect: HakkaDialect | None = None,
     ) -> ChainOutcome:
         """回傳含每次 provider 嘗試明細的 ChainOutcome。"""
         # ─── Step 1: Language validity ───
@@ -117,17 +132,21 @@ class AsrRouter:
             )
 
         # ─── Step 2: Route 存在且啟用 ───
-        route_config = self._config.routes.get(language.value)
+        selected_key = _route_key(language, hakka_dialect)
+        route_config = self._config.routes.get(selected_key)
+        if route_config is None:
+            selected_key = language.value
+            route_config = self._config.routes.get(selected_key)
         if route_config is None:
             return _terminal(
                 make_route_not_approved_error(
-                    f"No route configured for {language.value!r}."
+                    f"No route configured for {selected_key!r}."
                 )
             )
         if not route_config.enabled:
             return _terminal(
                 make_route_not_approved_error(
-                    f"Route for {language.value!r} is disabled."
+                    f"Route for {selected_key!r} is disabled."
                 )
             )
 
