@@ -373,16 +373,6 @@ data "aws_iam_policy_document" "extraction_data" {
       "${aws_dynamodb_table.conversations.arn}/index/*",
     ]
   }
-  # 統計只讀 routine 定義：occurrence 狀態由 completion event 推導，統計不回寫 routines
-  statement {
-    sid     = "RoutinesRead"
-    effect  = "Allow"
-    actions = ["dynamodb:Query"]
-    resources = [
-      aws_dynamodb_table.routines.arn,
-      "${aws_dynamodb_table.routines.arn}/index/*",
-    ]
-  }
 
   statement {
     sid    = "EldersRead"
@@ -410,7 +400,10 @@ data "aws_iam_policy_document" "extraction_data" {
     resources = [aws_dynamodb_table.daily_summaries.arn]
   }
 
-  # occurrence 衍生只讀：版本清單走 routine-versions-by-elder，完成當時的定義走 GetItem
+  # occurrence 衍生只讀：版本清單走 routine-versions-by-elder，完成當時的定義走 GetItem。
+  # 統計、摘要與事件 API 共用這一條——occurrence 狀態一律由 completion event 推導，
+  # 這個角色不回寫 routines（寫入路徑見 aws_iam_role.api_routines）。
+  # 同一份 policy document 內 Sid 必須唯一，因此這裡只留一條 routines 讀取權限。
   statement {
     sid    = "RoutinesRead"
     effect = "Allow"
