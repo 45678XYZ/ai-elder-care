@@ -28,8 +28,8 @@ class Elder {
   /// 居住地區（如「台北市大安區」）。
   final String? addressRegion;
 
-  /// 健康註記。
-  final List<String> healthNotes;
+  /// 健康註記。每一筆帶來源，見 [HealthNote]。
+  final List<HealthNote> healthNotes;
   final List<FamilyMember> family;
 
   /// 生活習慣描述。
@@ -50,7 +50,7 @@ class Elder {
     String? gender,
     String? langPreference,
     String? addressRegion,
-    List<String>? healthNotes,
+    List<HealthNote>? healthNotes,
     List<FamilyMember>? family,
     String? habitNote,
     DateTime? updatedAt,
@@ -79,7 +79,7 @@ class Elder {
         langPreference: json['lang_preference'] as String? ?? 'zh-TW',
         addressRegion: json['address_region'] as String?,
         healthNotes: (json['health_notes'] as List<dynamic>?)
-                ?.map((e) => e as String)
+                ?.map(HealthNote.fromJson)
                 .toList() ??
             const [],
         family: (json['family'] as List<dynamic>?)
@@ -94,6 +94,53 @@ class Elder {
             ? null
             : DateTime.tryParse(json['updated_at'] as String),
       );
+}
+
+/// 單筆健康註記。欄位規格見 docs/api.md 的 health_notes 物件。
+///
+/// **來源要分得出來**：這個欄位同時被照護者（自己填的）與對話中的 AI（依長輩談話
+/// 補上的）寫入。AI 聽來的那幾筆更可能出錯、也更需要照護者確認，畫面上不能跟
+/// 手填的長成一樣。
+class HealthNote {
+  const HealthNote({
+    required this.noteId,
+    required this.text,
+    this.source = HealthNoteSource.caregiver,
+    this.createdAt,
+  });
+
+  final String noteId;
+  final String text;
+  final HealthNoteSource source;
+  final DateTime? createdAt;
+
+  /// 相容舊格式的純字串：後端把它們一律視為照護者填的，這裡跟著同一套規則，
+  /// 免得同一份資料在前後端算出不同來源。
+  factory HealthNote.fromJson(dynamic json) {
+    if (json is String) {
+      return HealthNote(noteId: '', text: json);
+    }
+    final map = json as Map<String, dynamic>;
+    return HealthNote(
+      noteId: map['note_id'] as String? ?? '',
+      text: map['text'] as String? ?? '',
+      source: map['source'] == 'agent'
+          ? HealthNoteSource.agent
+          : HealthNoteSource.caregiver,
+      createdAt: map['created_at'] == null
+          ? null
+          : DateTime.tryParse(map['created_at'] as String),
+    );
+  }
+}
+
+/// 健康註記的來源。
+enum HealthNoteSource {
+  /// 照護者在 App 上自己填的。
+  caregiver,
+
+  /// 對話中由 AI 依長輩談話補上的。
+  agent,
 }
 
 /// 長者的家屬成員。

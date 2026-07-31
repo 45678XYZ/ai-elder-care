@@ -203,7 +203,7 @@ class DemoRepository implements CareRepository {
       gender: fields['gender'] as String?,
       langPreference: fields['lang_preference'] as String? ?? 'zh-TW',
       addressRegion: fields['address_region'] as String?,
-      healthNotes: _stringList(fields['health_notes']),
+      healthNotes: _healthNotes(fields['health_notes']),
       family: [
         for (final f in fields['family'] as List<dynamic>? ?? const [])
           if (f is Map<String, dynamic>) FamilyMember.fromJson(f),
@@ -216,10 +216,31 @@ class DemoRepository implements CareRepository {
     return Future.delayed(DemoData.latency, () => created);
   }
 
-  static List<String> _stringList(Object? raw) => [
+  /// 建立長輩時送進來的 `health_notes`。真後端接受純字串（相容舊契約）並一律
+  /// 視為照護者填的，這裡跟著同一套規則。
+  static List<HealthNote> _healthNotes(Object? raw) => [
         for (final v in raw as List<dynamic>? ?? const [])
-          if (v is String && v.trim().isNotEmpty) v.trim(),
+          if (v is String && v.trim().isNotEmpty)
+            HealthNote(
+              noteId: _newNoteId(),
+              text: v.trim(),
+              createdAt: DateTime.now(),
+            ),
       ];
+
+  /// 真後端是 `"hn_" + uuid4().hex[:12]`；demo 用時間戳湊出同樣長度的十六進位。
+  ///
+  /// 同一微秒可能連續產生多筆（一次建立就送好幾項），補一個遞增值避免撞號——
+  /// note_id 是刪除時的唯一依據，撞了就會刪錯那一筆。
+  ///
+  /// 取**尾端** 12 位：`microsecondsSinceEpoch` 的十六進位已經超過 12 位，
+  /// 取前 12 位會把每次遞增的低位截掉，等於所有 ID 都一樣。
+  static int _noteSeq = 0;
+  static String _newNoteId() {
+    final seed = DateTime.now().microsecondsSinceEpoch + _noteSeq++;
+    final hex = seed.toRadixString(16).padLeft(12, '0');
+    return 'hn_${hex.substring(hex.length - 12)}';
+  }
 
   @override
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields) async {
@@ -238,6 +259,57 @@ class DemoRepository implements CareRepository {
     );
     list[i] = updated;
     return Future.delayed(DemoData.latency, () => updated);
+  }
+
+  @override
+  Future<Elder> addHealthNote({
+    required String elderId,
+    required String text,
+  }) async {
+    final updated = await _mutateHealthNotes(
+      elderId,
+      (notes) => [
+        ...notes,
+        HealthNote(
+          noteId: _newNoteId(),
+          text: text.trim(),
+          createdAt: DateTime.now(),
+        ),
+      ],
+    );
+    return Future.delayed(DemoData.latency, () => updated);
+  }
+
+  @override
+  Future<Elder> removeHealthNote({
+    required String elderId,
+    required String noteId,
+  }) async {
+    final updated = await _mutateHealthNotes(
+      elderId,
+      (notes) => [
+        for (final n in notes)
+          if (n.noteId != noteId) n,
+      ],
+    );
+    return Future.delayed(DemoData.latency, () => updated);
+  }
+
+  Future<Elder> _mutateHealthNotes(
+    String elderId,
+    List<HealthNote> Function(List<HealthNote>) change,
+  ) async {
+    if (_elders == null) await elders();
+    final list = _elders!;
+    final i = list.indexWhere((e) => e.elderId == elderId);
+    if (i < 0) throw StateError('demo 資料裡沒有這位長者：$elderId');
+
+    final updated = list[i].copyWith(
+      healthNotes: change(list[i].healthNotes),
+      updatedAt: DateTime.now(),
+    );
+    list[i] = updated;
+    return updated;
   }
 
   // ---- 綁定照護者 ----

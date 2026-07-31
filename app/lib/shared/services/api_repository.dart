@@ -72,6 +72,20 @@ class ApiRepository implements CareRepository {
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields) =>
       _api.updateElder(elderId, fields);
 
+  @override
+  Future<Elder> addHealthNote({
+    required String elderId,
+    required String text,
+  }) =>
+      _api.addHealthNote(elderId, text);
+
+  @override
+  Future<Elder> removeHealthNote({
+    required String elderId,
+    required String noteId,
+  }) =>
+      _api.removeHealthNote(elderId, noteId);
+
   // ---- 綁定照護者 ----
 
   @override

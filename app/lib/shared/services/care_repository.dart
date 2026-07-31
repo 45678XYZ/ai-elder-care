@@ -70,7 +70,19 @@ abstract interface class CareRepository {
   Future<Elder> createElder(Map<String, dynamic> fields);
 
   /// `PATCH /elders/{id}` — 部分更新。[fields] 的可用欄位見 docs/api.md。
+  ///
+  /// 對 `health_notes` 是**整份取代**；要增刪單筆走 [addHealthNote] 與
+  /// [removeHealthNote]，那兩條不會覆寫到對話中 AI 剛寫進去的內容。
   Future<Elder> updateElder(String elderId, Map<String, dynamic> fields);
+
+  /// `POST /elders/{id}/health_notes` — 新增一筆健康註記，回更新後的長者。
+  Future<Elder> addHealthNote({required String elderId, required String text});
+
+  /// `DELETE /elders/{id}/health_notes/{note_id}` — 刪除一筆，回更新後的長者。
+  Future<Elder> removeHealthNote({
+    required String elderId,
+    required String noteId,
+  });
 
   // ---- 綁定照護者 ----
 

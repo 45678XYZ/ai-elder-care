@@ -74,7 +74,26 @@ abstract final class DemoData {
           gender: 'female',
           langPreference: 'zh-TW',
           addressRegion: '台北市大安區',
-          healthNotes: const ['高血壓', '膝關節退化'],
+          // 混兩種來源：demo 要看得出「照護者填的」與「AI 從對話聽來的」在畫面上
+          // 不一樣，那正是這個欄位改版的理由。
+          healthNotes: [
+            HealthNote(
+              noteId: 'hn_000000000001',
+              text: '高血壓',
+              createdAt: _today.subtract(const Duration(days: 25)),
+            ),
+            HealthNote(
+              noteId: 'hn_000000000002',
+              text: '膝關節退化',
+              createdAt: _today.subtract(const Duration(days: 25)),
+            ),
+            HealthNote(
+              noteId: 'hn_000000000003',
+              text: '最近膝蓋比較痛',
+              source: HealthNoteSource.agent,
+              createdAt: _today.subtract(const Duration(days: 1)),
+            ),
+          ],
           family: const [
             FamilyMember(relation: '兒子', name: '陳志明', note: '在台北工作，每週三來訪'),
             FamilyMember(relation: '孫子', name: '小明', note: '高中生'),
@@ -91,7 +110,13 @@ abstract final class DemoData {
           gender: 'male',
           langPreference: 'hak',
           addressRegion: '新竹縣竹東鎮',
-          healthNotes: const ['糖尿病'],
+          healthNotes: [
+            HealthNote(
+              noteId: 'hn_000000000101',
+              text: '糖尿病',
+              createdAt: _today.subtract(const Duration(days: 12)),
+            ),
+          ],
           family: const [
             FamilyMember(relation: '女兒', name: '林淑芬', note: '同住'),
           ],

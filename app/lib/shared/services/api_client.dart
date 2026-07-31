@@ -167,6 +167,27 @@ class ApiClient {
     return Elder.fromJson(json);
   }
 
+  /// `POST /elders/{id}/health_notes` — 新增一筆健康註記。
+  ///
+  /// 與 [updateElder] 送整份 `health_notes` 的差別在於這裡是原子 append：這個欄位
+  /// 對話中的 AI 也會寫（api.md），整份覆寫會把對方期間寫進去的內容一起蓋掉。
+  ///
+  /// 不帶 `source`——來源由後端依寫入路徑決定，client 指定會被回 400。
+  Future<Elder> addHealthNote(String elderId, String text) async {
+    final json = await _request('POST', '/elders/$elderId/health_notes',
+        body: {'text': text});
+    return Elder.fromJson(json);
+  }
+
+  /// `DELETE /elders/{id}/health_notes/{note_id}` — 刪除一筆健康註記。
+  ///
+  /// 找不到那一筆回 404 `HEALTH_NOTE_NOT_FOUND`。
+  Future<Elder> removeHealthNote(String elderId, String noteId) async {
+    final json =
+        await _request('DELETE', '/elders/$elderId/health_notes/$noteId');
+    return Elder.fromJson(json);
+  }
+
   // ---- 綁定照護者 ----
 
   /// `POST /elders/{id}/caregivers` — 把一位照護者綁到這位長者（長者本人呼叫）。
@@ -385,6 +406,9 @@ class ApiClient {
           break;
         case 'PATCH':
           res = await _http.patch(uri, headers: headers, body: payload);
+          break;
+        case 'DELETE':
+          res = await _http.delete(uri, headers: headers, body: payload);
           break;
         default:
           throw ArgumentError('未支援的 method：$method');

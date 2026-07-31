@@ -1,8 +1,8 @@
 import 'package:ai_elder_care/caregiver/screens/elders_screen.dart';
+import 'package:ai_elder_care/shared/models/elder.dart';
 import 'package:ai_elder_care/shared/services/care_repository.dart';
 import 'package:ai_elder_care/shared/services/demo_repository.dart';
 import 'package:ai_elder_care/shared/services/session_store.dart';
-import 'package:ai_elder_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -118,7 +118,15 @@ void main() {
         ],
       });
 
-      expect(created.healthNotes, ['高血壓', '膝關節退化']);
+      // 表單送的是純字串（相容舊契約），落地後一律成為帶來源的物件；
+      // 照護者自己填的那幾筆來源是 caregiver，不是 AI 記的。
+      expect(created.healthNotes.map((n) => n.text), ['高血壓', '膝關節退化']);
+      expect(
+        created.healthNotes
+            .every((n) => n.source == HealthNoteSource.caregiver),
+        isTrue,
+      );
+      expect(created.healthNotes.map((n) => n.noteId).toSet(), hasLength(2));
       expect(created.family.single.relation, '兒子');
       expect(created.family.single.name, '陳志明');
       expect(created.family.single.note, '在台北工作');

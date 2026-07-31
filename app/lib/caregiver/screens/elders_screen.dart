@@ -9,6 +9,7 @@ import '../../shared/models/caregiver.dart';
 import '../../shared/models/elder.dart';
 import '../../shared/models/routine.dart';
 import '../../shared/services/care_repository.dart';
+import '../../shared/services/health_note_ack_store.dart';
 import '../../shared/services/notification_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
@@ -201,8 +202,22 @@ class _EldersScreenState extends State<EldersScreen> {
     }
     if (!mounted) return;
 
-    // 全 App 的長者資料只有 AppSession 一份，改完要就地換掉那一筆，
-    // 否則長者端的語音分流（AppSession.isHakka）讀到的還是舊值。
+    _replaceElder(updated);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.barDark,
+        content: Text(
+            '已改為${updated.langPreference == 'hak' ? '客語' : '華語'}，長輩下次說話時生效',
+            style: const TextStyle(color: AppColors.onDark)),
+      ),
+    );
+  }
+
+  /// 就地換掉 AppSession 裡的那一筆長者。
+  ///
+  /// 全 App 的長者資料只有 AppSession 一份，改完要就地換掉，否則長者端的語音分流
+  /// （AppSession.isHakka）與其他畫面讀到的還是舊值。
+  void _replaceElder(Elder updated) {
     final i = AppSession.instance.elders
         .indexWhere((e) => e.elderId == updated.elderId);
     if (i < 0) return;
@@ -213,14 +228,76 @@ class _EldersScreenState extends State<EldersScreen> {
         ...AppSession.instance.elders.sublist(i + 1),
       ];
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.barDark,
+  }
+
+  /// 新增一筆健康註記（`POST /elders/{id}/health_notes`）。
+  ///
+  /// 走單筆端點而不是 `PATCH` 送整份：這個欄位對話中的 AI 也會寫（api.md），
+  /// 整份覆寫會把長輩剛講出來的那一筆一起蓋掉。
+  Future<void> _addHealthNote(Elder elder) async {
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => const _HealthNoteDialog(),
+    );
+    if (text == null || text.isEmpty || !mounted) return;
+
+    final Elder updated;
+    try {
+      updated = await CareRepo.instance
+          .addHealthNote(elderId: elder.elderId, text: text);
+    } catch (e) {
+      if (mounted) _showError('新增失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    _replaceElder(updated);
+  }
+
+  /// 刪除一筆健康註記（`DELETE /elders/{id}/health_notes/{note_id}`）。
+  ///
+  /// 先問一次再刪：健康資訊刪掉之後照護者不會記得原本寫了什麼，而 AI 補上的那幾筆
+  /// 本來就是要照護者判斷去留的，按錯不該直接生效。
+  Future<void> _removeHealthNote(Elder elder, HealthNote note) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.cardAlt,
+        title: Text('刪除「${note.text}」？',
+            style: Theme.of(ctx).textTheme.titleMedium),
         content: Text(
-            '已改為${updated.langPreference == 'hak' ? '客語' : '華語'}，長輩下次說話時生效',
-            style: const TextStyle(color: AppColors.onDark)),
+          note.source == HealthNoteSource.agent
+              ? '這是 AI 從長輩的談話裡記下來的。刪掉之後 AI 不會再參考這一項。'
+              : '刪掉之後 AI 不會再參考這一項。',
+          style: Theme.of(ctx).textTheme.bodyLarge,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
+            child: const Text('刪除'),
+          ),
+        ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+
+    final Elder updated;
+    try {
+      updated = await CareRepo.instance
+          .removeHealthNote(elderId: elder.elderId, noteId: note.noteId);
+    } catch (e) {
+      if (mounted) _showError('刪除失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    _replaceElder(updated);
   }
 
   /// 刪除一筆例行公事。
@@ -329,6 +406,8 @@ class _EldersScreenState extends State<EldersScreen> {
                         _ElderProfileCard(
                           elder: elder,
                           onLangChanged: (lang) => _changeLang(elder, lang),
+                          onAddNote: () => _addHealthNote(elder),
+                          onRemoveNote: (n) => _removeHealthNote(elder, n),
                         ),
                       const SizedBox(height: AppSpacing.lg),
                       SectionHeader(
@@ -407,17 +486,83 @@ class _PolicyLink extends StatelessWidget {
   }
 }
 
-/// 長輩基本資料。除了語音語言之外都是唯讀顯示。
-class _ElderProfileCard extends StatelessWidget {
-  const _ElderProfileCard({required this.elder, required this.onLangChanged});
+/// 長輩基本資料。語音語言與健康狀況可改，其餘唯讀。
+class _ElderProfileCard extends StatefulWidget {
+  const _ElderProfileCard({
+    required this.elder,
+    required this.onLangChanged,
+    required this.onAddNote,
+    required this.onRemoveNote,
+  });
 
   final Elder elder;
 
   /// 切換語音語言（`lang_preference`）。這是全 App 唯一能改它的地方。
   final ValueChanged<String> onLangChanged;
 
+  final VoidCallback onAddNote;
+  final ValueChanged<HealthNote> onRemoveNote;
+
+  @override
+  State<_ElderProfileCard> createState() => _ElderProfileCardState();
+}
+
+class _ElderProfileCardState extends State<_ElderProfileCard> {
+  /// 健康狀況是否在編輯模式。
+  ///
+  /// 刪除鈕常態掛在每一筆上，卡片看起來像隨時準備刪東西，也容易誤觸——
+  /// 那是破壞性動作，不該跟閱讀共用同一個畫面。
+  bool _editing = false;
+
+  /// 已經被這位照護者確認過的 AI 記錄（見 [HealthNoteAckStore]）。
+  Set<String> _acked = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAcked();
+  }
+
+  @override
+  void didUpdateWidget(_ElderProfileCard old) {
+    super.didUpdateWidget(old);
+    // 換長輩、或增刪了註記，已確認清單都要重算
+    if (old.elder.elderId != widget.elder.elderId ||
+        old.elder.healthNotes.length != widget.elder.healthNotes.length) {
+      _loadAcked();
+    }
+  }
+
+  Future<void> _loadAcked() async {
+    final elderId = widget.elder.elderId;
+    Set<String> acked;
+    try {
+      acked = await HealthNoteAckStore.instance
+          .acked(elderId, current: widget.elder.healthNotes);
+    } catch (_) {
+      // 讀不到就當作全部未確認：多標幾個「新」不會出事，漏標才會。
+      return;
+    }
+    if (!mounted || widget.elder.elderId != elderId) return;
+    setState(() => _acked = acked);
+  }
+
+  Future<void> _ack(HealthNote note) async {
+    await HealthNoteAckStore.instance.ack(widget.elder.elderId, note.noteId);
+    if (!mounted) return;
+    setState(() => _acked = {..._acked, note.noteId});
+  }
+
+  /// AI 記的、而且這位照護者還沒確認過——這幾筆才標「新」。
+  ///
+  /// 照護者自己填的不標：自己剛加的東西不需要別人提醒。
+  bool _isUnread(HealthNote n) =>
+      n.source == HealthNoteSource.agent && !_acked.contains(n.noteId);
+
   @override
   Widget build(BuildContext context) {
+    final elder = widget.elder;
+    final onLangChanged = widget.onLangChanged;
     final text = Theme.of(context).textTheme;
     final age =
         elder.birthYear == null ? null : DateTime.now().year - elder.birthYear!;
@@ -489,28 +634,69 @@ class _ElderProfileCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.md),
 
-          if (elder.healthNotes.isNotEmpty) ...[
-            _ProfileRow(
-              label: '健康狀況',
-              child: Wrap(
-                spacing: AppSpacing.sm,
-                runSpacing: AppSpacing.xs,
-                children: [
-                  for (final n in elder.healthNotes)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: const BoxDecoration(
-                        color: AppColors.chipSurface,
-                        borderRadius: BorderRadius.all(AppRadius.pill),
-                      ),
-                      child: Text(n, style: text.bodySmall),
-                    ),
-                ],
+          // 健康狀況一筆一列而不是擠成一排標籤：每一筆都要放得下來源標示與操作鈕，
+          // 而且來源不同的兩種東西長得一樣才是原本的問題所在。
+          //
+          // 增刪都收在編輯模式裡：平時是純閱讀，要動才進去。一半操作藏起來、
+          // 一半露在外面反而更亂，所以「新增」也一起收。
+          _ProfileRow(
+            label: '健康狀況',
+            trailing: TextButton(
+              onPressed: () => setState(() => _editing = !_editing),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                padding: EdgeInsets.zero,
+                foregroundColor: AppColors.accentText,
               ),
+              child: Text(_editing ? '完成' : '編輯',
+                  style:
+                      text.labelSmall?.copyWith(color: AppColors.accentText)),
             ),
-            const SizedBox(height: AppSpacing.md),
-          ],
+            // 平時是緊湊的膠囊，按「編輯」才展開成一列一筆。
+            // 膠囊排得下三四項而不會把卡片撐高，但塞不下刪除鈕與來源說明——
+            // 那些只有要動手時才需要，所以兩種版面各司其職。
+            child: _editing
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final n in elder.healthNotes)
+                        _HealthNoteRow(
+                          note: n,
+                          isNew: _isUnread(n),
+                          onDelete: () => widget.onRemoveNote(n),
+                          onAck: () => _ack(n),
+                        ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: widget.onAddNote,
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            padding: EdgeInsets.zero,
+                            foregroundColor: AppColors.accentText,
+                          ),
+                          icon: const Icon(Icons.add, size: 18),
+                          label: Text('新增一項',
+                              style: text.labelSmall
+                                  ?.copyWith(color: AppColors.accentText)),
+                        ),
+                      ),
+                    ],
+                  )
+                : elder.healthNotes.isEmpty
+                    ? Text('尚未填寫',
+                        style:
+                            text.bodySmall?.copyWith(color: AppColors.chevron))
+                    : Wrap(
+                        spacing: AppSpacing.sm,
+                        runSpacing: AppSpacing.xs,
+                        children: [
+                          for (final n in elder.healthNotes)
+                            _HealthNotePill(note: n, isNew: _isUnread(n)),
+                        ],
+                      ),
+          ),
+          const SizedBox(height: AppSpacing.md),
           if (elder.family.isNotEmpty) ...[
             _ProfileRow(
               label: '家屬',
@@ -594,11 +780,246 @@ class _LangOption extends StatelessWidget {
   }
 }
 
+/// 一筆健康註記。
+///
+/// AI 從長輩談話裡記下來的那幾筆要一眼看得出來：它比照護者手填的更可能出錯，
+/// 也更需要有人確認。依 CLAUDE.md「狀態不可只靠顏色」，來源用 icon 加文字標示，
+/// 不倚賴顏色本身。
+/// 平時的緊湊呈現。來源與「新」都要看得出來，但不放操作鈕。
+class _HealthNotePill extends StatelessWidget {
+  const _HealthNotePill({required this.note, required this.isNew});
+
+  final HealthNote note;
+  final bool isNew;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final fromAgent = note.source == HealthNoteSource.agent;
+    final date = note.createdAt;
+
+    // 膠囊上的來源只剩一個 icon，讀螢幕的人看不到形狀——語意標籤要把它說出來，
+    // 否則「這筆是 AI 記的」對他們等於不存在。
+    return Semantics(
+      excludeSemantics: true,
+      label: [
+        if (fromAgent) '來自對話的紀錄',
+        note.text,
+        if (fromAgent && date != null) '${date.month} 月 ${date.day} 日',
+        if (isNew) '尚未確認',
+      ].join('，'),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: const BoxDecoration(
+          color: AppColors.chipSurface,
+          borderRadius: BorderRadius.all(AppRadius.pill),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (fromAgent) ...[
+              const Icon(Icons.record_voice_over,
+                  size: 13, color: AppColors.accentText),
+              const SizedBox(width: 4),
+            ],
+            // 放大字級時讓文字自己換行，不要把膠囊撐出畫面
+            Flexible(
+              child: Text(
+                fromAgent && date != null
+                    ? '${note.text}・${date.month}/${date.day}'
+                    : note.text,
+                style: text.bodySmall,
+              ),
+            ),
+            if (isNew) ...[
+              const SizedBox(width: 4),
+              const _NewBadge(),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 編輯模式的展開呈現：一列一筆，右側放操作鈕。
+class _HealthNoteRow extends StatelessWidget {
+  const _HealthNoteRow({
+    required this.note,
+    required this.isNew,
+    required this.onDelete,
+    required this.onAck,
+  });
+
+  final HealthNote note;
+
+  /// AI 記的且還沒被確認過——標「新」，等於一份待辦。
+  final bool isNew;
+
+  final VoidCallback onDelete;
+
+  /// 確認這一筆（留著，並清掉「新」）。
+  final VoidCallback onAck;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final fromAgent = note.source == HealthNoteSource.agent;
+    final date = note.createdAt;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (fromAgent) ...[
+                      const Padding(
+                        padding: EdgeInsets.only(top: 2),
+                        child: Icon(Icons.record_voice_over,
+                            size: 14, color: AppColors.accentText),
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                    ],
+                    Flexible(child: Text(note.text, style: text.bodyMedium)),
+                    if (isNew) ...[
+                      const SizedBox(width: AppSpacing.xs),
+                      const _NewBadge(),
+                    ],
+                  ],
+                ),
+                if (fromAgent)
+                  Text(
+                    date == null ? '來自對話' : '來自對話・${date.month}/${date.day}',
+                    style:
+                        text.labelSmall?.copyWith(color: AppColors.accentText),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        // AI 記的那幾筆要有「留著」這個明確動作，否則「新」只會自己消失，
+        // 等於沒有人真的確認過。照護者自己填的沒有這個問題。
+        if (isNew)
+          IconButton(
+            onPressed: onAck,
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            padding: EdgeInsets.zero,
+            iconSize: 18,
+            color: AppColors.accentText,
+            tooltip: '確認「${note.text}」',
+            icon: const Icon(Icons.check),
+          ),
+        IconButton(
+          onPressed: onDelete,
+          // 照護者模式的觸控下限是 48dp（CLAUDE.md）
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          padding: EdgeInsets.zero,
+          iconSize: 18,
+          color: AppColors.chevron,
+          tooltip: '刪除「${note.text}」',
+          icon: const Icon(Icons.close),
+        ),
+      ],
+    );
+  }
+}
+
+/// 「新」徽章。
+///
+/// 依 CLAUDE.md「狀態不可只靠顏色」，這裡本身就是文字，不需要另外加 icon。
+class _NewBadge extends StatelessWidget {
+  const _NewBadge();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        decoration: const BoxDecoration(
+          color: AppColors.accentText,
+          borderRadius: BorderRadius.all(AppRadius.pill),
+        ),
+        child: Text('新',
+            style: Theme.of(context)
+                .textTheme
+                .labelSmall
+                ?.copyWith(color: AppColors.onDark)),
+      );
+}
+
+/// 新增一筆健康註記的輸入框。回傳去頭尾空白後的文字；取消或空白回 null。
+class _HealthNoteDialog extends StatefulWidget {
+  const _HealthNoteDialog();
+
+  @override
+  State<_HealthNoteDialog> createState() => _HealthNoteDialogState();
+}
+
+class _HealthNoteDialogState extends State<_HealthNoteDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final text = _ctrl.text.trim();
+    // 後端對空字串回 400，不值得為此跑一趟網路
+    Navigator.of(context).pop(text.isEmpty ? null : text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return AlertDialog(
+      backgroundColor: AppColors.cardAlt,
+      title: Text('新增健康狀況', style: text.titleMedium),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        style: text.bodyLarge,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _submit(),
+        decoration: InputDecoration(
+          hintText: '例如：高血壓',
+          hintStyle: text.bodyLarge?.copyWith(color: AppColors.chevron),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: _submit,
+          style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
+          child: const Text('新增'),
+        ),
+      ],
+    );
+  }
+}
+
 class _ProfileRow extends StatelessWidget {
-  const _ProfileRow({required this.label, required this.child});
+  const _ProfileRow({
+    required this.label,
+    required this.child,
+    this.trailing,
+  });
 
   final String label;
   final Widget child;
+
+  /// 這一列的操作（如健康狀況的「編輯」）。放在標題右側，跟內容分開。
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -613,6 +1034,7 @@ class _ProfileRow extends StatelessWidget {
         ),
         const SizedBox(width: AppSpacing.sm),
         Expanded(child: child),
+        if (trailing != null) trailing!,
       ],
     );
   }
@@ -955,6 +1377,9 @@ class _ElderFormState extends State<_ElderForm> {
                   ],
                 ),
                 const SizedBox(height: AppSpacing.lg),
+                // 建檔時送純字串陣列（api.md 相容舊契約），後端一律標成
+                // source=caregiver。之後單筆增刪走管理頁，那裡才分得出哪幾筆是
+                // 對話中 AI 補上的。
                 Text('健康狀況', style: text.labelMedium),
                 const SizedBox(height: AppSpacing.sm),
                 TextFormField(
