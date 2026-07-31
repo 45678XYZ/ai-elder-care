@@ -401,7 +401,7 @@ def test_delete_routine_endpoint(store):
         _event(
             "DELETE",
             routine_id="rtn_001",
-            query={"client_request_id": "req-del-1"},
+            params={"client_request_id": "req-del-1"},
             resource="/routines/{routine_id}",
         ),
         None,
@@ -410,6 +410,7 @@ def test_delete_routine_endpoint(store):
     assert resp["statusCode"] == 200
     assert _body(resp)["active"] is False
     assert store["versions"][1]["current_sort_key"].startswith("I#")
+
 
 
 
@@ -624,7 +625,8 @@ def test_internal_error_is_masked(store, monkeypatch):
 
 
 def test_unsupported_method_is_400(store):
-    assert _code(handler.handler(_event("DELETE", routine_id="rtn_001"), None)) == (
+    assert _code(handler.handler(_event("PUT", routine_id="rtn_001"), None)) == (
         400,
         "INVALID_PARAMETER",
     )
+
