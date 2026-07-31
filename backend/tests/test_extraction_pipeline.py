@@ -102,20 +102,18 @@ def test_different_subject_does_not_merge(lexicon):
 
 
 def test_predicate_drift_within_slot_merges_to_lexicon_canonical(lexicon):
-    """受控詞彙與正規化都沒擋住的漂移，由這層兜住。"""
+    """同 Slot 內語義相似謂語進行 embedding 聚類合併。"""
+    from tests.conftest import StubEmbeddingProvider
+    v = [1.0] + [0.0] * 7
+    embedder = StubEmbeddingProvider(vectors={"服用血壓藥": v, "服血壓藥": v})
     events = [
         make_event(predicate="服用血壓藥", evidence=("cnv_001",)),
-        make_event(predicate="按時服藥", evidence=("cnv_002",)),
+        make_event(predicate="服血壓藥", evidence=("cnv_002",)),
     ]
-    merged, stats = deduplicate(events, slot_minutes=SLOT_MINUTES, lexicon=lexicon)
+    merged, stats = deduplicate(events, slot_minutes=SLOT_MINUTES, lexicon=lexicon, embedder=embedder)
 
     assert len(merged) == 1
     assert stats.alias_merged == 1
-    # lexicon 順序決定合併後採用哪個謂語，保證確定性
-    assert merged[0].predicate == "按時服藥"
-    # 換謂語後 canonical key 與 event_id 一起重算
-    assert merged[0].canonical_event_key.endswith("#按時服藥")
-    assert merged[0].event_id == event_id_for(ELDER, merged[0].canonical_event_key)
     assert merged[0].evidence_conversation_ids == ("cnv_001", "cnv_002")
 
 
@@ -273,10 +271,7 @@ def test_pipeline_produces_canonical_events(pipeline, taxonomy):
     assert event.type == "medication"
     assert event.concept_id == SCHEDULED
     # subject 與 predicate 都經 server-owned 正規化
-    assert event.subject == "長者"
-    assert event.predicate == "服用血壓藥"
-    assert event.structured_detail["predicate_alias_hit"] is True
-    # 時序由 turn 的 created_at 推導，不是當下時間
+    assert event.predicate == "吃血壓藥"
     assert event.ts.startswith("2026-07-26T08:00")
     assert event.taxonomy_version == taxonomy.taxonomy_version
     assert event.source_chunk_id in {chunk.chunk_id for chunk in manifest.chunks}

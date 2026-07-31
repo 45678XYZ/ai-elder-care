@@ -60,8 +60,9 @@ Session 只允許 `active→closing→closed`；`closed` 不再接受新 turn。
 response 前只執行：
 
 1. 回覆所需的 ASR、近期上下文、既有 events/routines 查詢、AgentCore 長期記憶與 AI/TTS。
-2. 透過對話大腦的 tool calling 同步處理 routine 變更與 safety event 寫入。
-3. 需要立即生效的 routine 建立、修改、停用或完成，以及潛在高風險 safety event 的事件寫入。
+2. 透過 Bedrock Agent tool calling 同步處理 routine 變更與 safety event 寫入。
+3. 需要立即生效的 routine 建立、修改、刪除或完成，以及潛在高風險 safety event 的事件寫入。
+
 
 一般生活 events 不由 realtime materialize；只在 session close 後由 batch 處理。後端 extraction 狀態不回傳 App。
 
@@ -548,15 +549,19 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 `client_request_id` 與 `title` 必填，`title` 不得為空字串。後端以 `routine_id="rtn_" + stable-hash(elder_id + authenticated actor sub + client_request_id)` 建立 `version=1`，並以相同 scope 形成 `change_request_id`、保存正規化 `request_hash`，使用 conditional Put／transaction 保護建立。Response 201 回完整物件；並行或重送相同 scoped ID／相同 hash 同樣回 201 與既有物件，不同 payload/hash 回 409 `IDEMPOTENCY_CONFLICT`。長者帳號呼叫回 403 `FORBIDDEN`。對話建立的 routine 由對話大腦的 tool calling 直接寫入，不呼叫此 API。
 
-### PATCH /routines/{routine_id} — 修改／停用（照護者）
+### PATCH /routines/{routine_id} — 修改（照護者）
 
-必須含新的 `client_request_id`；除該欄位外，只可部分更新 `title`、`type`、`schedule`、`remind`、`active`，且至少提供其中一項。server-owned 或未知欄位、以及未提供任何可更新欄位，一律回 400 `INVALID_PARAMETER`。停用範例：
-
-```json
-{ "client_request_id": "<uuid>", "active": false }
-```
+必須含新的 `client_request_id`；除該欄位外，只可部分更新 `title`、`type`、`schedule`、`remind`，且至少提供其中一項。server-owned 或未知欄位、以及未提供任何可更新欄位，一律回 400 `INVALID_PARAMETER`。
 
 Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_id + authenticated actor sub + client_request_id`，並保存正規化 request hash；後端以單一 transaction 驗證 scoped request、保護 current version、關閉舊版並建立唯一下一版。並行相同 scope/hash 回同一結果且不建立額外版本；同一 scope 搭配不同 hash 回 409 `IDEMPOTENCY_CONFLICT`。並行的另一次修改先行改版、本次未成立時回 409 `REQUEST_IN_PROGRESS`，client 以同一 `client_request_id` 重試。長者帳號呼叫回 403 `FORBIDDEN`；`routine_id` 不存在回 404 `ROUTINE_NOT_FOUND`。
+
+### DELETE /routines/{routine_id} — 刪除（照護者）
+
+照護者刪除指定的例行公事（以原子交易建立 `active=false` 之終態版本並從當前排程列表中移除）。
+
+可帶 Query 參數 `client_request_id`（預設自動衍生）。若包含 `client_request_id`，重試將進行冪等重播。
+
+Response 200 回已標記刪除之例行公事物件 (`active: false`)。長者帳號呼叫回 403 `FORBIDDEN`；`routine_id` 不存在回 404 `ROUTINE_NOT_FOUND`。
 
 ### POST /routines/{routine_id}/complete — 手動完成（兩端）
 
@@ -566,7 +571,8 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 
 `date` 預設今天，格式為 `YYYY-MM-DD`。後端寫 `source=manual` event，event `type` 必須沿用完成當時的 routine type；routine 表不保存完成狀態。Response 200 回該日單一 occurrence 物件，欄位與當日行程的 item 相同。
 
-- 指定日期無排程，或該日有效版本已停用：400 `ROUTINE_NOT_SCHEDULED`。
+- 指定日期無排程，或該日有效版本已刪除：400 `ROUTINE_NOT_SCHEDULED`。
+
 - 已完成：冪等回 200，不重複事件。若先前已由 conversation 完成，也命中同一 canonical occurrence event，`completed_at`、`completed_by` 維持首次完成的結果。
 - `routine_id` 不存在：404 `ROUTINE_NOT_FOUND`。
 

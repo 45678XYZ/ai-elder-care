@@ -36,7 +36,8 @@ from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
 from src.shared import auth, db, responses, sessions, turns
-from src.shared.models import ChatRequest, ConversationCreate
+from src.shared.models import ChatRequest
+
 from src.shared.tts import TTSFactory
 from src.shared.validation import RequestValidationError, validate
 
@@ -434,7 +435,6 @@ def accept_new_turn(
     session = requested_session(req)
     turn = {
         "conversation_id": conversation_id,
-        "idempotency_key": req.client_request_id,
         "client_request_id": req.client_request_id,
         "request_hash": payload_hash,
         "lang": req.lang,

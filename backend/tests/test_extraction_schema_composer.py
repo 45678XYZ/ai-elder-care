@@ -239,14 +239,14 @@ def test_prompt_description_and_validator_come_from_same_composition(composed, t
     assert "null" in text
 
 
-def test_prompt_description_includes_predicate_candidates(composed, taxonomy):
+def test_prompt_description_includes_open_world_predicate_guidance(composed, taxonomy):
     text = describe_for_prompt(
         composed,
         taxonomy,
-        predicate_candidates={SCHEDULED: ["服用血壓藥", "服用降血糖藥"]},
     )
-    assert "服用血壓藥" in text
-    assert "__other__" in text
+    assert "predicate 填寫規則" in text
+    assert "精簡的動詞短語" in text
+    assert "__other__" not in text
 
 
 def test_compose_requires_known_concept(taxonomy):

@@ -164,7 +164,7 @@ class ChatAudio(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """POST /chat Request Body 模型。"""
+    """【API Request】POST /chat Request Body 模型。"""
     # 必填：turn 的身分由 elder_id + client_request_id 穩定產生，沒有它就沒有冪等性，
     # 斷線重送會把同一句話寫成兩輪對話、做兩次 routine 副作用。
     client_request_id: str = Field(
@@ -185,8 +185,22 @@ class ChatRequest(BaseModel):
         return self
 
 
-class ConversationCreate(BaseModel):
-    """【DB Schema】conversations 表 Turn 寫入驗證；由 shared/db.py 與 chat handler 共同引用。"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class ConversationItem(BaseModel):
+    """【DB Schema】conversations 表 Turn Item 完整資料庫 Schema 定義。"""
     conversation_id: str | None = Field(default=None, description="對話 ID (前綴 cnv_)")
     session_id: str | None = Field(default=None, description="關聯 Session ID (前綴 ses_)")
     elder_id: str = Field(..., description="對話歸屬之長者 ID（必填）")
@@ -194,10 +208,8 @@ class ConversationCreate(BaseModel):
     conversation_time_key: str | None = Field(default=None, description="DynamoDB GSI Sort Key (<created_at>#<conversation_id>)")
     item_type: str = Field(default="conversation", description="DynamoDB 項目類型 (conversation)")
     created_at: str | None = Field(default=None, description="建立時間 (ISO 8601)")
-    ts: str | None = Field(default=None, description="時間戳記")
-
     client_request_id: str | None = Field(default=None, description="冪等 UUID")
-    idempotency_key: str | None = Field(default=None, description="同 client_request_id")
+
     request_hash: str | None = Field(default=None, description="請求內容 hash")
     request_status: Literal["processing", "completed", "failed"] = Field(
         default="completed", description="turn 處理狀態；統計與摘要只計 completed"
@@ -209,13 +221,13 @@ class ConversationCreate(BaseModel):
     error_message: str | None = Field(default=None, description="錯誤訊息")
 
     source: Literal["elder_initiated", "system_routine_inquiry"] = Field(
-        default="elder_initiated", description="對話發起來源"
+        default="elder_initiated", description="對話發起來源（長者主動 / 系統例行公事詢問）"
     )
     user_status: Literal["replied", "no_response"] = Field(
-        default="replied", description="長者行為狀態"
+        default="replied", description="長者行為狀態（已回覆 / 逾時無回應）"
     )
     system_status: Literal["success", "failed"] = Field(
-        default="success", description="系統技術處理狀態"
+        default="success", description="系統技術處理狀態（成功 / 處理失敗）"
     )
     routine_id: str | None = Field(default=None, description="關聯例行公事 ID")
 
@@ -230,20 +242,10 @@ class ConversationCreate(BaseModel):
     ai_responded_at: str | None = Field(default=None, description="AI 推理完成送出回應之時間戳記")
     routines_updated: bool = Field(default=False, description="本輪對話是否觸發例行公事狀態更新")
 
-
-
-
-
-
-
-
-
-
-
-
 # -----------------------------------------------------------------------------
 # Events 表模型
 # -----------------------------------------------------------------------------
+
 
 class EventCreate(BaseModel):
     """【DB Schema】events 表寫入驗證；由 shared/db.py 引用，非對外 API 請求體。"""

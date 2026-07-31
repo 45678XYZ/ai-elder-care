@@ -5,10 +5,10 @@
    - 對同一 session 內的事件按 `canonical_event_key`（`Date#Slot#Subject#Predicate`）收斂
    - 相同 Key 之事件透過 `merge_events` 合併，保留屬性最完整者，並將對話證據（evidence）取聯集
 
-2. 第二階段（別名同義詞去重 alias fallback）：
-   - 針對同 Slot、同 Subject、同 `concept_id` 但謂語文字漂移的事件進行二次收斂
-   - 透過 `lexicon` 受控詞彙檔選擇規範謂語，解決 LLM 萃取時近義詞漂移問題
-   - 合併後重算 `canonical_event_key` 與 `event_id`
+2. 第二階段（語義相似度去重 embedding similarity fallback）：
+   - 針對同 Slot、同 Subject、同 `concept_id` 但謂語文字不同的事件進行二次收斂
+   - 透過 embedding cosine similarity（門檻 MERGE_SIM_THRESHOLD = 0.75）判定語義等價
+   - 取代舊版的 alias-based 去重，支援開放世界謂語 (Open-World Predicate)
 
 3. 確定性與冪等保證：
    - 排序與選擇邏輯皆具確定性，確保相同 snapshot 重複執行產生完全一致的收斂結果
@@ -18,10 +18,15 @@ from collections.abc import Sequence
 from dataclasses import replace
 import logging
 
+import numpy as np
+
 from .canonical import canonical_event_key, event_id_for
 from .models import CanonicalEvent, DedupStats
 
 logger = logging.getLogger(__name__)
+
+# 語義相似度合併門檻：cosine similarity >= 此值視為同一事件的謂語漂移
+MERGE_SIM_THRESHOLD = 0.75
 
 
 def _completeness(event: CanonicalEvent) -> tuple[int, int, float]:
@@ -69,8 +74,13 @@ def deduplicate(
     *,
     slot_minutes: int,
     lexicon=None,
+    embedder=None,
 ) -> tuple[tuple[CanonicalEvent, ...], DedupStats]:
     """對單一 session 萃出的事件列表執行兩階段去重與收斂。
+
+    Args:
+        embedder: 具有 `embed(text) -> np.ndarray` 方法的 embedding provider，
+                  用於第二階段的語義相似度去重。若為 None 則跳過語義去重。
 
     Returns:
         (已去重且排序穩定的事件 tuple, 去重統計指標 DedupStats)
@@ -89,7 +99,7 @@ def deduplicate(
             by_key[event.canonical_event_key] = merge_events(existing, event)
             key_merged += 1
 
-    # 第二層：同 slot／subject／concept 且謂語為別名漂移者才合併
+    # 第二階段：同 slot／subject／concept 但謂語文字不同者，以 embedding similarity 判定是否合併
     alias_merged = 0
     grouped: dict[tuple[str, str, str], list[CanonicalEvent]] = {}
     for event in by_key.values():
@@ -104,44 +114,14 @@ def deduplicate(
             merged.append(group[0])
             continue
 
-        # 依據受控詞彙別名拆分子群組（例如 "測血壓" 與 "量血壓" 屬同一個別名群組）
-        subgroups: dict[str, list[CanonicalEvent]] = {}
-        for event in group:
-            target_pred = event.predicate
-            if lexicon is not None:
-                res = lexicon.concepts.get(concept_id)
-                if res:
-                    target_pred = res.aliases.get(event.predicate, event.predicate)
-            subgroups.setdefault(target_pred, []).append(event)
-
-        # 若子群組數量多於 1 個（如包含通用與具體謂語），但皆無相互衝突的結構化數據，則進行漂移收斂
-        if len(subgroups) > 1:
-            # 檢查是否有具體相異的獨立測量 (例如量血壓 vs 量體重)
-            has_distinct_measurements = any(
-                len(e.structured_detail or {}) > 0 for e in group
-            ) and len({e.predicate for e in group if e.predicate in (lexicon.candidates(concept_id) if lexicon else ())}) > 1
-
-            if not has_distinct_measurements:
-                # 屬同概念內的謂語漂移，依 preferred_predicate 進行收斂
-                target_pred = _preferred_predicate(group, concept_id, lexicon)
-                combined = group[0]
-                for event in group[1:]:
-                    combined = merge_events(combined, event)
-                    alias_merged += 1
-                merged.append(_rekey(combined, target_pred, slot_minutes))
-                continue
-
-        for pred_key, sub_events in subgroups.items():
-            if len(sub_events) == 1:
-                merged.append(_rekey(sub_events[0], pred_key, slot_minutes))
-                continue
-
-            target_pred = _preferred_predicate(sub_events, concept_id, lexicon)
-            combined = sub_events[0]
-            for event in sub_events[1:]:
-                combined = merge_events(combined, event)
-                alias_merged += 1
-            merged.append(_rekey(combined, target_pred, slot_minutes))
+        if embedder is not None:
+            # 使用 embedding cosine similarity 進行語義去重
+            merge_result, merge_count = _embedding_merge_group(group, embedder, slot_minutes)
+            merged.extend(merge_result)
+            alias_merged += merge_count
+        else:
+            # 無 embedder 時回退：保留全部事件不做語義合併
+            merged.extend(group)
 
     ordered = tuple(sorted(merged, key=lambda event: (event.ts, event.event_id)))
     return ordered, DedupStats(
@@ -152,32 +132,85 @@ def deduplicate(
     )
 
 
-def _preferred_predicate(
-    group: Sequence[CanonicalEvent],
-    concept_id: str,
-    lexicon,
-) -> str:
-    """在同義謂語群組中挑選規範化（canonical）謂語。
+def _get_embed_vector(embedder, text: str) -> np.ndarray:
+    """軟性適配各式 Embedder 介面 (embed / embed_query / embed_documents)。"""
+    if hasattr(embedder, "embed"):
+        return np.array(embedder.embed(text), dtype=np.float32)
+    if hasattr(embedder, "embed_query"):
+        return np.array(embedder.embed_query(text), dtype=np.float32)
+    if hasattr(embedder, "embed_documents"):
+        return np.array(embedder.embed_documents([text])[0], dtype=np.float32)
+    raise AttributeError("Embedder 缺乏相容的向量介面")
 
-    優先挑選受控詞彙集（lexicon）登記之規範值；若皆未登記則取字典序最小者，以建立確定性的全序選擇規則。
+
+def _embedding_merge_group(
+    group: list[CanonicalEvent],
+    embedder,
+    slot_minutes: int,
+) -> tuple[list[CanonicalEvent], int]:
+    """在同 (slot, subject, concept_id) 群組內，以 embedding cosine similarity 合併語義相近的事件。
+
+    使用貪婪聚類 (greedy clustering) 策略：
+    1. 按資料完整度由高至低排序（最完整者作為各聚類的代表）
+    2. 每個事件與現有聚類代表計算 cosine similarity
+    3. 若 >= MERGE_SIM_THRESHOLD 則合併至該聚類
+    4. 否則開啟新聚類
+
+    運算成本：每個 predicate 的 embedding 約 1-5ms（本地 sentence-transformers），
+    對 n 個事件的群組（通常 n <= 5），pairwise 比較完全可以忽略。
     """
-    predicates = {event.predicate for event in group}
-    if lexicon is not None:
-        for candidate in lexicon.candidates(concept_id):
-            if candidate in predicates:
-                return candidate
-    return sorted(predicates)[0]
+    # 按完整度排序，最完整者優先成為聚類代表
+    sorted_group = sorted(group, key=_completeness, reverse=True)
 
+    # 計算所有 predicate 的 embedding 向量
+    pred_embeddings: dict[str, np.ndarray] = {}
+    for event in sorted_group:
+        pred = event.predicate
+        if pred not in pred_embeddings:
+            try:
+                vec = _get_embed_vector(embedder, pred)
+                norm = np.linalg.norm(vec)
+                pred_embeddings[pred] = vec / (norm + 1e-9) if norm > 0 else vec
+            except Exception:
+                pred_embeddings[pred] = np.zeros(1)
 
-def _rekey(event: CanonicalEvent, predicate: str, slot_minutes: int) -> CanonicalEvent:
-    """變更事件之謂語，並依據新謂語重新計算對應之 canonical_event_key 與 event_id。"""
-    if event.predicate == predicate:
-        return event
-    new_key = canonical_event_key(event.ts, event.subject, predicate, slot_minutes)
-    return replace(
-        event,
-        predicate=predicate,
-        canonical_event_key=new_key,
-        event_id=event_id_for(event.elder_id, new_key),
-    )
+    # 貪婪聚類
+    clusters: list[CanonicalEvent] = []
+    cluster_preds: list[str] = []
+    merge_count = 0
+
+    for event in sorted_group:
+        event_vec = pred_embeddings.get(event.predicate)
+        if event_vec is None or event_vec.size <= 1:
+            clusters.append(event)
+            cluster_preds.append(event.predicate)
+            continue
+
+        best_idx = -1
+        best_sim = -1.0
+        for idx, rep_pred in enumerate(cluster_preds):
+            rep_vec = pred_embeddings.get(rep_pred)
+            if rep_vec is None or rep_vec.size <= 1:
+                continue
+            sim = float(np.dot(event_vec, rep_vec))
+            if sim > best_sim:
+                best_sim = sim
+                best_idx = idx
+
+        if best_sim >= MERGE_SIM_THRESHOLD and best_idx >= 0:
+            logger.info(
+                "語義去重合併：'%s' ↔ '%s' (sim=%.3f, concept=%s)",
+                event.predicate,
+                cluster_preds[best_idx],
+                best_sim,
+                event.concept_id,
+            )
+            clusters[best_idx] = merge_events(clusters[best_idx], event)
+            merge_count += 1
+        else:
+            clusters.append(event)
+            cluster_preds.append(event.predicate)
+
+    return clusters, merge_count
+
 

@@ -37,8 +37,9 @@ MAX_REPAIR_ATTEMPTS = 1
 
 # 系統 Prompt：明確定位照護資訊結構化萃取專家，強制要求僅基於事實萃取，嚴禁推測與無中生有
 SYSTEM_PROMPT = (
-    "你是長者照護資訊結構化萃取專家。只萃取對話中明確提到的照護事實，"
+    "你是長者照護資訊結構化萃取專家。只萃取長者已發生或正在發生的照護事實，"
     "保留具體數值與藥名等細節，不推測、不補充對話沒有的內容。"
+    "AI 助理的建議、衛教提醒、風險警告不是事實行為，不要萃取。"
 )
 
 # 事件物件中屬於身分與時序核心基底的欄位；用於與專屬動態屬性分隔
@@ -96,8 +97,9 @@ def build_extraction_prompt(
     predicate_candidates: Mapping[str, Sequence[str]] | None = None,
     elder: Mapping[str, Any] | None = None,
     other_predicate_token: str = "__other__",
+    context_events: Sequence[Any] = (),
 ) -> str:
-    """組裝帶有動態 Schema 規則、長者背景與事件拆分原則的 Single-Pass 萃取提示詞。"""
+    """組裝帶有動態 Schema 規則、長者背景、前文脈絡與事件拆分原則的 Single-Pass 萃取提示詞。"""
     schema_rules = describe_for_prompt(
         composed,
         taxonomy,
@@ -105,14 +107,45 @@ def build_extraction_prompt(
         other_predicate_token=other_predicate_token,
     )
 
+    context_block = ""
+    if context_events:
+        lines = []
+        for e in context_events:
+            p = getattr(e, "predicate", "")
+            d = getattr(e, "detail", "")
+            t = getattr(e, "type", "other")
+            if p or d:
+                lines.append(f"- [{t}] {p}: {d}")
+        if lines:
+            context_block = "【截至同 Session 前文已記錄之事件（請勿重複萃取相同行為與內容）】\n" + "\n".join(lines) + "\n\n"
+
     return f"""請從下列對話塊中萃取獨立的照護事件清單。
+
+【事實判定原則 ★ 最重要】
+1. 只萃取「長者已做、正在做、已經歷、已發生」的事件。
+2. 以下全部不是事件，嚴禁萃取：
+   - AI 助理的建議或衛教（如「建議冷敷」「記得多喝水」）
+   - 長者的意圖或計劃（如「考慮今晚出門」「等下想去散步」）
+   - 詢問行為（如「詢問是否要去散步」）
+   - 準備動作（如「準備量測工具」），除非有後續的實際量測結果
+   - AI 回應中的風險提醒或預防性衛教，不代表已發生不良事件
+3. 判斷原則：如果把 event_summary 單獨讀出來，它能否告訴照護者「長者具體做了什麼/發生了什麼」？
+   如果只是描述對話過程中的語言行為（提到/詢問/被建議/家常聊天），就不要萃取。
+4. **當日事件專一性（嚴禁萃取過往歷史回憶）**：
+   本系統僅紀錄當日（`reference_datetime` 當天）發生的實質生活事件與健康狀況。
+   長者對話中提到、聊起過往數天/數年前的舊事（例如：「上禮拜二去看電影」、「年輕時在工廠上班」）屬於過往記憶回顧，**一律不得萃取為事件**。`observed_at` 的日期必須為 `reference_datetime` 當天。
 
 【事件分裂原則】
 1. 對話中有多個獨立行為或量測（例如同時提到「量血壓 135/85」與「量體重 62 公斤」），
    或同一主題但時間點不同（例如「現在頭痛」與「昨天開始頭痛」），必須拆成多筆事件。
 2. 同一件事只輸出一筆；主體不同或謂語不同才拆開。
 3. `subject` 填事件主體（長者本人請填「長者」，其他人填其稱謂或姓名）。
-4. `predicate` 填單一語意謂語，用來辨識「這是哪一件事」。
+4. `predicate` 填一個精簡的動作短語，用來辨識「這是哪一件事」。
+
+【語境推理原則】
+1. 必須結合上下文判斷行為的真正目的，不要只看單一詞彙。
+2. AI 回應中若提到某種藥物的副作用風險，那是預防性衛教說明，不代表長者已發生該副作用。
+3. 面對面在場交談與打電話是不同形式的互動，請根據對話語境正確判斷。
 
 【時序推導】
 基準時間 reference_datetime="{reference_datetime}"。
@@ -123,7 +156,7 @@ def build_extraction_prompt(
 【長者背景】
 {build_elder_context(elder)}
 
-{schema_rules}
+{context_block}{schema_rules}
 
 【對話塊識別碼】
 "{chunk_id}"
@@ -144,6 +177,7 @@ def extract_events(
     *,
     predicate_candidates: Mapping[str, Sequence[str]] | None = None,
     elder: Mapping[str, Any] | None = None,
+    context_events: Sequence[Any] = (),
     extraction_mode: str = "prompt_guided",
     model_id: str | None = None,
     client=None,
@@ -161,6 +195,7 @@ def extract_events(
         taxonomy,
         predicate_candidates=predicate_candidates,
         elder=elder,
+        context_events=context_events,
     )
 
     # 預設不走硬約束：動態 schema 每換一組標籤就是新 grammar，會反覆觸發首次編譯延遲

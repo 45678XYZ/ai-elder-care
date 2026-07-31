@@ -79,7 +79,7 @@
 hackathon 方向是盡量分裂（保住「血壓 135/85」與「體重 62kg」這種細節），framework 方向是依 slot 合併（保冪等）。兩者串接機制如下：
 
 1. **LLM Single-Pass 前置分裂**：Single-Pass Extractor 在 Prompt 指引下將實體（血壓 vs 體重）與時間語境（現在頭痛 vs 昨天頭痛）拆分為獨立事件與原生 Predicate。
-2. **開放世界向量語義歸一化 (Embedding-based Fuzzy Match)**：使用 `bge-small-zh-v1.5` 計算餘弦相似度，若 $\ge 0.75$ 平滑對齊至受控詞彙；未登錄開放世界謂語保留為獨立事件並標記 `is_novel_predicate=True`。
+2. **開放世界謂語 + 語義去重 (Open-World Predicate + Embedding Dedup)**：LLM 自由撰寫精簡動作短語作為 predicate，不再強制收斂至受控詞彙。去重階段使用 embedding cosine similarity（門檻 $\ge 0.75$）合併同 slot、同 subject、同 concept_id 下語義等價的謂語漂移。
 3. **Layer 1 Exact Key Dedup**：相異實體生成不同 Canonical Key（如 `2026-07-29#SLOT_0800#長者#量血壓` vs `2026-07-29#SLOT_0800#長者#量體重`），後端去重只對完全相同 Key 進行跨 Chunk 合併，`detail` 與 `structured_detail` 取最完整的一次，`evidence_conversation_ids` 取聯集。
 
 ```mermaid
@@ -162,7 +162,7 @@ Bedrock Structured outputs 是伺服器端 grammar 約束解碼（Converse 的 `
 
 萃取階段 prompt 必須明列動態組合出來的 schema 規則，單一真理來源是同一份 `schema_composer` 產物：
 
-- **給 LLM 的 prompt**：(1) 動態 Pydantic model 的 JSON Schema 全文；(2) per-concept 屬性白名單表（哪些欄位屬於哪個 `concept_id`）；(3) 每個 concept 可用的 predicate 候選清單與 `__other__` 出口；(4) allowed `concept_id` 清單；(5) null 政策與禁止跨事件填值的規則。
+- **給 LLM 的 prompt**：(1) 動態 Pydantic model 的 JSON Schema 全文；(2) per-concept 屬性白名單表（哪些欄位屬於哪個 `concept_id`）；(3) 開放世界 predicate 填寫指引（精簡動詞短語，不限制候選清單）；(4) allowed `concept_id` 清單；(5) null 政策與禁止跨事件填值的規則。
 - **給後端的驗證器**：同一個 `create_model` 產物，`predicate` 用 `Literal[...]`，驗證後再跑 `prune_irrelevant_event_properties`。
 
 失敗處理（決策 I）：JSON 整份解不開 → retryable 重試；單一事件驗證失敗 → 帶 validation error 做一次有界修復重問，仍失敗則丟棄該事件並計數告警，不讓整個 chunk 變 `failed`。
@@ -174,10 +174,9 @@ Bedrock Structured outputs 是伺服器端 grammar 約束解碼（Converse 的 `
 `concept_id` 是分類（taxonomy），predicate 是事件實例的語意謂語，兩者不同維度。
 
 - **同 node 不同事件**（同一 `VitalSignRecord` 下量血壓與量體重）→ predicate 不同 → canonical key 不同 → 兩筆事件，這是正確行為，也是 single-pass 事件分裂要保住的。
-- **同 node 同事件但 predicate 不一致**（「吃血壓藥」vs「服用降血壓藥」）→ 重複事件風險，這是 canonical identity 最脆弱處。三層防護：
-  1. **受控詞彙**：由 ontology 節點加 `synonym_dictionary.json` 派生 per-category predicate lexicon，萃取 schema 以 enum／`Literal` 約束，模型只能選或回 `__other__`。
-  2. **server-owned 正規化**：alias map 加全形半形、語助詞、動詞形態正規化；framework 對 Subject 已明文要求 server-owned normalization，predicate 沿用同機制。
-  3. **slot 內 fallback 合併**：同 slot、同 subject、同 `concept_id` 但 predicate 正規化後仍不同者，以 lexicon canonical 值合併並記錄 alias 命中，供調校 lexicon。
+- **同 node 同事件但 predicate 不一致**（「吃血壓藥」vs「服用降血壓藥」）→ 重複事件風險，這是 canonical identity 最脆弱處。兩層防護：
+  1. **開放世界謂語 (Open-World Predicate)**：LLM 自由撰寫精簡動作短語，不再使用受控詞彙 enum 約束或 `__other__` 機制。`predicate_lexicon.json` 的 `concepts` 段落降格為參考資料，不限制 LLM 輸出。
+  2. **embedding cosine similarity 去重**：同 slot、同 subject、同 `concept_id` 但 predicate 文字不同的事件，以本地 sentence-transformers 計算 embedding 後貪婪聚類合併（門檻 0.75），取代舊版的 alias-based 合併。Subject 正規化（阿公→長者）沿用 `predicate_lexicon.json` 的 `subject_aliases`。
 - 跨 session 的殘留重複不消除，framework 明文不宣稱 zero duplicate。
 
 ## 6. 分塊器：兩種模式與不移植 `.pkl` 的理由
@@ -398,7 +397,7 @@ Commit：`feat(chat): add session closer` ＋ `feat(batch): add dlq reconciler` 
 
 ### Task 13 — 觀測指標與收尾
 
-補指標：chunk 數、batch attempts、去重合併率、type／concept 分佈、structured output 失敗率、grammar 首編譯延遲、SQS duplicate／DLQ、predicate `__other__` 命中率。順手清掉 `.kiro/skills/` 多餘的 `developing-ai-elder-care copy` 目錄。
+補指標：chunk 數、batch attempts、去重合併率、type／concept 分佈、structured output 失敗率、grammar 首編譯延遲、SQS duplicate／DLQ、語義去重合併率 (embedding similarity merge count)。順手清掉 `.kiro/skills/` 多餘的 `developing-ai-elder-care copy` 目錄。
 Commit：`feat(observability): add extraction metrics`
 
 ### Task 14 — 上游（aws-hackathon）修補與評測補齊
@@ -459,6 +458,6 @@ Pk／WindowDiff 與兩條基線（`every_3_turns`、`embedding_depth`）的比�
 - 動態 schema 在 Bedrock 的 grammar 首編譯延遲實測值，決定萃取階段預設是否翻成硬約束。
 - 所選模型是否列於 Bedrock 支援 structured outputs 的清單。
 - Titan v2 與 Cohere v3 在 UCO 概念檢索與 turn 切分上的比對（比賽當天）。
-- predicate lexicon 覆蓋率：`__other__` 命中率過高代表 lexicon 需擴充。
+- 語義去重合併率：embedding similarity merge count 過高代表 LLM 謂語表達不穩定，可考慮強化 prompt 指引。
 - 去重合併率與跨 session 殘留重複比例；framework 不宣稱 zero duplicate。
 - `BAAI/SeniorTalk` 授權條款。

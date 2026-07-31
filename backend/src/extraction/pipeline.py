@@ -159,6 +159,7 @@ class ExtractionPipeline:
         chunk: PlannedChunk,
         *,
         elder: Mapping[str, Any] | None = None,
+        context_events: Sequence[CanonicalEvent] = (),
     ) -> ChunkOutcome:
         """執行單一 Chunk 之完整流程：概念檢索 -> RAC 分類 -> HMLC 剪枝 -> 動態 Schema 組裝 -> Single-Pass 萃取 -> Canonical 身分建構。"""
         transcript = render_chunk_text(turns, chunk)
@@ -195,8 +196,8 @@ class ExtractionPipeline:
             reference,
             composed,
             self.taxonomy,
-            predicate_candidates=self.lexicon.candidates_for_prompt(composed.concept_ids),
             elder=elder,
+            context_events=context_events,
             extraction_mode=self.config.extraction_mode,
             model_id=self.config.model_for("extractor"),
             client=self.client,
@@ -257,6 +258,14 @@ class ExtractionPipeline:
         若謂語正規化失敗導致無可用謂語，直接丟棄該事件並發出警告（無謂語無法計算 Canonical Key 與進行去重）。
         """
         ts = resolve_observed_at(extracted.observed_at, extracted.raw_temporal_expression, reference)
+        
+        # 決策：過往歷史回憶（非當日事件）不記錄為當日時時事件
+        ref_date = reference.split("T")[0]
+        ts_date = ts.split("T")[0]
+        if ts_date < ref_date:
+            logger.info("過往歷史回憶事件已排除：ts=%s ref_date=%s concept_id=%s predicate=%s", ts, ref_date, extracted.concept_id, extracted.predicate)
+            return None
+
         subject = normalize_subject(extracted.subject, self.lexicon, extra_aliases=family_aliases)
 
         predicate = normalize_predicate(
@@ -283,14 +292,7 @@ class ExtractionPipeline:
         ]
         confidence = min(confidences) if confidences else None
 
-        if predicate.via_alias:
-            structured["predicate_alias_hit"] = True
-        elif predicate.via_fuzzy_embedding:
-            structured["predicate_fuzzy_hit"] = True
-            structured["predicate_fuzzy_sim"] = predicate.similarity_score
-        elif not predicate.matched:
-            structured["is_novel_predicate"] = True
-
+        # 開放世界策略下不再區分 alias/fuzzy/novel，僅在正規化改變了文字時記錄原始值
         if predicate.raw_predicate and predicate.raw_predicate != predicate.value:
             structured["raw_predicate"] = predicate.raw_predicate
 
@@ -341,7 +343,9 @@ class ExtractionPipeline:
         outcomes: list[ChunkOutcome] = []
         collected: list[CanonicalEvent] = []
         for chunk in resolved_manifest.chunks:
-            outcome = self.process_chunk(elder_id, session_id, turns, chunk, elder=elder)
+            outcome = self.process_chunk(
+                elder_id, session_id, turns, chunk, elder=elder, context_events=collected
+            )
             outcomes.append(outcome)
             collected.extend(outcome.events)
 
@@ -349,6 +353,7 @@ class ExtractionPipeline:
             collected,
             slot_minutes=self.config.event_slot_minutes,
             lexicon=self.lexicon,
+            embedder=self.embedder,
         )
         return PipelineResult(
             session_id=session_id,

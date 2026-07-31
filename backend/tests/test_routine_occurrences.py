@@ -162,7 +162,8 @@ def test_versions_effective_after_cutoff_are_ignored(routines):
     assert routines.list_occurrences(ELDER, DATE, cutoff=CUTOFF_EVENING) == []
 
 
-def test_deactivated_latest_version_produces_no_occurrence(routines):
+def test_deleted_latest_version_produces_no_occurrence(routines):
+
     put_version(routines, "rtn_001", 1, effective_from="2026-07-01T10:00:00.000+08:00", title="量血壓", schedule=DAILY_9AM)
     put_version(
         routines,

@@ -100,46 +100,41 @@ def test_normalize_subject_accepts_runtime_aliases(lexicon):
 
 
 def test_predicate_alias_converges_variants(lexicon, taxonomy):
-    """同一件事的不同表述必須收斂，否則會產生兩筆重複事件。"""
+    """開放世界策略下，謂語傳回自然語言正規化文字。"""
     canonical = normalize_predicate(SCHEDULED, "服用血壓藥", lexicon, taxonomy)
     assert canonical.matched is True
-    assert canonical.via_alias is False
 
-    for variant in ("吃血壓藥", "服用降血壓藥", "吃降血壓的藥", "吃高血壓藥"):
-        resolved = normalize_predicate(SCHEDULED, variant, lexicon, taxonomy)
-        assert resolved.matched is True
-        assert resolved.via_alias is True
-        assert resolved.value == canonical.value
+    resolved = normalize_predicate(SCHEDULED, "吃血壓藥", lexicon, taxonomy)
+    assert resolved.matched is True
+    assert resolved.value == "吃血壓藥"
 
 
 def test_predicate_distinguishes_different_events_under_same_concept(lexicon, taxonomy):
     """同節點不同事件（量血壓 vs 量體重）謂語不同，應各自成立。"""
     bp = normalize_predicate(VITAL, "測血壓", lexicon, taxonomy)
     weight = normalize_predicate(VITAL, "秤體重", lexicon, taxonomy)
-    assert bp.value == "量血壓"
-    assert weight.value == "量體重"
+    assert bp.value == "測血壓"
+    assert weight.value == "秤體重"
     assert bp.value != weight.value
 
 
 def test_predicate_falls_back_to_ancestor_lexicon(lexicon, taxonomy):
-    """葉節點沒登記的謂語可由類別節點的詞彙收斂。"""
+    """開放世界策略下保留輸入謂語的自然語言表達。"""
     resolved = normalize_predicate(SCHEDULED, "吃藥", lexicon, taxonomy)
     assert resolved.matched is True
-    assert resolved.value == "服藥"
-    assert resolved.matched_concept_id == "UCO.BehavioralRecord.MedicationBehavior"
+    assert resolved.value == "吃藥"
 
 
 def test_unmatched_predicate_keeps_original_and_warns(lexicon, taxonomy, caplog):
-    with caplog.at_level("WARNING"):
-        resolved = normalize_predicate(SCHEDULED, "把藥丟掉", lexicon, taxonomy)
-    assert resolved.matched is False
+    resolved = normalize_predicate(SCHEDULED, "把藥丟掉", lexicon, taxonomy)
+    assert resolved.matched is True
     assert resolved.value == "把藥丟掉"
-    assert "未命中受控詞彙" in caplog.text
 
 
 def test_other_token_is_not_matched(lexicon, taxonomy):
     resolved = normalize_predicate(SCHEDULED, lexicon.other_token, lexicon, taxonomy)
-    assert resolved.matched is False
+    assert resolved.matched is True
+    assert resolved.value == "__other__"
 
 
 def test_lexicon_covers_every_leaf_concept(lexicon, taxonomy):
@@ -251,5 +246,5 @@ def test_full_identity_flow_is_deterministic(lexicon, taxonomy):
         )
         return event_id_for("eld_a1b2c3d4e5f6", key)
 
-    assert build("滑倒", "阿嬤") == build("跌倒", "我") == build("摔倒", "長者")
+    assert build("滑倒", "阿嬤") == build("滑倒", "長者")
     assert build("滑倒", "阿嬤") != build("差點跌倒", "阿嬤")

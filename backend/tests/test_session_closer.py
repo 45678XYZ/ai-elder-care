@@ -338,7 +338,8 @@ def reserve_turn(session_id, *, conversation_id, moment, lease_seconds):
             session_id,
             turn={
                 "conversation_id": conversation_id,
-                "idempotency_key": f"req-{conversation_id}",
+                "client_request_id": f"req-{conversation_id}",
+
                 "request_hash": "hash-1",
                 "lang": "zh-TW",
                 "input_type": "text",
