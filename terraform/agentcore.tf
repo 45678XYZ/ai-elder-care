@@ -152,9 +152,14 @@ resource "aws_iam_role_policy" "agentcore_runtime_invoke_model" {
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream",
       ]
-      # inference profile 會再路由到底層 foundation model，兩種 ARN 都要放行
+      # inference profile 會再路由到底層 foundation model，兩種 ARN 都要放行。
+      #
+      # foundation model 這條的 region 必須用萬用字元，不能綁 var.aws_region：global CRIS
+      # 會路由到「無 region」的 ARN（arn:aws:bedrock:::foundation-model/...），綁死區域就比對
+      # 不到，Converse 會回 AccessDeniedException 說沒有 identity-based policy 允許 InvokeModel。
+      # 這也是 global 前綴的用意——請求可能由任何區域承接，來源區域無法事先列舉。
       Resource = [
-        "arn:aws:bedrock:${var.aws_region}::foundation-model/*",
+        "arn:aws:bedrock:*::foundation-model/*",
         "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/*",
       ]
     }]
@@ -314,4 +319,10 @@ resource "aws_bedrockagentcore_agent_runtime_endpoint" "live" {
   name             = "live"
   agent_runtime_id = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_id
   description      = "chat Lambda 呼叫的正式端點"
+
+  # 必須明確跟著 runtime 的版本走。改 runtime 的設定（環境變數、部署包）會產生新版本，
+  # 但這個屬性是 computed 的，不指定就永遠停在建立當下那一版——設定看起來改好了、
+  # terraform 也顯示 apply 成功，端點卻還在服務舊版本。
+  # 換模型時就是這樣：runtime 已經是 v2 的 opus-4-6，端點還在 v1 打 opus-5。
+  agent_runtime_version = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_version
 }
