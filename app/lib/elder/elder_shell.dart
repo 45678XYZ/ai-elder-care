@@ -46,7 +46,7 @@ class ElderShell extends StatelessWidget {
                   _ElderTab(
                     icon: Icons.event_note_outlined,
                     selectedIcon: Icons.event_note,
-                    label: t('今日行程'),
+                    label: t('主頁'),
                     selected: navigationShell.currentIndex == 1,
                     onTap: () => navigationShell.goBranch(1),
                   ),
@@ -104,7 +104,7 @@ class _ElderTab extends StatelessWidget {
               children: [
                 Icon(selected ? selectedIcon : icon, size: 30, color: color),
                 const SizedBox(width: AppSpacing.sm),
-                // Flexible：兩倍字級時「今日行程」會換行而不是撐破格子。
+                // Flexible：兩倍字級時分頁名稱會換行而不是撐破格子。
                 Flexible(
                   child: Text(
                     label,

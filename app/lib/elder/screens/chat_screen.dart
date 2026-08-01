@@ -212,13 +212,36 @@ class _ChatScreenState extends State<ChatScreen>
     if (AppSession.instance.isHakka) return _recordTurn();
 
     var handled = false; // 每輪只處理一次最終結果
+
+    // 跨停頓累積這一輪說過的話。
+    //
+    // 裝置端辨識器在長輩停頓時會結束當前這一段、重開新的一段，而 `recognizedWords`
+    // 是**從新那一段的開頭**算起。直接拿它覆蓋畫面的話，停頓前說的整段會消失
+    // ——長輩本來就講得慢、句中停頓多，這在實機上很容易發生。
+    //
+    // 判準是「新的一段不是舊的一段的延伸」：同一段之內，後來的部分結果一定以先前
+    // 的內容開頭；一旦不是，就代表辨識器重開了，先把舊的那段收進 [committed]。
+    var committed = '';
+    var partial = '';
+
     await _speech.listen(
       onResult: (text, isFinal) {
         if (!mounted) return;
-        setState(() => _question = text);
+
+        if (partial.isNotEmpty && !text.startsWith(partial)) {
+          committed += partial;
+        }
+        partial = text;
+        final whole = committed + partial;
+
+        setState(() => _question = whole);
+        // 逐字稿邊講邊長，也要跟著捲，否則長輩看不到自己正在說的那一句。
+        // 不用動畫：部分結果來得很密，每次都播動畫畫面會一直抖。
+        _scrollToBottom(animate: false);
+
         if (isFinal && !handled) {
           handled = true;
-          final q = text.trim();
+          final q = whole.trim();
           if (q.isEmpty) {
             if (_conversationActive) _listenTurn();
           } else {
@@ -304,12 +327,19 @@ class _ChatScreenState extends State<ChatScreen>
             _Message(isElder: true, text: reply.transcript));
       }
 
-      // 長輩用講的完成或新增了行程。重整不等回應也不擋這一輪對話——它只是背景把
-      // 今日畫面與本地通知換成新的（見 RoutineSync），對話本身不該為它停下來。
+      // 對話可能已經改了後端的狀態。兩件事都不等回應、也不擋這一輪對話——它們只是
+      // 背景把今日畫面、本地通知與語言設定換成新的，對話本身不該為它們停下來。
       //
-      // 放在 seq 檢查之前是刻意的：這個副作用**已經發生在後端了**，使用者中途按停止
-      // 不會讓它回復。不重整的話，行程明明完成了，今日畫面卻還是舊的。
-      if (reply.routinesUpdated) unawaited(RoutineSync.refresh());
+      // 放在 seq 檢查之前是刻意的：這些副作用**已經發生在後端了**，使用者中途按停止
+      // 不會讓它回復。不同步的話，行程明明完成了、語言明明改過了，今日畫面卻還是舊的。
+      //
+      // 行程不看 `routinesUpdated` 而是每輪都拉：那個旗標只涵蓋後端「知道自己改了」
+      // 的情況，而長輩也可能透過別的路徑（照護者同時在改、上一輪漏掉的旗標）讓資料
+      // 變動。每輪多一次查詢換掉「畫面一直是舊的」，這個交換划算。
+      unawaited(RoutineSync.refresh());
+      // 長輩可以用講的改語言與腔調（後端 update_elder_profile），那條路不經過
+      // App 的按鈕，不重讀的話今日頁的語言鈕會跟他實際在用的語言對不上。
+      unawaited(AppSession.instance.refreshSelectedElder());
 
       // 使用者在等待期間按了停止（或又開了新的一輪）：這份回應已經沒人要了。
       // 不顯示、不唸、不改階段——那一輪的停止動作已經把畫面收成 idle。
@@ -435,15 +465,33 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollToBottom();
   }
 
-  /// 新訊息進來後捲到底。等這一幀畫完才捲，否則 maxScrollExtent 還是舊的。
-  void _scrollToBottom() {
+  /// 捲到最新的一句。等這一幀畫完才捲，否則 maxScrollExtent 還是舊的。
+  ///
+  /// 捲兩次是必要的：泡泡裡是會換行的長文字，第一幀之後高度可能還在長
+  /// （字體、換行、圖片都會影響），只捲一次會停在半途，最新那句露不出來。
+  /// 第二次補在 120ms 後，涵蓋掉那段成長。
+  ///
+  /// [animate] 為 false 時直接跳——聆聽中的逐字稿每來一個部分結果就捲一次，
+  /// 每次都播動畫會讓畫面一直抖。
+  void _scrollToBottom({bool animate = true}) {
+    void go() {
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      final target = _scrollCtrl.position.maxScrollExtent;
+      if ((target - _scrollCtrl.offset).abs() < 4) return;
+      if (animate) {
+        _scrollCtrl.animateTo(
+          target,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollCtrl.jumpTo(target);
+      }
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollCtrl.hasClients) return;
-      _scrollCtrl.animateTo(
-        _scrollCtrl.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+      go();
+      Future.delayed(const Duration(milliseconds: 120), go);
     });
   }
 

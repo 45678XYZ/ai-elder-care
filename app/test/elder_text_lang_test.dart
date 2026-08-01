@@ -73,7 +73,13 @@ void main() {
     await AppSession.instance.setTextLang('hak');
     expect(t('要登出嗎？'), '愛登出無？');
     expect(t('不要'), '莫');
-    expect(missingFromHakka, isEmpty, reason: '長者端介面應已全數譯完');
+    // 逐項列出而不是 isEmpty：底部分頁從「今日行程」改名為「主頁」之後，
+    // 原本的譯法（今晡日行程）不適用，而新的還沒有可信來源。
+    //
+    // 仍然要斷言確切內容——換成 isNotEmpty 之類的寬鬆條件，之後任何人新增畫面
+    // 文字忘了翻譯都不會被發現，長輩就會在客語漢字模式下突然看到一句華語。
+    // 補譯完把這裡改回 isEmpty。
+    expect(missingFromHakka, ['主頁'], reason: '長者端只剩分頁名稱「主頁」待譯；新增缺譯要一起補進這個清單');
   });
 
   testWidgets('帶變數的句子換語言後變數還在', (tester) async {

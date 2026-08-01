@@ -152,6 +152,34 @@ class AppSession {
     langRevision.value++;
   }
 
+  /// 從後端重讀長者資料，並把**後端那邊發生的**語言與腔調變更套到畫面上。
+  ///
+  /// 為什麼需要這條：長輩可以**用講的**改語言與腔調（後端的 `update_elder_profile`
+  /// 工具），那條路完全不經過 App 的按鈕。不重讀的話本機永遠停在舊值——今日頁那三顆
+  /// 鈕會跟長輩實際在用的語言對不上，而他剛剛才親口改過。
+  ///
+  /// 後端的值在這裡**優先於**本機按鈕留下的選擇：長輩剛講完的那句話比他上次按鈕新。
+  /// 這與 [isHakka] 的精神一致——實際在說話的人贏。
+  ///
+  /// 失敗一律吞掉：這是背景同步，取不到就維持現狀，不該打斷對話或讓畫面跳錯誤。
+  Future<void> refreshSelectedElder() async {
+    if (selectedElderId == null) return;
+    final before = selectedElder?.langPreference;
+    try {
+      await loadElders();
+    } catch (_) {
+      return;
+    }
+    final after = selectedElder?.langPreference;
+    if (after != null && after.isNotEmpty && after != before && after != lang) {
+      await setLang(after); // 內含持久化與 langRevision++
+    }
+    // 腔調鈕讀的是 selectedElder，資料換過就要讓它重畫。
+    // 借用 textLangRevision：那三顆鈕都訂閱它（它們在今日頁上是 const，
+    // 不訂閱就不會被重建，見 lang_toggle.dart 的說明）。
+    textLangRevision.value++;
+  }
+
   /// 是否已完成首次設定；決定登入後的落點（見 app_router 的 redirect）。
   ///
   /// 值屬於 [_accountId] 這個帳號，換帳號後必須重新 [loadForAccount]。

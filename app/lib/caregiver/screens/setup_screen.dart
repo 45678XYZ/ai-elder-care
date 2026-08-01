@@ -276,7 +276,7 @@ class _SetupScreenState extends State<SetupScreen> {
                     // 之後只有長輩自己改得了：管理頁那顆已經移除，理由見
                     // elder/widgets/lang_toggle.dart。這裡是唯一由照護者決定的
                     // 時機，所以要講清楚往後要去哪裡改。
-                    Text('※ 影響語音辨識，之後長輩可在 長者模式 › 今日行程 最下方自行更改',
+                    Text('※ 影響語音辨識，之後長輩可在 長者模式 › 主頁 最下方自行更改',
                         style: text.bodySmall
                             ?.copyWith(color: AppColors.inkSecondary)),
                   ],

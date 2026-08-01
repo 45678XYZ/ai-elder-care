@@ -130,11 +130,21 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
                 enabled: !_busy,
                 letterSpacing: 2,
                 inputFormatters: [
-                  // 只留英數與底線，避免長輩誤觸空白或標點。
+                  // 只留英數與連接符號，避免長輩誤觸空白或標點。
                   //
                   // 底線非留不可：ID 的格式是 `cg_` 後接 8 個十六進位字元（api.md），
                   // 過濾掉底線的話長輩照著抄也會被吃成 `cg7f3a91c2`，怎麼打都連不上。
-                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_]')),
+                  //
+                  // 破折號一起收，再於下一個 formatter 轉成底線：手機中文鍵盤上
+                  // 「－」按得到、「＿」往往要切到符號頁再翻一層，長輩打不出來就卡死在
+                  // 這一頁——而這一頁是他連上家人的唯一入口。ID 本身不含破折號，
+                  // 收下來只可能是想打底線，直接視為同一個字比讓他打不出來好。
+                  // 這裡放行的橫線集合必須與 [_DashToUnderscoreFormatter] 完全一致
+                  // ——formatter 是**依序**執行的，這一關先擋掉的字元，下一關就沒有
+                  // 機會轉成底線了。
+                  FilteringTextInputFormatter.allow(
+                      RegExp('[A-Za-z0-9_$_dashChars]')),
+                  _DashToUnderscoreFormatter(),
                 ],
                 onSubmitted: (_) => _submit(),
               ),
@@ -205,6 +215,34 @@ class _LinkedRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// 會被當成底線處理的字元：半形連字號、Unicode 的各種破折號、全形連字號、全形底線。
+///
+/// 一個個列出來而不是用範圍：範圍寫在字元類別裡容易連帶收進不相干的符號，
+/// 而這個欄位的內容會直接拿去跟後端的 ID 比對，多收一個字元就是一次連不上。
+const _dashChars = r'\-‐‑‒–—―－＿';
+
+/// 把使用者打出來的各種「橫線」一律當成底線。
+///
+/// ID 的格式是 `cg_` 後接 8 個十六進位字元，本身不含破折號——所以在這個欄位裡
+/// 打出橫線只可能是想打底線卻找不到。手機中文鍵盤上半形底線常要切到符號頁再翻一層，
+/// 長輩打不出來就會卡死在這一頁，而這是他連上家人的唯一入口。
+///
+/// 全形底線（＿）一併正規化：注音鍵盤的符號頁給的是全形，直接送出去後端比對不到。
+class _DashToUnderscoreFormatter extends TextInputFormatter {
+  static final _dashes = RegExp('[$_dashChars]');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text.replaceAll(_dashes, '_');
+    if (text == newValue.text) return newValue;
+    // 長度不變（一律一對一替換），游標位置照原樣帶著走。
+    return TextEditingValue(text: text, selection: newValue.selection);
   }
 }
 
