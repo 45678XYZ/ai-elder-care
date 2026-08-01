@@ -381,14 +381,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # 5. 以單一 transaction 提交終態結果並把本輪追加進 session
         try:
-            rt_labels = []
-            if routines_updated:
-                rt_labels.append("routine")
-            if safety_alert_triggered:
-                rt_labels.append("safety_alert")
-            if not rt_labels:
-                rt_labels.append("none")
-
             committed = turns.commit(
                 req.elder_id,
                 conversation_id,
@@ -399,7 +391,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     "ai_respond_text": reply_text,
                     "ai_respond_audio_s3_key": audio_key,
                     "routines_updated": routines_updated,
-                    "rt_labels": rt_labels,
                 },
             )
         except turns.TurnError:
