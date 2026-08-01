@@ -1085,6 +1085,26 @@ def complete_routine_with_event(
     }
 
 
+def delete_routine_completion(elder_id: str, routine_id: str, routine_date: str) -> bool:
+    """刪除 routine completion event，讓該行程退回未完成狀態。回傳是否有刪除。"""
+    from src.extraction.canonical import event_id_for
+
+    canonical_key = routine_completion_key(routine_id, routine_date)
+    event_id = event_id_for(elder_id, canonical_key)
+
+    table = get_dynamodb_resource().Table(TABLE_EVENTS)
+    try:
+        table.delete_item(
+            Key={"elder_id": elder_id, "event_id": event_id},
+            ConditionExpression="attribute_exists(event_id)",
+        )
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise DBError(f"刪除 routine completion 失敗: {e.response['Error']['Message']}")
+
+
 # -----------------------------------------------------------------------------
 # Daily Summaries 表操作
 # -----------------------------------------------------------------------------
