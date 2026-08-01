@@ -4,8 +4,9 @@
 # 由 OmniVoice-hakka 的相依決定，而近期 torch wheel 以 cu121 為主。
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
-# 上游沒有發版本 tag，以 commit 釘住才能重現同一份推論行為。
-ARG OMNIVOICE_REF=main
+# 上游的預設分支是 master（不是 main），且沒有發任何版本 tag。要重現同一份推論行為
+# 就以 commit SHA 覆寫這個值：build_and_push.sh --ref <sha>。
+ARG OMNIVOICE_REF=master
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
