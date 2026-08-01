@@ -49,9 +49,18 @@ class _TimelineScreenState extends State<TimelineScreen> {
 
   Future<ApiPage<LifeEvent>> _fetchFirstPage() async {
     await AppSession.instance.ensureEldersLoaded();
+    final elderId = AppSession.instance.selectedElderId;
+    // 還沒綁定任何長輩就沒有事件可查。原本是 `selectedElderId!`，null 時丟
+    // Null check operator，整頁變成「載入失敗」而重試永遠不會成功。
+    // 詳見 stats_screen 的同名說明。
+    if (elderId == null) {
+      _items.clear();
+      _nextToken = null;
+      return const ApiPage(items: []);
+    }
     // `EventCategory` 的 name 與 api.md 的 `type` 字串一一對應，可直接當參數送。
     final page = await CareRepo.instance.events(
-      elderId: AppSession.instance.selectedElderId!,
+      elderId: elderId,
       type: _filter?.name,
     );
     _items
@@ -65,12 +74,15 @@ class _TimelineScreenState extends State<TimelineScreen> {
 
   Future<void> _loadMore() async {
     final token = _nextToken;
-    if (token == null || _loadingMore) return;
+    final elderId = AppSession.instance.selectedElderId;
+    // elderId 理論上不會是 null（有游標就代表第一頁載成功過），但這裡不用 `!`：
+    // 這一頁其餘地方就是被那個寫法炸掉的。
+    if (token == null || elderId == null || _loadingMore) return;
     setState(() => _loadingMore = true);
     try {
       // 游標原樣帶回，不解析內容；查詢條件必須與取得游標時完全一致（api.md 共通分頁規則）
       final page = await CareRepo.instance.events(
-        elderId: AppSession.instance.selectedElderId!,
+        elderId: elderId,
         type: _filter?.name,
         nextToken: token,
       );
