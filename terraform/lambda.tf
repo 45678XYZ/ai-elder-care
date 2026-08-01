@@ -96,6 +96,18 @@ resource "aws_iam_role" "lambda_backend_role" {
 #
 # 多支 Lambda 共用同一個部署包來源（backend/src + backend/requirements.txt），
 # 差別只在 handler 與環境變數。
+#
+# ⚠️ 首次部署（或 backend/ 有異動）請用 `terraform apply -parallelism=1`。
+#
+# 共用來源代表這 13 支算出來的 zip 檔名完全相同，而 package.py 只有「檔案已存在就重用」
+# 這一層保護，沒有鎖。預設 parallelism=10 會讓十幾個容器同時發現檔案不存在、同時跑 pip：
+#   - 每個容器各下載約 74 MB，網路被自己塞爆，pip 開始 Connection refused / 解析不到網域
+#   - pip 連不上就回頭試舊版本，請求量再翻倍，最後以 ResolutionImpossible 收場
+#   - 僥倖裝完的那個會死在 os.utime → FileNotFoundError，因為別的 process 正在寫同一個檔
+# 序列化之後第一個建好，其餘 12 個直接 Reused，反而更快。
+#
+# 根治的做法是拆一個只打包的模組（create_function = false），13 支改用
+# create_package = false + s3_existing_package 指向同一個物件，就沒有競爭可言。
 
 locals {
   # 部署包來源：自動將 backend/src 配至 zip 內的 src/，並由 pip_requirements 自動安裝依賴套件
