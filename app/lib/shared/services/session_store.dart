@@ -360,6 +360,40 @@ class AppSession {
     return created;
   }
 
+  /// 把語言偏好與腔調同步進長者檔案（`PATCH /elders/{id}`）。
+  ///
+  /// 後端已開放長者本人改這兩個欄位（欄位層級白名單，其餘仍是照護者專屬），
+  /// 所以長者端的選擇終於能寫進檔案，而不是只留在這台裝置。
+  ///
+  /// **失敗不往上拋**：語言的本機值已經生效（`/chat` 每次都帶 `lang`），同步失敗
+  /// 的後果只是換裝置會退回舊值，不該讓長輩看到錯誤而以為語言沒切成功。腔調則
+  /// 相反——它只讀檔案，同步失敗就是真的沒生效，所以回傳成功與否讓呼叫端決定
+  /// 要不要講。
+  Future<bool> syncLangFields({String? langPreference, String? dialect}) async {
+    final elderId = selectedElderId;
+    if (elderId == null) return false;
+    try {
+      final updated = await CareRepo.instance.updateElder(elderId, {
+        if (langPreference != null) 'lang_preference': langPreference,
+        if (dialect != null) 'hakka_dialect': dialect,
+      });
+      replaceElder(updated);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 就地換掉清單裡的那一筆長者。
+  ///
+  /// 全 App 的長者資料只有這一份，改完要就地換掉，否則 [selectedElder] 讀到的
+  /// 還是舊值——腔調尤其明顯，畫面上的選取狀態會跳回去。
+  void replaceElder(Elder updated) {
+    final i = elders.indexWhere((e) => e.elderId == updated.elderId);
+    if (i < 0) return;
+    elders = [...elders.sublist(0, i), updated, ...elders.sublist(i + 1)];
+  }
+
   /// 切換目前在看的長者，並記住到下次啟動。
   Future<void> selectElder(String elderId) async {
     selectedElderId = elderId;

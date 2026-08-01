@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../shared/i18n/strings.dart';
+import '../../shared/models/elder.dart';
 import '../../shared/services/session_store.dart';
 import '../../theme/app_theme.dart';
 
@@ -61,6 +64,9 @@ class _ElderLangToggleState extends State<ElderLangToggle> {
     // 自己選過了」，而那個旗標決定照護者之後改 `lang_preference` 時要不要蓋過
     // 長輩的選擇。早退在這裡等於把長輩明確按下的那一次當作沒發生。
     await AppSession.instance.setLang(lang);
+    // 順便寫進長者檔案。後端已開放長者本人改這個欄位，寫進去之後換裝置不會退回
+    // 舊值。失敗不理會——`/chat` 每次都帶 lang，本機值已經生效了。
+    unawaited(AppSession.instance.syncLangFields(langPreference: lang));
     if (!mounted) return;
     setState(() {});
     // 只有真的換了才說話：沒換卻跳「接下來用中文跟我說話」是在報告一件沒發生的事。
@@ -108,6 +114,123 @@ class _ElderLangToggleState extends State<ElderLangToggle> {
               if (value != _options.last.$1)
                 const SizedBox(width: AppSpacing.sm),
             ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// 長者自己切換客語腔調（六腔）。**只在說客語時出現**——華語沒有腔調可言。
+///
+/// 跟語言鈕的關鍵差別：語言每次 `/chat` 都會帶上去，本機值當下就生效；腔調
+/// **後端只讀長者檔案**（api.md：App 不在 `/chat` 傳腔調），所以這顆鈕非得寫進
+/// 後端不可，寫失敗就是真的沒生效——因此失敗要講出來，不能默默吞掉。
+///
+/// 六腔各有獨立的 ASR/TTS 模型端點，選錯不是「口音不太像」而是整句話辨識失敗。
+class ElderDialectToggle extends StatefulWidget {
+  const ElderDialectToggle({super.key});
+
+  @override
+  State<ElderDialectToggle> createState() => _ElderDialectToggleState();
+}
+
+class _ElderDialectToggleState extends State<ElderDialectToggle> {
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 語言鈕按下去這一區要跟著出現或消失。
+    AppSession.langRevision.addListener(_onChanged);
+    AppSession.textLangRevision.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    AppSession.langRevision.removeListener(_onChanged);
+    AppSession.textLangRevision.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// 按下去但還沒寫完的那一個。**樂觀更新**：打勾立刻移過去，不等後端。
+  ///
+  /// 沒有它的話，按下之後要等 `PATCH` 回來（demo 就 400ms 起跳，真後端更久）
+  /// 打勾才會動，而這段期間選項是停用的——按下去毫無反應，長輩只會以為壞了、
+  /// 接著一直按。今日頁的打勾完成也是同一套做法。
+  HakkaDialect? _pending;
+
+  /// 目前的腔調以**長者檔案**為準，不另存本機值——後端讀的就是檔案，本機再存
+  /// 一份只會多一個對不上的來源。送出中則先顯示按下去的那一個。
+  HakkaDialect get _current =>
+      _pending ??
+      HakkaDialect.fromValue(AppSession.instance.selectedElder?.hakkaDialect);
+
+  Future<void> _select(HakkaDialect d) async {
+    if (_busy) return;
+    HapticFeedback.mediumImpact();
+    // 先反映再送出：畫面立刻動，失敗才收回。
+    setState(() {
+      _busy = true;
+      _pending = d;
+    });
+
+    final ok = await AppSession.instance.syncLangFields(dialect: d.value);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      // 成功的話檔案已經是新值，樂觀那份可以退場；失敗則收回，讓打勾跳回
+      // 真正生效的那一腔——不能停在他按的那個，否則畫面說改好了其實沒有。
+      _pending = null;
+    });
+
+    // 成功不打擾：打勾已經移過去了，那就是回饋。失敗才要講——腔調只有檔案
+    // 那一份，沒寫進去他下一句話照樣不被辨識，卻以為問題已經解決了。
+    if (ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.barDark,
+        duration: const Duration(seconds: 3),
+        content: Text(
+          t('沒有改成功，等一下再試一次'),
+          style: Theme.of(context)
+              .textTheme
+              .headlineSmall
+              ?.copyWith(color: AppColors.onDark),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 講華語就沒有這一區：腔調是客語才有的概念。
+    if (!AppSession.instance.isHakka) return const SizedBox.shrink();
+
+    final text = Theme.of(context).textTheme;
+    final current = _current;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(t('我講的腔'),
+            style: text.headlineSmall?.copyWith(color: AppColors.inkSecondary)),
+        const SizedBox(height: AppSpacing.sm),
+        // Wrap 而不是 Row：六個選項一行放不下，而長者字級下換行是必然的。
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: [
+            for (final d in HakkaDialect.values)
+              _DialectOption(
+                label: d.label,
+                selected: current == d,
+                onTap: _busy ? null : () => _select(d),
+              ),
           ],
         ),
       ],
@@ -201,6 +324,66 @@ class _ElderTextLangToggleState extends State<ElderTextLangToggle> {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// 腔調選項。跟 [_LangOption] 分開是因為版面約束不同：語言鈕在 `Expanded` 裡
+/// 各佔一半，腔調有六個、放在 `Wrap` 裡自己換行，寬度是無界的——`Expanded` 那套
+/// 的 `Flexible` 在無界寬度下會直接爆版。
+class _DialectOption extends StatelessWidget {
+  const _DialectOption({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+
+  /// null = 停用（正在送出）。長者連按會送出多個 PATCH，最後生效的是哪一個
+  /// 說不準。
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final fg = selected ? Colors.white : AppColors.inkSecondary;
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: const BorderRadius.all(AppRadius.card),
+        child: Container(
+          // 長者模式觸控下限 60dp；寬度讓內容決定，Wrap 會排。
+          constraints: const BoxConstraints(minHeight: 60, minWidth: 104),
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: AppSpacing.md),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.accentText : AppColors.card,
+            borderRadius: const BorderRadius.all(AppRadius.card),
+            border: Border.all(
+              color:
+                  selected ? AppColors.accentText : AppColors.borderInteractive,
+              width: 1,
+            ),
+          ),
+          child: Row(
+            // Wrap 給的是無界寬度，一定要 min，否則 Row 會想佔滿而炸開。
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (selected) ...[
+                Icon(Icons.check, size: 28, color: fg),
+                const SizedBox(width: AppSpacing.sm),
+              ],
+              Text(label, style: text.headlineSmall?.copyWith(color: fg)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

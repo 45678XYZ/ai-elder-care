@@ -28,7 +28,8 @@ import 'calendar_enlarged.dart';
 /// 長者規格：內文 >=24sp、觸控 >=60dp。可互動元素上限 3 在這一頁刻意放寬，
 /// 理由見 [_RoutineRow]。
 ///
-/// 兩顆語言鈕（[ElderLangToggle] 說話、[ElderTextLangToggle] 畫面文字）放在這一頁
+/// 三顆語言鈕（[ElderLangToggle] 說話、[ElderDialectToggle] 客語腔調、
+/// [ElderTextLangToggle] 畫面文字）放在這一頁
 /// 最底下，跟連結家人、登出同一區：它們是設定不是每日動作，長輩滑過所有行程才
 /// 遇得到，日常使用踩不到。原本長者端完全不給切（只有照護者管理頁能改），但
 /// 照護者設錯時長輩沒有自救的辦法。
@@ -183,6 +184,8 @@ class _TodayScreenState extends State<TodayScreen> {
                 // 三個互動額度要留給麥克風、打字與分頁，不能再塞。
                 const SizedBox(height: AppSpacing.xl),
                 const ElderLangToggle(),
+                const SizedBox(height: AppSpacing.lg),
+                const ElderDialectToggle(),
                 const SizedBox(height: AppSpacing.lg),
                 const ElderTextLangToggle(),
                 const SizedBox(height: AppSpacing.xl),
