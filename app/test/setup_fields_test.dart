@@ -48,6 +48,24 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// 按下「完成設定」並等到真的做完。
+  ///
+  /// **不能用 `pumpAndSettle`**：送出期間按鈕會顯示 `CircularProgressIndicator`，
+  /// 那是永不停止的動畫，settle 條件（沒有排程中的幀）永遠不成立，會一路等到
+  /// 10 分鐘逾時。單獨跑這個檔可能僥倖過關，整套一起跑 CPU 被瓜分就必掛。
+  /// 同樣的坑 `first_run_flow_test` 的 `settle()` 也踩過，那裡的註解寫得更詳細。
+  ///
+  /// 幀數要推到足以蓋過儲存之後那一次 `POST /elders`（長者自註冊時綁定
+  /// sub→elder_id）：demo 那條路是兩段各 400ms 的 `Future.delayed` 串起來。
+  /// 推不完的話測試結束時計時器還掛著 → 「A Timer is still pending even after
+  /// the widget tree was disposed」。
+  Future<void> submit(WidgetTester tester) async {
+    await tester.tap(find.text('完成設定'));
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  }
+
   /// 欄位順序即畫面順序：姓名、稱呼、出生年、居住地區。
   Future<void> fill(
     WidgetTester tester, {
@@ -71,8 +89,7 @@ void main() {
   testWidgets('填完送出，兩個值都存得住', (tester) async {
     await pumpSetup(tester);
     await fill(tester);
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
     expect(AppSession.instance.elderBirthYear, 1948);
     expect(AppSession.instance.elderAddressRegion, '台北市大安區');
@@ -81,8 +98,7 @@ void main() {
   testWidgets('存進去的值重新登入後還在', (tester) async {
     await pumpSetup(tester);
     await fill(tester);
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
     await AppSession.instance.clearForAccount(sub);
     expect(AppSession.instance.elderBirthYear, isNull, reason: '登出要先歸零');
@@ -95,8 +111,7 @@ void main() {
   testWidgets('出生年沒填會被擋下來', (tester) async {
     await pumpSetup(tester);
     await fill(tester, birthYear: '');
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
     expect(find.text('請填出生年'), findsOneWidget);
     expect(AppSession.instance.setupDone, isFalse, reason: '沒過驗證不該算完成設定');
@@ -105,8 +120,7 @@ void main() {
   testWidgets('居住地區沒填會被擋下來', (tester) async {
     await pumpSetup(tester);
     await fill(tester, region: '');
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
     expect(find.text('請填居住地區'), findsOneWidget);
     expect(AppSession.instance.setupDone, isFalse);
@@ -115,8 +129,7 @@ void main() {
   testWidgets('民國年會被擋下來——最容易打錯的那一種', (tester) async {
     await pumpSetup(tester);
     await fill(tester, birthYear: '37'); // 民國 37 年 = 西元 1948
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
     expect(find.textContaining('1900'), findsOneWidget);
     expect(AppSession.instance.setupDone, isFalse);
@@ -125,8 +138,7 @@ void main() {
   testWidgets('不是數字會被擋下來', (tester) async {
     await pumpSetup(tester);
     await fill(tester, birthYear: '民國37年');
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
     expect(find.textContaining('西元年份'), findsOneWidget);
   });
@@ -152,8 +164,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('海陸'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
     expect(AppSession.instance.elderHakkaDialect, 'htia_hailu');
   });
@@ -161,8 +172,7 @@ void main() {
   testWidgets('沒選過就是四縣——與後端預設一致', (tester) async {
     await pumpSetup(tester);
     await fill(tester);
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
     expect(AppSession.instance.elderHakkaDialect, HakkaDialect.defaultValue);
   });
@@ -173,11 +183,14 @@ void main() {
     await pumpSetup(tester, email: 'grandma@example.com');
 
     await fill(tester, birthYear: '1950', region: '新竹縣竹東鎮');
-    await tester.tap(find.text('完成設定'));
-    await tester.pumpAndSettle();
+    await submit(tester);
 
-    await AppSession.instance
-        .consumePendingSetup(email: 'grandma@example.com', accountId: sub);
+    // runAsync：這一行不是靠 pump 驅動的，而 consumePendingSetup 裡面有
+    // `Future.delayed`（兌現時會呼叫 `POST /elders`，demo 是 400ms 延遲）。
+    // testWidgets 預設跑在 fake async 時鐘下，不 pump 就不前進——直接 await
+    // 會永遠等不到，最後以 10 分鐘逾時收場。runAsync 讓它走真實時鐘。
+    await tester.runAsync(() => AppSession.instance
+        .consumePendingSetup(email: 'grandma@example.com', accountId: sub));
 
     expect(AppSession.instance.elderBirthYear, 1950);
     expect(AppSession.instance.elderAddressRegion, '新竹縣竹東鎮');
