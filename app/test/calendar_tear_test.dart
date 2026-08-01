@@ -70,7 +70,8 @@ void main() {
         CalendarTearStore.dateKey(DateTime(2026, 7, 8)).compareTo('2026-07-09'),
         lessThan(0));
     expect(
-        CalendarTearStore.dateKey(DateTime(2026, 12, 1)).compareTo('2026-07-09'),
+        CalendarTearStore.dateKey(DateTime(2026, 12, 1))
+            .compareTo('2026-07-09'),
         greaterThan(0));
   });
 
