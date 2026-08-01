@@ -391,3 +391,4 @@ variable "cwa_api_key" {
   sensitive   = true
   default     = ""
 }
+
