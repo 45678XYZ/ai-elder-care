@@ -272,6 +272,12 @@ variable "batch_lambda_timeout" {
   default     = 300
 }
 
+variable "dlq_reconciler_timeout" {
+  description = "dlq reconciler 的 timeout（秒）；DLQ 的 visibility timeout 由此推導"
+  type        = number
+  default     = 60
+}
+
 variable "session_idle_minutes" {
   description = "active session 閒置多久後由週期性 closer 收斂"
   type        = number

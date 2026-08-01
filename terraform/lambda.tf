@@ -619,8 +619,10 @@ module "dlq_reconciler" {
   description   = "DLQ 訊息對賬與告警器"
   handler       = "src.handlers.dlq_reconciler.handler"
   runtime       = "python3.13"
-  timeout       = 60
-  memory_size   = 512
+  # 與 aws_sqs_queue.batch_dlq 的 visibility timeout 綁在同一個變數：兩者一旦脫鉤，
+  # CreateEventSourceMapping 會因為 visibility < timeout 被拒
+  timeout     = var.dlq_reconciler_timeout
+  memory_size = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
