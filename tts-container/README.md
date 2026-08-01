@@ -9,6 +9,8 @@
 | 目錄 | 模型 | 語言 |
 |------|------|------|
 | [`breezyvoice/`](breezyvoice/) | `MediaTek-Research/BreezyVoice` | 台灣華語 `zh-TW` |
+| [`omnivoice/`](omnivoice/) | `formospeech/omnivoice-hakka-community-1` | 客語六腔 `hak` |
 
 模型 ID、授權與核准狀態統一見 [`docs/tts/model-catalog.md`](../docs/tts/model-catalog.md)。
-客語的 OmniVoice 與 VoxHakka 尚未建立容器。
+VoxHakka 依 [`eval/MODEL_SELECTION.md`](../eval/MODEL_SELECTION.md) 的結論（MOS 1.79/5）
+不列入部署，尚未建立容器。
