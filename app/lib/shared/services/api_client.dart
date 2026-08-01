@@ -342,6 +342,11 @@ class ApiClient {
     return Routine.fromJson(json);
   }
 
+  /// `DELETE /routines/{id}` — 永久刪除例行公事（照護者端）。
+  Future<void> deleteRoutine(String routineId) async {
+    await _request('DELETE', '/routines/$routineId');
+  }
+
   /// `POST /routines/{id}/complete` — 手動確認完成（兩端）。
   ///
   /// 靠「長者＋routine＋日期」天然冪等，不需要 `client_request_id`：已完成的重送回同一筆，
