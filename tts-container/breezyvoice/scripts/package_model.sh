@@ -83,7 +83,8 @@ ARCHIVE="$WORKDIR/model.tar.gz"
 tar -czf "$ARCHIVE" -C "$WORKDIR" breezyvoice speakers
 
 echo "==> 上傳 s3://${BUCKET}/${KEY}"
-aws s3 cp "$ARCHIVE" "s3://${BUCKET}/${KEY}"
+# 慢速連線下 UploadPart 容易閒置逾時；關掉讀取逾時並拉高重試次數。
+AWS_MAX_ATTEMPTS=10 aws s3 cp --cli-read-timeout 0 "$ARCHIVE" "s3://${BUCKET}/${KEY}"
 
 echo
 echo "完成。填入 terraform.tfvars："
