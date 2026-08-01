@@ -79,6 +79,9 @@ class ExtractionConfig:
     concept_vector_index: str = "uco-concepts-titan-v2-1024"
     concept_vector_bucket: str = ""
 
+    # direct_seven pipeline 的 turn 分批字元上限
+    seven_batch_char_limit: int = 12000
+
     # 寫入 session／turn 的版本戳記，供重跑與稽核比對
     chunk_planner_version: str = "chunk-planner-1"
     batch_extractor_version: str = "batch-extractor-1"
@@ -117,6 +120,7 @@ class ExtractionConfig:
             embedding_dim=_env_int("EMBEDDING_DIM", 1024),
             concept_vector_index=_env_str("CONCEPT_VECTOR_INDEX", "uco-concepts-titan-v2-1024"),
             concept_vector_bucket=_env_str("CONCEPT_VECTOR_BUCKET", ""),
+            seven_batch_char_limit=_env_int("SEVEN_BATCH_CHAR_LIMIT", 12000),
             chunk_planner_version=_env_str("CHUNK_PLANNER_VERSION", "chunk-planner-1"),
             batch_extractor_version=_env_str("BATCH_EXTRACTOR_VERSION", "batch-extractor-1"),
         )

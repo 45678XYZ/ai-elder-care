@@ -288,7 +288,7 @@ def test_close_to_events_end_to_end(stack):
     session = sessions.get_session(ELDER, SESSION)
     assert session["state"] == sessions.STATE_CLOSED
     assert session["batch_status"] == sessions.BATCH_COMPLETED
-    assert session["chunk_manifest"]
+    # direct_seven pipeline 不產生 chunk_manifest
 
     # 4. 照護者端看到一般生活事件，且不含 extraction internals
     after = json.loads(events_api.handler(caregiver_events_request(), None)["body"])

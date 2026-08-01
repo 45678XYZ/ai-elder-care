@@ -12,8 +12,7 @@ import pytest
 from moto import mock_aws
 
 from src.extraction.models import CanonicalEvent
-from src.extraction.pipeline import ChunkOutcome, PipelineResult
-from src.extraction.chunk_planner import manifest_from_entries
+from src.extraction.results import PipelineResult
 from src.shared import bedrock
 
 CONVERSATIONS_TABLE = "conversations-test"
@@ -24,16 +23,6 @@ SESSION = "ses_01J8"
 TURN_IDS = ["cnv_001", "cnv_002"]
 INPUT_BYTES = 256
 
-MANIFEST_ENTRY = {
-    "chunk_id": "chk_a",
-    "ordinal": 0,
-    "core_start": 0,
-    "core_end": 1,
-    "context_start": 0,
-    "context_end": 1,
-    "first_core_turn_id": "cnv_001",
-    "last_core_turn_id": "cnv_002",
-}
 
 
 class FakeContext:
@@ -115,7 +104,7 @@ def stack(monkeypatch):
     importlib.reload(importlib.import_module("src.handlers.batch_extractor"))
 
 
-def seed_closed_session(sessions, *, with_manifest=False):
+def seed_closed_session(sessions, *, with_manifest=False):  # with_manifest kept for compat
     table = boto3.resource("dynamodb").Table(CONVERSATIONS_TABLE)
     for index, turn_id in enumerate(TURN_IDS):
         table.put_item(
@@ -191,24 +180,16 @@ class FakePipeline:
     def __init__(self, events=None, error=None):
         self.events = tuple(events or (canonical_event(),))
         self.error = error
-        self.plan_calls = 0
         self.run_calls = 0
-        self.received_manifest = None
 
-    def plan(self, session_id, snapshot_hash, turns):
-        self.plan_calls += 1
-        return manifest_from_entries(session_id, snapshot_hash, "chunk-planner-1", [MANIFEST_ENTRY])
-
-    def run(self, elder_id, session_id, snapshot_hash, turns, *, manifest=None, elder=None):
+    def run(self, elder_id, session_id, snapshot_hash, turns, *, elder=None):
         self.run_calls += 1
-        self.received_manifest = manifest
         if self.error:
             raise self.error
         return PipelineResult(
             session_id=session_id,
-            manifest=manifest,
+            pipeline_name="direct_seven",
             events=self.events,
-            chunk_outcomes=(ChunkOutcome(chunk_id="chk_a", events=self.events),),
         )
 
 
@@ -227,7 +208,6 @@ def test_successful_batch_writes_events_and_completes(stack):
 
     session = sessions.get_session(ELDER, SESSION)
     assert session["batch_status"] == sessions.BATCH_COMPLETED
-    # completed 後移除 batch GSI 欄位與 lease
     assert "session_state_key" not in session
     assert "batch_lease_owner" not in session
 
@@ -236,12 +216,9 @@ def test_successful_batch_writes_events_and_completes(stack):
     assert events[0]["type"] == "medication"
     assert events[0]["extraction_track"] == "batch"
 
-    # session 的 chunk_manifest 保存狀態
-    assert len(session.get("chunk_manifest", [])) > 0
 
 
-
-def test_manifest_is_persisted_on_first_run(stack):
+def test_pipeline_run_is_called_on_first_run(stack):
     _, sessions, handler_module = stack
     closed = seed_closed_session(sessions)
     pipeline = FakePipeline()
@@ -249,22 +226,7 @@ def test_manifest_is_persisted_on_first_run(stack):
     handler_module.process_record(
         make_record(closed["session_snapshot_hash"]), context=FakeContext(), pipeline=pipeline
     )
-    session = sessions.get_session(ELDER, SESSION)
-    assert session["chunk_manifest"][0]["chunk_id"] == "chk_a"
-    assert pipeline.plan_calls == 1
-
-
-def test_existing_manifest_is_reused_without_replanning(stack):
-    """retry／duplicate／DLQ replay 必須重用首次規劃，不重新分塊。"""
-    _, sessions, handler_module = stack
-    closed = seed_closed_session(sessions, with_manifest=True)
-    pipeline = FakePipeline()
-
-    handler_module.process_record(
-        make_record(closed["session_snapshot_hash"]), context=FakeContext(), pipeline=pipeline
-    )
-    assert pipeline.plan_calls == 0
-    assert pipeline.received_manifest.chunks[0].chunk_id == "chk_a"
+    assert pipeline.run_calls == 1
 
 
 def test_event_writes_are_idempotent_across_retries(stack):
