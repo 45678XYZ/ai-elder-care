@@ -323,7 +323,11 @@ def handle_delete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
         if versions[-1].get("elder_id") != elder_id:
             return {"status": "error", "message": "資料不符，無法刪除此行程"}
 
-        db.delete_routine(routine_id)
+        db.delete_routine(
+            routine_id,
+            deleted_by=f"conversation:{elder_id}",
+            client_request_id=f"tool_{routine_id}_{int(time.time())}",
+        )
         return {"status": "success", "message": f"已刪除例行公事 {routine_id}"}
     except Exception as e:
         print(f"[Error] handle_delete_routine 失敗: {e}")
