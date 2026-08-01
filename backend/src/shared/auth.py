@@ -7,6 +7,7 @@
 用法：handler 呼叫 `caller = auth.assert_can_access_elder(event, elder_id)` 授權並取得
 呼叫者身分；捕捉 AuthError 後直接回傳其 `response`（錯誤格式見 docs/api.md）。
 """
+import hashlib
 from dataclasses import dataclass
 
 from src.shared import db, responses
@@ -66,6 +67,11 @@ def assert_can_access_elder(event, elder_id: str) -> Caller:
     if caller.user_id not in elder.get("caregiver_ids", []):
         raise _forbidden()
     return caller
+
+
+def caregiver_short_id(sub: str) -> str:
+    """由 Cognito sub 穩定衍生照護者對外短 ID：cg_ + 8 hex。"""
+    return "cg_" + hashlib.sha256(sub.encode()).hexdigest()[:8]
 
 
 def _forbidden() -> AuthError:

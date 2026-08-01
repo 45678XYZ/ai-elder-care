@@ -13,7 +13,7 @@
 #   POST  /routines/{routine_id}/complete                   → routines ✅
 #   GET   /stats                                            → stats ✅
 #
-# api.md 另有 GET/POST /elders/{elder_id}/caregivers（綁定照護者），後端與路由都尚未實作。
+# GET /me、GET/POST /elders/{elder_id}/caregivers（綁定照護者）路由已實作，見下方。
 #
 # 各模組自行補自己的路由，共用地基（REST API、authorizer、deployment、stage、
 # 存取日誌、節流）在此檔一次備妥。新增路由的固定四件事：
@@ -599,6 +599,98 @@ resource "aws_lambda_permission" "apigw_elder_health_notes" {
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/elders/*/health_notes*"
 }
 
+# --- GET /me（照護者取得自己的 cg_ 短 ID） ---
+
+resource "aws_api_gateway_resource" "me" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "me"
+}
+
+resource "aws_api_gateway_method" "get_me" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.me.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+}
+
+resource "aws_api_gateway_integration" "get_me" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.me.id
+  http_method             = aws_api_gateway_method.get_me.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.elders.lambda_function_invoke_arn
+}
+
+resource "aws_lambda_permission" "apigw_me" {
+  statement_id  = "AllowApiGatewayMe"
+  action        = "lambda:InvokeFunction"
+  function_name = module.elders.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/GET/me"
+}
+
+# --- GET/POST /elders/{elder_id}/caregivers（照護者綁定） ---
+
+resource "aws_api_gateway_resource" "elder_caregivers" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_resource.elder_id.id
+  path_part   = "caregivers"
+}
+
+resource "aws_api_gateway_method" "get_elder_caregivers" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.elder_caregivers.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.path.elder_id" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "get_elder_caregivers" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.elder_caregivers.id
+  http_method             = aws_api_gateway_method.get_elder_caregivers.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.elders.lambda_function_invoke_arn
+}
+
+resource "aws_api_gateway_method" "post_elder_caregivers" {
+  rest_api_id          = aws_api_gateway_rest_api.api.id
+  resource_id          = aws_api_gateway_resource.elder_caregivers.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  request_validator_id = aws_api_gateway_request_validator.validator.id
+  request_parameters = {
+    "method.request.path.elder_id" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "post_elder_caregivers" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.elder_caregivers.id
+  http_method             = aws_api_gateway_method.post_elder_caregivers.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = module.elders.lambda_function_invoke_arn
+}
+
+resource "aws_lambda_permission" "apigw_elder_caregivers" {
+  statement_id  = "AllowApiGatewayElderCaregivers"
+  action        = "lambda:InvokeFunction"
+  function_name = module.elders.lambda_function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/*/elders/*/caregivers*"
+}
+
 # --- POST /chat/sessions/{session_id}/close（前端主動關閉，雙管道設計之一） ---
 # Session 關閉採雙管道：前端可主動呼叫此 endpoint 即時關閉，EventBridge 排程則負責週期性收斂。
 
@@ -692,6 +784,12 @@ resource "aws_api_gateway_deployment" "api" {
       aws_api_gateway_integration.generate_summary,
       aws_api_gateway_method.close_session,
       aws_api_gateway_integration.close_session,
+      aws_api_gateway_method.get_me,
+      aws_api_gateway_integration.get_me,
+      aws_api_gateway_method.get_elder_caregivers,
+      aws_api_gateway_integration.get_elder_caregivers,
+      aws_api_gateway_method.post_elder_caregivers,
+      aws_api_gateway_integration.post_elder_caregivers,
       aws_api_gateway_authorizer.cognito,
       aws_api_gateway_request_validator.validator,
       aws_api_gateway_gateway_response.default_4xx,
