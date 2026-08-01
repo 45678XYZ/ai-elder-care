@@ -292,13 +292,25 @@ def invoke_tools_lambda(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
     return payload
 
 
-def _make_tool(elder_id: str, tool_name: str, description: str, params: ParamSpec) -> StructuredTool:
+def _make_tool(
+    elder_id: str,
+    tool_name: str,
+    description: str,
+    params: ParamSpec,
+    *,
+    session_id: str | None = None,
+    conversation_id: str | None = None,
+) -> StructuredTool:
     """把單一工具規格包成 LangChain 工具；elder_id 由此閉包注入，不交給模型。"""
 
     def _run(**kwargs: Any) -> str:
         # 未填的選填參數不傳下去：tools Lambda 的 handler 以 key 是否存在判斷要不要更新欄位
         supplied = {k: v for k, v in kwargs.items() if v is not None}
         supplied["elder_id"] = elder_id
+        if session_id:
+            supplied["_session_id"] = session_id
+        if conversation_id:
+            supplied["_conversation_id"] = conversation_id
         result = invoke_tools_lambda(tool_name, supplied)
         return json.dumps(result, ensure_ascii=False)
 
@@ -363,10 +375,15 @@ def _make_knowledge_tool() -> StructuredTool:
     )
 
 
-def build_tools(elder_id: str) -> List[StructuredTool]:
+def build_tools(
+    elder_id: str,
+    *,
+    session_id: str | None = None,
+    conversation_id: str | None = None,
+) -> List[StructuredTool]:
     """組出本輪對話可用的工具清單；elder_id 綁定在工具內部。"""
     tools: List[StructuredTool] = [
-        _make_tool(elder_id, name, description, params)
+        _make_tool(elder_id, name, description, params, session_id=session_id, conversation_id=conversation_id)
         for name, description, params in TOOL_SPECS
     ]
     tools.append(_make_knowledge_tool())

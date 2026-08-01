@@ -59,7 +59,11 @@ def invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
     session_key = payload.get("session_key") or elder_id
     run_config = {"configurable": {"thread_id": session_key, "actor_id": elder_id}}
 
-    graph = build_graph(elder_id)
+    graph = build_graph(
+        elder_id,
+        session_id=payload.get("session_id"),
+        conversation_id=payload.get("conversation_id"),
+    )
     result = graph.invoke(inputs, config=run_config)
 
     tools_called = set(result.get("tools_called") or [])

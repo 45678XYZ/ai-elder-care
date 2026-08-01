@@ -98,7 +98,7 @@ def stack(monkeypatch):
         monkeypatch.setattr(
             chat,
             "invoke_agent_brain",
-            lambda eid, txt, lang="zh-TW": calls.append(txt) or (REPLY, True),
+            lambda eid, txt, lang="zh-TW", **kw: calls.append(txt) or (REPLY, True),
         )
         monkeypatch.setattr(chat.db, "get_elder", lambda elder_id: {"elder_id": elder_id})
         monkeypatch.setattr(chat, "get_tts_facade", lambda: DummyTTSFacade())
@@ -482,7 +482,7 @@ def test_unstored_audio_does_not_become_a_dead_link(stack, monkeypatch):
 def test_bedrock_failure_is_recorded_as_failed(stack, monkeypatch):
     chat, _, _, turns, _ = stack
 
-    def broken(elder_id, transcript, lang="zh-TW"):
+    def broken(elder_id, transcript, lang="zh-TW", **kw):
         raise RuntimeError("bedrock down")
 
     monkeypatch.setattr(chat, "invoke_agent_brain", broken)
