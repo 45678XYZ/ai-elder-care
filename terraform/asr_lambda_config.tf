@@ -12,13 +12,17 @@ locals {
   # 只有六條客語 production route 停用。
   # 建立 endpoint 不等於模型已核准；個別模型 ADR 未通過前，production gate
   # 必須維持關閉，build_provider_registry() 不會建立遠端 provider。
+  # CE 未啟用時 fallback_chain 必須清空：留著 ce_remote 會讓 router 去呼叫一個不存在的
+  # endpoint，把可重試的 provider 錯誤變成必然失敗。
+  asr_ce_fallback_chain = local.asr_ce_enabled ? ["ce_remote"] : []
+
   asr_config_json = var.asr_enable_endpoints ? jsonencode({
     routes = merge({
       "zh-TW" = {
         route               = "zh_tw_primary"
         provider_identifier = "amazon_transcribe_zh_tw"
         enabled             = true
-        fallback_chain      = ["ce_remote"]
+        fallback_chain      = local.asr_ce_fallback_chain
       }
       }, {
       for dialect, endpoint_name in local.asr_formo_endpoint_names :
@@ -26,7 +30,7 @@ locals {
         route               = "hak_${replace(dialect, "htia_", "")}_primary"
         provider_identifier = "formo_remote_${dialect}"
         enabled             = true
-        fallback_chain      = ["ce_remote"]
+        fallback_chain      = local.asr_ce_fallback_chain
       }
     })
     providers = merge({
@@ -35,6 +39,7 @@ locals {
         status     = "enabled"
         kind       = "aws_managed"
       }
+      }, local.asr_ce_enabled ? {
       ce_remote = {
         identifier    = "ce_remote"
         status        = "enabled"
@@ -42,7 +47,7 @@ locals {
         metadata_ref  = "taiwan_tongues_ce"
         endpoint_name = local.asr_ce_endpoint_name
       }
-      }, {
+      } : {}, {
       for dialect, endpoint_name in local.asr_formo_endpoint_names :
       "formo_remote_${dialect}" => {
         identifier    = "formo_remote_${dialect}"
@@ -52,7 +57,7 @@ locals {
         endpoint_name = endpoint_name
       }
     })
-    model_metadata = {
+    model_metadata = merge(local.asr_ce_enabled ? {
       taiwan_tongues_ce = {
         model_id          = "adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0"
         revision          = "v2.0"
@@ -69,6 +74,7 @@ locals {
           approval_record_ref       = null
         }
       }
+      } : {}, {
       formospeech_whisper_v3 = {
         model_id          = "formospeech/whisper-large-v3-taiwanese-hakka"
         revision          = "main"
@@ -85,7 +91,7 @@ locals {
           approval_record_ref       = null
         }
       }
-    }
+    })
     }) : jsonencode({
     routes = merge({
       "zh-TW" = {

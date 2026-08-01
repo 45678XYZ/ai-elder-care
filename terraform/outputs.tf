@@ -21,7 +21,7 @@ output "asr_formo_endpoint_names" {
 output "asr_endpoint_instance_types" {
   description = "ASR 七個 SageMaker endpoint 的固定機型；未啟用時為空 map"
   value = var.asr_enable_endpoints ? merge(
-    { ce = local.asr_ce_instance_type },
+    local.asr_ce_enabled ? { ce = local.asr_ce_instance_type } : {},
     local.asr_formo_instance_types,
   ) : {}
 }
