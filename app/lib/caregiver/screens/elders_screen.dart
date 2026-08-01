@@ -50,8 +50,17 @@ class _EldersScreenState extends State<EldersScreen> {
 
   Future<List<Routine>> _fetch() async {
     await AppSession.instance.ensureEldersLoaded();
-    final list = await CareRepo.instance
-        .routines(elderId: AppSession.instance.selectedElderId!);
+    final elderId = AppSession.instance.selectedElderId;
+    // 還沒綁定任何長輩——剛註冊的照護者必然是這個狀態。這裡原本是 `selectedElderId!`，
+    // null 時直接丟 Null check operator，整頁被錯誤畫面取代，連同意書與登出都不見了。
+    // 「還沒有長輩」是正常狀態不是錯誤，回空清單讓畫面照常畫。
+    if (elderId == null) {
+      _routines.clear();
+      // 沒有長輩就不該有任何提醒留在系統裡（syncRoutines 開頭會 cancelAll）。
+      unawaited(NotificationService.instance.syncRoutines(const []));
+      return const [];
+    }
+    final list = await CareRepo.instance.routines(elderId: elderId);
     _routines
       ..clear()
       ..addAll(list);
@@ -407,6 +416,10 @@ class _EldersScreenState extends State<EldersScreen> {
     if (confirmed != true || !mounted) return;
 
     try {
+      // 每次按下刪除產一個新的 id。這一顆按鈕沒有自動重試，按完該筆就從清單消失，
+      // 所以拿不到同一筆再刪一次的機會；真正需要沿用同一個 id 的是「送出後沒收到
+      // 回應、使用者自己再按一次」，那種情況目前會吃 409（後端已經刪掉了）。
+      // 要處理得更好就得把 id 按 routine 存起來，等有人真的遇到再說。
       await CareRepo.instance
           .deleteRoutine(r.routineId, clientRequestId: _uuid.v4());
     } catch (e) {
@@ -444,73 +457,82 @@ class _EldersScreenState extends State<EldersScreen> {
               trailing: const _MyIdButton(),
             ),
             Expanded(
-              child: AsyncView<List<Routine>>(
-                future: _future,
-                onRetry: _reload,
-                builder: (context, _) {
-                  final elder = AppSession.instance.selectedElder;
-                  // 只列還在的。停用改成刪除之後就沒有「已停用」這個狀態了——
-                  // 後端目前仍是 active=false（資料還在），但那對照護者不該可見，
-                  // 顯示出來等於告訴他「刪掉的東西其實還在」。
-                  final visible = _routines.where((r) => r.active).toList();
+              // 同意書與登出放在 AsyncView **外面**，資料載不出來時也要看得到。
+              // 這兩個是這一頁唯一的出路：政策裡寫「刪除資料請聯繫家人或管理者」，
+              // 而能執行的人就是照護者；載入失敗時他更需要能登出重來。
+              // 長者端的今日頁踩過同一個坑（見 today_screen 的同名說明）。
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  AsyncView<List<Routine>>(
+                    future: _future,
+                    onRetry: _reload,
+                    builder: (context, _) {
+                      final elder = AppSession.instance.selectedElder;
+                      // 只列還在的。停用改成刪除之後就沒有「已停用」這個狀態了。
+                      final visible = _routines.where((r) => r.active).toList();
 
-                  return ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    children: [
-                      // 沒有「新增長輩」：綁定是**長者發起**的——長輩在他自己的
-                      // 手機上輸入照護者 ID（`POST /elders/{id}/caregivers`），綁上
-                      // 之後 `GET /elders` 就回完整資料，這一頁自然看得到。
-                      //
-                      // 從照護者這邊 `POST /elders` 造出來的長輩沒有帳號可以登入：
-                      // elder_accounts（sub→elder_id）是註冊時寫的，建立長者資料
-                      // 不會產生帳號對應。那會是一筆沒人進得去的孤兒資料。
-                      const SectionHeader('長輩資料'),
-                      const SizedBox(height: AppSpacing.sm),
-                      if (elder != null)
-                        _ElderProfileCard(
-                          elder: elder,
-                          onAddNote: () => _addHealthNote(elder),
-                          onRemoveNote: (n) => _removeHealthNote(elder, n),
-                          onEditHabit: () => _editHabitNote(elder),
-                          onEditRegion: () => _editAddressRegion(elder),
-                          onAddFamily: () => _addFamilyMember(elder),
-                          onRemoveFamily: (i) => _removeFamilyMember(elder, i),
-                        ),
-                      const SizedBox(height: AppSpacing.lg),
-                      SectionHeader(
-                        '例行公事',
-                        trailing: TextButton.icon(
-                          onPressed: _addRoutine,
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            foregroundColor: AppColors.accentText,
+                      // Column 而非 ListView：它已經是外層 ListView 的一個孩子。
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // 沒有「新增長輩」：綁定是**長者發起**的——長輩在他自己的
+                          // 手機上輸入照護者 ID（`POST /elders/{id}/caregivers`），綁上
+                          // 之後 `GET /elders` 就回完整資料，這一頁自然看得到。
+                          //
+                          // 從照護者這邊 `POST /elders` 造出來的長輩沒有帳號可以登入：
+                          // elder_accounts（sub→elder_id）是註冊時寫的，建立長者資料
+                          // 不會產生帳號對應。那會是一筆沒人進得去的孤兒資料。
+                          const SectionHeader('長輩資料'),
+                          const SizedBox(height: AppSpacing.sm),
+                          if (elder != null)
+                            _ElderProfileCard(
+                              elder: elder,
+                              onAddNote: () => _addHealthNote(elder),
+                              onRemoveNote: (n) => _removeHealthNote(elder, n),
+                              onEditHabit: () => _editHabitNote(elder),
+                              onEditRegion: () => _editAddressRegion(elder),
+                              onAddFamily: () => _addFamilyMember(elder),
+                              onRemoveFamily: (i) =>
+                                  _removeFamilyMember(elder, i),
+                            ),
+                          const SizedBox(height: AppSpacing.lg),
+                          SectionHeader(
+                            '例行公事',
+                            trailing: TextButton.icon(
+                              onPressed: _addRoutine,
+                              style: TextButton.styleFrom(
+                                minimumSize: const Size(48, 48),
+                                foregroundColor: AppColors.accentText,
+                              ),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text('新增',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelSmall
+                                      ?.copyWith(color: AppColors.accentText)),
+                            ),
                           ),
-                          icon: const Icon(Icons.add, size: 18),
-                          label: Text('新增',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(color: AppColors.accentText)),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      if (visible.isEmpty)
-                        _EmptyRoutines(onAdd: _addRoutine)
-                      else
-                        for (final r in visible) ...[
-                          _RoutineCard(
-                            key: ValueKey(r.routineId),
-                            routine: r,
-                            onDelete: () => _deleteRoutine(r),
-                          ),
-                          const SizedBox(height: AppSpacing.md),
+                          const SizedBox(height: AppSpacing.sm),
+                          if (visible.isEmpty)
+                            _EmptyRoutines(onAdd: _addRoutine)
+                          else
+                            for (final r in visible) ...[
+                              _RoutineCard(
+                                key: ValueKey(r.routineId),
+                                routine: r,
+                                onDelete: () => _deleteRoutine(r),
+                              ),
+                              const SizedBox(height: AppSpacing.md),
+                            ],
                         ],
-                      const SizedBox(height: AppSpacing.xl),
-                      const _PolicyLink(),
-                      const SignOutButton(),
-                    ],
-                  );
-                },
+                      );
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  const _PolicyLink(),
+                  const SignOutButton(),
+                ],
               ),
             ),
           ],
@@ -1478,25 +1500,35 @@ class _RoutineCard extends StatelessWidget {
                     style: text.bodySmall
                         ?.copyWith(color: AppColors.inkSecondary)),
                 const SizedBox(height: AppSpacing.xs),
-                Row(
+                // Wrap 而非 Row：這一列在 textScaler 2.0 下量出來約 290dp，
+                // 但卡片透過 Expanded 只分得到 213dp——差的 77px 就直接 overflow。
+                // 換行而不是截斷：「對話中建立」是來源標示，砍掉照護者就分不出
+                // 哪些行程是 AI 聽來的。圖示與其標籤綁在同一個 Row 裡不拆散。
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: AppSpacing.sm,
+                  runSpacing: 2,
                   children: [
-                    Icon(
-                      routine.remind
-                          ? Icons.notifications_active_outlined
-                          : Icons.notifications_off_outlined,
-                      size: 14,
-                      color: AppColors.chevron,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          routine.remind
+                              ? Icons.notifications_active_outlined
+                              : Icons.notifications_off_outlined,
+                          size: 14,
+                          color: AppColors.chevron,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(routine.remind ? '會提醒' : '不提醒',
+                            style: text.bodySmall
+                                ?.copyWith(color: AppColors.chevron)),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    Text(routine.remind ? '會提醒' : '不提醒',
-                        style:
-                            text.bodySmall?.copyWith(color: AppColors.chevron)),
-                    if (routine.createdBy == 'conversation') ...[
-                      const SizedBox(width: AppSpacing.sm),
+                    if (routine.createdBy == 'conversation')
                       Text('· 對話中建立',
                           style: text.bodySmall
                               ?.copyWith(color: AppColors.chevron)),
-                    ],
                   ],
                 ),
               ],
