@@ -10,6 +10,9 @@
 - ASR 模型目錄：[docs/asr/model-catalog.md](docs/asr/model-catalog.md)
 - TTS 子系統架構：[docs/tts/framework.md](docs/tts/framework.md)
 - TTS 實作計畫：[docs/tts/implementation-plan.md](docs/tts/implementation-plan.md)
+- 使用者旅程：[docs/user-journey.md](docs/user-journey.md)
+- 交付版使用者旅程：[docs/deliverables/user-journey.md](docs/deliverables/user-journey.md)
+- 數據及資料應用說明：[docs/deliverables/data-usage.md](docs/deliverables/data-usage.md)
 - 開發流程：[docs/workflow.md](docs/workflow.md)
 - 開發慣例：[docs/conventions.md](docs/conventions.md)
 - 生活記錄事件萃取移植計畫：[docs/feature_events-extraction.md](docs/feature_events-extraction.md)
@@ -25,7 +28,7 @@
 ├── backend/        # Python Lambda handlers＋ASR/TTS 領域模組＋extraction pipeline
 ├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, SageMaker ASR/TTS
 ├── data/           # 模擬長者 persona、情境對話腳本、seed 腳本、knowledge/ 衛教文件
-├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、PII、開發流程與功能移植計畫
+├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、交付文件、PII、開發流程與功能移植計畫
 └── skills/         # 供各 AI 工具開發使用的 skill（開發者需自行加入自己的工具）
 ```
 
