@@ -152,14 +152,14 @@ def handle_complete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
     if not elder_id or not routine_id:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
 
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now = routines.now_iso()
 
     try:
         result = db.complete_routine_with_event(
             elder_id=elder_id,
             routine_id=routine_id,
             routine_date=date_str,
-            ts=now_iso,
+            ts=now,
             completed_by=completed_by,
             detail=f"對話中確認完成行程 (ID: {routine_id})",
             event_type="routine_completion",
@@ -188,7 +188,7 @@ def handle_create_routine(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 title"}
 
     routine_id = f"rtn_{uuid.uuid4().hex[:12]}"
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now_iso = routines.now_iso()
 
     schedule_data: Dict[str, Any] = {"freq": freq, "time": time_str}
     if freq == "once" and specific_date:
@@ -505,7 +505,7 @@ def _write_safety_event(elder_id: str, alert_id: str, detail: str) -> dict[str, 
     """以 canonical key 寫入 type=safety event，冪等收斂。"""
     canonical_key = safety_alert_key(alert_id)
     event_id = event_id_for(elder_id, canonical_key)
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now_iso = routines.now_iso()
     event, is_new = db.put_event_if_absent({
         "elder_id": elder_id,
         "canonical_event_key": canonical_key,
@@ -531,7 +531,6 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 message"}
 
     now_ts = time.time()
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
     message_id = None
 
     try:
