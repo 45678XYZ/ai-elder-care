@@ -303,18 +303,29 @@ def handle_update_routine(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
-# 工具 3.2：停用/刪除例行公事
+# 工具 3.2：刪除例行公事
 # -----------------------------------------------------------------------------
 
-def handle_deactivate_routine(params: Dict[str, Any]) -> Dict[str, Any]:
-    """工具 3.2：停用/刪除長者的例行公事。"""
+def handle_delete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具 3.2：刪除長者的例行公事（真刪除，若要恢復則重新建立）。"""
     elder_id = params.get("elder_id")
     routine_id = params.get("routine_id")
-    
+
     if not elder_id or not routine_id:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
-        
-    return _apply_routine_update(elder_id, routine_id, {"active": False})
+
+    try:
+        versions = db.list_routine_versions(routine_id)
+        if not versions:
+            return {"status": "error", "message": "找不到指定的例行公事"}
+        if versions[-1].get("elder_id") != elder_id:
+            return {"status": "error", "message": "資料不符，無法刪除此行程"}
+
+        db.delete_routine(routine_id)
+        return {"status": "success", "message": f"已刪除例行公事 {routine_id}"}
+    except Exception as e:
+        print(f"[Error] handle_delete_routine 失敗: {e}")
+        return {"status": "error", "message": f"刪除行程失敗: {str(e)}"}
 
 
 # -----------------------------------------------------------------------------
@@ -786,7 +797,7 @@ TOOL_HANDLERS = {
     "complete_routine": handle_complete_routine,
     "create_routine": handle_create_routine,
     "update_routine": handle_update_routine,
-    "deactivate_routine": handle_deactivate_routine,
+    "delete_routine": handle_delete_routine,
     "get_recent_events": handle_get_recent_events,
     "get_elder_profile": handle_get_elder_profile,
     "update_elder_profile": handle_update_elder_profile,

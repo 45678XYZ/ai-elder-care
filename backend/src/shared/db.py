@@ -914,6 +914,22 @@ def replace_current_routine_version(
         raise DBError(f"更新例行公事失敗: {e.response['Error']['Message']}")
 
 
+def delete_routine(routine_id: str) -> None:
+    """刪除 routine 的所有版本（真刪除，非 soft-delete）。
+
+    事件表中的 routine_completion 記錄不受影響：那些是歷史事實。
+    若 routine 不存在則靜默返回（冪等）。
+    """
+    versions = list_routine_versions(routine_id)
+    if not versions:
+        return
+
+    table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+    with table.batch_writer() as batch:
+        for v in versions:
+            batch.delete_item(Key={"routine_id": routine_id, "version": int(v["version"])})
+
+
 def list_current_routines(
     elder_id: str,
     active_only: bool = True,
