@@ -78,7 +78,7 @@ module "daily_digest" {
   function_name = "${var.project_name}-daily-digest"
   description   = "每晚照護者晚報彙整與推播"
   handler       = "src.handlers.daily_digest.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 120 # 晚報需掃描所有長者，給足夠時間
   memory_size   = 256
 
