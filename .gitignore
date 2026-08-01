@@ -35,8 +35,9 @@ terraform/build/
 .gemini/
 .qwen/
 .roo/
-.agents/*
-!.agents/skills/
+.agents/
+.kiro/
+AGENTS.md
 graphify-out/
 
 # --- 離線訓練工作流產出（語料、embedding 快取、標註檔、評測結果） ---
