@@ -25,6 +25,35 @@ variable "asr_enable_endpoints" {
   default     = false
 }
 
+variable "asr_enable_ce_endpoint" {
+  description = <<-EOT
+    是否一併建立 Taiwan-Tongues-ASR-CE 備援端點（需 asr_enable_endpoints 同時為 true）。
+
+    預設關閉：eval/MODEL_SELECTION.md 的結論是中文改用 Amazon Transcribe、客語用
+    FormoSpeech，CE 兩邊都不是首選，而它固定佔一台 ml.g5.4xlarge。關閉時 ASR_CONFIG_JSON
+    的 fallback_chain 會一併清空，Lambda 不會去呼叫不存在的 endpoint。
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "asr_formo_approved" {
+  description = <<-EOT
+    FormoSpeech Whisper-v3 是否已完成 production 核准。
+
+    設 true 會同時把 usage_restriction 轉為 production、approval_state 轉為 approved，
+    並將五項 production gate 全部標記為通過——這三者同時成立，Lambda 才會真的建立
+    remote provider 並讓六腔客語 route 上線（見 backend/src/shared/asr/config.py 的
+    is_production_allowed）。
+
+    這個值是「驗證已完成」的宣告而非開關：依 docs/asr/model-catalog.md，設 true 之前
+    應備妥 staging 辨識品質、延遲、授權、存取與容量證據。模型授權為 CC BY-NC 4.0，
+    專案轉為商業用途時不得設為 true。
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "asr_model_artifact_bucket" {
   description = "存放 ASR 模型 artifact（model.tar.gz）的 S3 bucket 名稱"
   type        = string

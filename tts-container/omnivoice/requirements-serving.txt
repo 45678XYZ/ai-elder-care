@@ -1,0 +1,5 @@
+# serving 層依賴；推論本身的套件由 OmniVoice-hakka 的相依決定。
+fastapi==0.115.6
+uvicorn==0.30.1
+numpy>=1.26
+soundfile>=0.12

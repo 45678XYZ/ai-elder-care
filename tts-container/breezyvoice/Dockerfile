@@ -29,7 +29,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsox-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+# setuptools 釘在 80.x：openai-whisper 等相依仍走舊式 setup.py 建 wheel，需要
+# pkg_resources，而 setuptools 81 起已把它移除。
+#
+# 只在映像層裝舊版不夠：PEP 517 建置 wheel 時會開一個隔離環境並在裡面重裝
+# setuptools，映像層的版本管不到。PIP_CONSTRAINT 是唯一能把限制帶進該隔離環境的
+# 途徑，因此下面安裝相依時必須帶上它。
+RUN python3 -m pip install --no-cache-dir --upgrade pip wheel \
+    && python3 -m pip install --no-cache-dir "setuptools<81" \
+    && echo "setuptools<81" > /etc/pip-constraints.txt
 
 # CosyVoice 的 Matcha-TTS 以 submodule 掛入，少了它 frontend 會 import 失敗。
 RUN git clone --recursive https://github.com/mtkresearch/BreezyVoice.git ${BREEZYVOICE_REPO} \
@@ -39,6 +47,11 @@ RUN git clone --recursive https://github.com/mtkresearch/BreezyVoice.git ${BREEZ
 
 # 依上游 README：先移除可能被相依套件帶進來的 CPU 版 onnxruntime，再裝 GPU 版。
 RUN python3 -m pip uninstall -y onnxruntime || true
+# openai-whisper==20231117 的 setup.py 直接 import pkg_resources。PEP 517 會在隔離環境
+# 裡重裝 setuptools（81+，已無 pkg_resources），而實測 PIP_CONSTRAINT 並不會傳進該環境，
+# 所以只能對這個套件關閉建置隔離，改用映像層already裝好的 setuptools<81。
+# 先裝它（含相依）再裝 requirements.txt，讓後者把 torch 等版本收斂回釘住的值。
+RUN python3 -m pip install --no-cache-dir --no-build-isolation openai-whisper==20231117
 RUN python3 -m pip install --no-cache-dir -r ${BREEZYVOICE_REPO}/requirements.txt
 
 COPY requirements-serving.txt /tmp/requirements-serving.txt
