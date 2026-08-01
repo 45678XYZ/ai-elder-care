@@ -153,14 +153,14 @@ def handle_complete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
     if not elder_id or not routine_id:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
 
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now = routines.now_iso()
 
     try:
         result = db.complete_routine_with_event(
             elder_id=elder_id,
             routine_id=routine_id,
             routine_date=date_str,
-            ts=now_iso,
+            ts=now,
             completed_by=completed_by,
             detail=f"對話中確認完成行程 (ID: {routine_id})",
             event_type="routine_completion",
@@ -189,7 +189,7 @@ def handle_create_routine(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 title"}
 
     routine_id = f"rtn_{uuid.uuid4().hex[:12]}"
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now_iso = routines.now_iso()
 
     schedule_data: Dict[str, Any] = {"freq": freq, "time": time_str}
     if freq == "once" and specific_date:
@@ -304,18 +304,29 @@ def handle_update_routine(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
-# 工具 3.2：停用/刪除例行公事
+# 工具 3.2：刪除例行公事
 # -----------------------------------------------------------------------------
 
-def handle_deactivate_routine(params: Dict[str, Any]) -> Dict[str, Any]:
-    """工具 3.2：停用/刪除長者的例行公事。"""
+def handle_delete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具 3.2：刪除長者的例行公事（真刪除，若要恢復則重新建立）。"""
     elder_id = params.get("elder_id")
     routine_id = params.get("routine_id")
-    
+
     if not elder_id or not routine_id:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
-        
-    return _apply_routine_update(elder_id, routine_id, {"active": False})
+
+    try:
+        versions = db.list_routine_versions(routine_id)
+        if not versions:
+            return {"status": "error", "message": "找不到指定的例行公事"}
+        if versions[-1].get("elder_id") != elder_id:
+            return {"status": "error", "message": "資料不符，無法刪除此行程"}
+
+        db.delete_routine(routine_id)
+        return {"status": "success", "message": f"已刪除例行公事 {routine_id}"}
+    except Exception as e:
+        print(f"[Error] handle_delete_routine 失敗: {e}")
+        return {"status": "error", "message": f"刪除行程失敗: {str(e)}"}
 
 
 # -----------------------------------------------------------------------------
@@ -520,7 +531,7 @@ def _write_safety_event(elder_id: str, alert_id: str, detail: str) -> dict[str, 
     """以 canonical key 寫入 type=safety event，冪等收斂。"""
     canonical_key = safety_alert_key(alert_id)
     event_id = event_id_for(elder_id, canonical_key)
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now_iso = routines.now_iso()
     event, is_new = db.put_event_if_absent({
         "elder_id": elder_id,
         "canonical_event_key": canonical_key,
@@ -546,7 +557,6 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 message"}
 
     now_ts = time.time()
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
     message_id = None
 
     try:
@@ -939,7 +949,7 @@ TOOL_HANDLERS = {
     "complete_routine": handle_complete_routine,
     "create_routine": handle_create_routine,
     "update_routine": handle_update_routine,
-    "deactivate_routine": handle_deactivate_routine,
+    "delete_routine": handle_delete_routine,
     "get_recent_events": handle_get_recent_events,
     "get_elder_profile": handle_get_elder_profile,
     "update_elder_profile": handle_update_elder_profile,

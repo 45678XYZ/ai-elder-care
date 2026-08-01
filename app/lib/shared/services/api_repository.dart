@@ -129,7 +129,7 @@ class ApiRepository implements CareRepository {
   @override
   Future<void> deleteRoutine(String routineId,
           {required String clientRequestId}) =>
-      _api.deleteRoutine(routineId, clientRequestId: clientRequestId);
+      _api.deleteRoutine(routineId);
 
   @override
   Future<DailyRoutineView> dailyRoutines({

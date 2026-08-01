@@ -213,14 +213,14 @@ def runtime_session_id(elder_id: str) -> str:
     return f"eldercare-{digest}-{elder_id}"[:_RUNTIME_SESSION_ID_MAX_LEN]
 
 
-def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> Tuple[str, bool, bool]:
+def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> Tuple[str, bool]:
     """呼叫 AgentCore Runtime 上的對話大腦進行推導。
 
     大腦的實作在 backend/src/agentcore_runtime/；本函式只負責組請求與解讀回應。
 
-    `routines_updated` 與 `safety_alert_triggered` 由 runtime 在回應 payload 裡明確回報，
-    不是從 trace 猜的：這兩個旗標直接決定 App 要不要刷新行事曆與是否標記安全警報，用字串
-    比對去猜工具有沒有被呼叫，模型換個措辭就會失準。
+    `routines_updated` 由 runtime 在回應 payload 裡明確回報，不是從 trace 猜的：
+    這個旗標直接決定 App 要不要刷新行事曆，用字串比對去猜工具有沒有被呼叫，
+    模型換個措辭就會失準。
 
     Args:
         elder_id: 長者 ID；決定工具的操作對象與長期記憶的歸屬。
@@ -228,7 +228,7 @@ def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> T
         lang: 本輪的偏好語言（zh-TW 或 hak）。
 
     Returns:
-        Tuple[str, bool, bool]: (reply_text, routines_updated, safety_alert_triggered)
+        Tuple[str, bool]: (reply_text, routines_updated)
     """
     if not AGENTCORE_RUNTIME_ARN:
         # 本地開發與未配置 Runtime 時的保底回覆
@@ -236,12 +236,10 @@ def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> T
             return (
                 f"【模擬回覆】𠊎有收到「{transcript}」。愛記得啉水、照時間歇睏喔！",
                 False,
-                False,
             )
         return (
             f"【模擬大腦回覆】收到您的訊息：「{transcript}」。已經幫您確認紀錄囉，請記得多喝水、按時休息！",
             False,
-            False
         )
 
     session_id = runtime_session_id(elder_id)
@@ -273,7 +271,7 @@ def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> T
     if not reply_text:
         reply_text = "抱歉，我剛才沒有聽清，您可以再說一次嗎？"
 
-    return reply_text, bool(body.get("routines_updated")), bool(body.get("safety_alert_triggered"))
+    return reply_text, bool(body.get("routines_updated"))
 
 
 def upload_audio_to_s3(audio_bytes: bytes, conversation_id: str) -> str | None:
@@ -364,7 +362,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # 4. 副作用區：turn 已是 processing，之後每一條路徑都必須把它收成終態
         try:
-            transcript, reply_text, routines_updated, safety_alert_triggered, audio_key = run_turn(
+            transcript, reply_text, routines_updated, audio_key = run_turn(
                 req, audio_bytes, conversation_id, turn_dialect, context
             )
         except TurnFailure as failure:
@@ -381,14 +379,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # 5. 以單一 transaction 提交終態結果並把本輪追加進 session
         try:
-            rt_labels = []
-            if routines_updated:
-                rt_labels.append("routine")
-            if safety_alert_triggered:
-                rt_labels.append("safety_alert")
-            if not rt_labels:
-                rt_labels.append("none")
-
             committed = turns.commit(
                 req.elder_id,
                 conversation_id,
@@ -399,7 +389,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     "ai_respond_text": reply_text,
                     "ai_respond_audio_s3_key": audio_key,
                     "routines_updated": routines_updated,
-                    "rt_labels": rt_labels,
                 },
             )
         except turns.TurnError:
@@ -592,8 +581,8 @@ def run_turn(
     conversation_id: str,
     hakka_dialect: HakkaDialect | None,
     context: Any = None,
-) -> Tuple[str, str, bool, bool, str | None]:
-    """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, safety_alert_triggered, audio key)。
+) -> Tuple[str, str, bool, str | None]:
+    """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, audio key)。
 
     音檔存不進 S3 時 audio key 為 None，本輪仍然成立：回覆內容與已提交的 routine 副作用都是
     真的，把整輪判成失敗只會逼長者再講一次，反而可能讓對話產生的 routine 被重複建立。
@@ -631,7 +620,7 @@ def run_turn(
         transcript = asr_result.text
 
     try:
-        reply_text, routines_updated, safety_alert_triggered = invoke_agent_brain(
+        reply_text, routines_updated = invoke_agent_brain(
             req.elder_id, transcript, req.lang
         )
     except Exception:
@@ -678,7 +667,7 @@ def run_turn(
             tts_correlation_id,
         )
 
-    return transcript, reply_text, routines_updated, safety_alert_triggered, audio_key
+    return transcript, reply_text, routines_updated, audio_key
 
 
 def fail_turn(

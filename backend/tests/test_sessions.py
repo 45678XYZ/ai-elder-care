@@ -138,23 +138,6 @@ def test_closed_session_keeps_frozen_turn_ids(sessions):
 # -- chunk manifest -----------------------------------------------------------
 
 
-def test_manifest_is_persisted_once_and_reused(sessions):
-    close_fully(sessions)
-    first = [{"chunk_id": "chk_a", "ordinal": 0, "core_start": 0, "core_end": 2,
-              "context_start": 0, "context_end": 2,
-              "first_core_turn_id": "cnv_001", "last_core_turn_id": "cnv_003"}]
-    second = [{"chunk_id": "chk_b", "ordinal": 0, "core_start": 0, "core_end": 2,
-               "context_start": 0, "context_end": 2,
-               "first_core_turn_id": "cnv_001", "last_core_turn_id": "cnv_003"}]
-
-    stored = sessions.persist_chunk_manifest(ELDER, SESSION, first, planner_version="v1")
-    assert stored[0]["chunk_id"] == "chk_a"
-
-    # 第二次寫入不得覆蓋；retry／duplicate／DLQ replay 必須拿到同一份
-    reused = sessions.persist_chunk_manifest(ELDER, SESSION, second, planner_version="v2")
-    assert reused[0]["chunk_id"] == "chk_a"
-    assert sessions.get_session(ELDER, SESSION)["chunk_planner_version"] == "v1"
-
 
 # -- batch claim --------------------------------------------------------------
 

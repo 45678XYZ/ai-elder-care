@@ -149,20 +149,12 @@ locals {
     TABLE_ROUTINES        = aws_dynamodb_table.routines.name
     TABLE_DAILY_SUMMARIES = aws_dynamodb_table.daily_summaries.name
 
-    BEDROCK_MODEL_ID            = var.bedrock_model_id
-    BEDROCK_CLASSIFIER_MODEL_ID = var.bedrock_classifier_model_id
-    BEDROCK_EXTRACTOR_MODEL_ID  = var.bedrock_extractor_model_id
-    BEDROCK_CHUNKER_MODEL_ID    = var.bedrock_chunker_model_id
+    BEDROCK_MODEL_ID           = var.bedrock_model_id
+    BEDROCK_EXTRACTOR_MODEL_ID = var.bedrock_extractor_model_id
 
-    EMBEDDING_MODEL_ID    = var.embedding_model_id
-    EMBEDDING_DIM         = tostring(var.embedding_dim)
-    CONCEPT_VECTOR_BUCKET = var.concept_vector_bucket
-    CONCEPT_VECTOR_INDEX  = var.concept_vector_index
-
-    EVENT_SLOT_MINUTES = tostring(var.event_slot_minutes)
-    CHUNKER_TYPE       = var.chunker_type
-    EXTRACTION_MODE    = var.extraction_mode
-    RAC_TOP_K          = tostring(var.rac_top_k)
+    EVENT_SLOT_MINUTES      = tostring(var.event_slot_minutes)
+    EXTRACTION_MODE         = var.extraction_mode
+    SEVEN_BATCH_CHAR_LIMIT  = tostring(var.seven_batch_char_limit)
 
     BATCH_QUEUE_URL = aws_sqs_queue.batch.id
 
@@ -447,10 +439,6 @@ resource "aws_iam_role_policy_attachment" "extraction_bedrock" {
   policy_arn = aws_iam_policy.bedrock_invoke.arn
 }
 
-resource "aws_iam_role_policy_attachment" "extraction_vectors" {
-  role       = aws_iam_role.extraction.name
-  policy_arn = aws_iam_policy.concept_vector_read.arn
-}
 
 # 最小權限：只給實際會碰到的表與動作。
 data "aws_iam_policy_document" "extraction_data" {

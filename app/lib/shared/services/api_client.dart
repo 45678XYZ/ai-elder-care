@@ -342,26 +342,9 @@ class ApiClient {
     return Routine.fromJson(json);
   }
 
-  /// `DELETE /routines/{id}` — 刪除例行公事（照護者）。
-  ///
-  /// 後端建一個 `active=false` 的終態版本並把它移出排程，所以回傳的是那筆
-  /// `active: false` 的 Routine，不是空 body。
-  ///
-  /// [clientRequestId] 可省略（後端會自行衍生），但**要能安全重試就得帶**：
-  /// 帶了才會冪等重播，同一個值重送拿到同一結果。走 query 而非 body——api.md
-  /// 這個端點的冪等鍵定在 query 參數。
-  Future<Routine> deleteRoutine(
-    String routineId, {
-    String? clientRequestId,
-  }) async {
-    final json = await _request(
-      'DELETE',
-      '/routines/$routineId',
-      query: {
-        if (clientRequestId != null) 'client_request_id': clientRequestId,
-      },
-    );
-    return Routine.fromJson(json);
+  /// `DELETE /routines/{id}` — 永久刪除例行公事（照護者端）。
+  Future<void> deleteRoutine(String routineId) async {
+    await _request('DELETE', '/routines/$routineId');
   }
 
   /// `POST /routines/{id}/complete` — 手動確認完成（兩端）。

@@ -70,14 +70,14 @@ def test_pending_before_grace_and_missed_after():
     versions = [_version()]
 
     pending = routines.resolve_occurrence(
-        versions, None, "2026-07-14", _at("2026-07-14T10:00:00+08:00"), grace_minutes=120
+        versions, None, "2026-07-14", _at("2026-07-14T10:00:00+08:00"), grace_override=120
     )
     assert pending["status"] == "pending"
     assert pending["scheduled_at"] == "2026-07-14T09:00:00+08:00"
     assert "completed_at" not in pending
 
     missed = routines.resolve_occurrence(
-        versions, None, "2026-07-14", _at("2026-07-14T12:00:00+08:00"), grace_minutes=120
+        versions, None, "2026-07-14", _at("2026-07-14T12:00:00+08:00"), grace_override=120
     )
     assert missed["status"] == "missed"
 
@@ -151,7 +151,7 @@ def test_resolve_occurrences_is_sorted_and_one_per_routine():
     ]
 
     items = routines.resolve_occurrences(
-        versions, {}, "2026-07-14", _at("2026-07-14T10:00:00+08:00"), grace_minutes=120
+        versions, {}, "2026-07-14", _at("2026-07-14T10:00:00+08:00"), grace_override=120
     )
     assert [item["routine_id"] for item in items] == ["rtn_002", "rtn_001"]
     # 同日改版只收斂成一筆，取 cutoff 前最新版本的排程

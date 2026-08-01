@@ -12,10 +12,9 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from src.extraction.config import CHUNKER_EMBEDDING_DEPTH, ExtractionConfig
+from src.extraction.pipeline import ExtractionConfig
 from src.extraction.canonical import load_predicate_lexicon
-from src.extraction.pipeline import ExtractionPipeline
-from src.extraction.retriever import ConceptChunk, ConceptRetriever
+from src.extraction.pipeline import DirectSevenPipeline
 from src.extraction.taxonomy import load_taxonomy
 from tests.conftest import FakeConverseClient, StubEmbeddingProvider
 
@@ -25,8 +24,6 @@ ELDERS_TABLE = "elders-e2e"
 ELDER = "eld_a1b2c3d4e5f6"
 SESSION = "ses_01J8E2E"
 
-SCHEDULED = "UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication"
-VITAL = "UCO.StatusOutcome.PhysiologicalMeasurement.VitalSignRecord"
 
 SCRIPT = [
     ("AI", "阿嬤早安，今天有量血壓嗎？"),
@@ -194,57 +191,38 @@ def build_pipeline(model_client):
     taxonomy = load_taxonomy()
     lexicon = load_predicate_lexicon()
     embedder = StubEmbeddingProvider()
-    chunks = (
-        ConceptChunk(f"{SCHEDULED}#def", SCHEDULED, "按時服藥", "definition", "吃藥 服藥 血壓藥", 3),
-        ConceptChunk(f"{VITAL}#def", VITAL, "生理數據量測紀錄", "definition", "量血壓 血糖", 3),
-    )
-    return ExtractionPipeline(
-        config=ExtractionConfig(chunker_type=CHUNKER_EMBEDDING_DEPTH, event_slot_minutes=30),
+    return DirectSevenPipeline(
+        config=ExtractionConfig(event_slot_minutes=30),
         taxonomy=taxonomy,
         lexicon=lexicon,
-        retriever=ConceptRetriever(taxonomy, embedder, chunks=chunks, top_k=2),
         client=model_client,
         embedder=embedder,
     )
 
 
-def model_responses(chunk_count):
-    """每個 chunk 兩次呼叫：分類、萃取。"""
-    texts = []
-    for _ in range(chunk_count):
-        texts.append(
-            json.dumps(
-                {
-                    "chunk_id": "chk",
-                    "identified_labels": [{"concept_id": SCHEDULED, "confidence": 0.9}],
-                    "rationale": "提到吃藥",
-                },
-                ensure_ascii=False,
-            )
+def model_responses():
+    """direct_seven: 單次萃取呼叫。"""
+    return [
+        json.dumps(
+            {
+                "unit_id": "batch-0",
+                "reference_datetime": "2026-07-26T09:08:00.000+08:00",
+                "events": [
+                    {
+                        "event_index": 0,
+                        "high_level_type": "medication",
+                        "subject": "長者",
+                        "predicate": "吃血壓藥",
+                        "event_summary": "早餐後服用血壓藥一顆",
+                        "raw_temporal_expression": "早上",
+                        "observed_at": "2026-07-26T08:00:00.000+08:00",
+                        "confidence_score": 0.85,
+                    }
+                ],
+            },
+            ensure_ascii=False,
         )
-        texts.append(
-            json.dumps(
-                {
-                    "chunk_id": "chk",
-                    "events": [
-                        {
-                            "event_index": 0,
-                            "concept_id": SCHEDULED,
-                            "subject": "我",
-                            "predicate": "吃血壓藥",
-                            "event_summary": "早餐後服用血壓藥一顆",
-                            "raw_temporal_expression": "早上",
-                            "observed_at": None,
-                            "confidence_score": 0.85,
-                            "medication_item": "血壓藥",
-                            "pill_count": 1,
-                        }
-                    ],
-                },
-                ensure_ascii=False,
-            )
-        )
-    return texts
+    ]
 
 
 def caregiver_events_request():
@@ -279,7 +257,7 @@ def test_close_to_events_end_to_end(stack):
     assert len(sqs.messages) == 1
 
     # 3. batch consumer 處理佇列訊息
-    pipeline = build_pipeline(FakeConverseClient(model_responses(8)))
+    pipeline = build_pipeline(FakeConverseClient(model_responses()))
     for record in sqs.as_records():
         assert batch.process_record(record, context=FakeContext(), pipeline=pipeline) == (
             sessions.CLAIM_ACQUIRED
@@ -288,7 +266,7 @@ def test_close_to_events_end_to_end(stack):
     session = sessions.get_session(ELDER, SESSION)
     assert session["state"] == sessions.STATE_CLOSED
     assert session["batch_status"] == sessions.BATCH_COMPLETED
-    assert session["chunk_manifest"]
+    # direct_seven pipeline 不產生 chunk_manifest
 
     # 4. 照護者端看到一般生活事件，且不含 extraction internals
     after = json.loads(events_api.handler(caregiver_events_request(), None)["body"])
@@ -297,15 +275,13 @@ def test_close_to_events_end_to_end(stack):
     assert item["type"] == "medication"
     assert item["detail"] == "早餐後服用血壓藥一顆"
     assert item["source"] == "conversation"
-    for internal in ("canonical_event_key", "concept_id", "structured_detail", "revision"):
+    for internal in ("canonical_event_key", "structured_detail", "revision"):
         assert internal not in item
 
     # 5. 內部欄位仍完整寫入，供摘要與統計使用
     stored = db.get_event(ELDER, item["event_id"])
-    assert stored["concept_id"] == SCHEDULED
     assert stored["taxonomy_version"] == "uco-1.0.0"
     assert stored["extraction_track"] == "batch"
-    assert stored["structured_detail"]["medication_item"] == "血壓藥"
     assert stored["evidence_conversation_ids"]
 
 
@@ -325,7 +301,7 @@ def test_duplicate_delivery_does_not_duplicate_events(stack):
     )
 
     record = sqs.as_records()[0]
-    pipeline = build_pipeline(FakeConverseClient(model_responses(8)))
+    pipeline = build_pipeline(FakeConverseClient(model_responses()))
     first = batch.process_record(record, context=FakeContext(), pipeline=pipeline)
     second = batch.process_record(record, context=FakeContext(), pipeline=pipeline)
 

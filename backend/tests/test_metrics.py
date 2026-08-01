@@ -22,18 +22,17 @@ def emitted_lines(capsys):
 
 
 def test_emf_structure(capsys):
-    metrics.emit({metrics.CHUNK_COUNT: 3}, dimensions={"ChunkerType": "llm_prompt"})
+    metrics.emit({metrics.EVENT_COUNT: 3}, dimensions={"PipelineName": "direct_seven"})
     payload = emitted_lines(capsys)[0]
 
     aws_block = payload["_aws"]
     assert isinstance(aws_block["Timestamp"], int)
     definition = aws_block["CloudWatchMetrics"][0]
     assert definition["Namespace"] == metrics.NAMESPACE
-    assert definition["Dimensions"] == [["ChunkerType"]]
-    assert definition["Metrics"] == [{"Name": metrics.CHUNK_COUNT, "Unit": "Count"}]
-    # 維度值與指標值都要在同一層
-    assert payload["ChunkerType"] == "llm_prompt"
-    assert payload[metrics.CHUNK_COUNT] == 3.0
+    assert definition["Dimensions"] == [["PipelineName"]]
+    assert definition["Metrics"] == [{"Name": metrics.EVENT_COUNT, "Unit": "Count"}]
+    assert payload["PipelineName"] == "direct_seven"
+    assert payload[metrics.EVENT_COUNT] == 3.0
 
 
 def test_units_are_declared_for_non_count_metrics():
@@ -70,34 +69,26 @@ def test_empty_values_are_skipped(capsys):
 
 def test_pipeline_metrics_cover_plan_items(capsys):
     pipeline_metrics = {
-        "chunk_count": 3,
         "event_count": 5,
         "dropped_events": 1,
         "unmatched_predicates": 2,
         "dedup_merge_rate": 0.25,
         "dedup_key_merged": 2,
         "dedup_alias_merged": 1,
-        "chunker_fallback_used": True,
         "structured_output_degraded": 1,
         "model_latency_ms": 4200,
         "type_distribution": {"medication": 3, "safety": 2},
     }
-    metrics.emit_pipeline_metrics(
-        pipeline_metrics, elder_id="eld_1", session_id="ses_1", chunker_type="embedding_depth"
-    )
+    metrics.emit_pipeline_metrics(pipeline_metrics, elder_id="eld_1", session_id="ses_1")
     payloads = emitted_lines(capsys)
 
     main = payloads[0]
-    assert main[metrics.CHUNK_COUNT] == 3
     assert main[metrics.EVENT_COUNT] == 5
     assert main[metrics.DROPPED_EVENTS] == 1
     assert main[metrics.UNMATCHED_PREDICATES] == 2
-    # 比率以 Percent 呈現
     assert main[metrics.DEDUP_MERGE_RATE] == 25.0
-    assert main[metrics.CHUNKER_FALLBACK] == 1
     assert main[metrics.STRUCTURED_OUTPUT_DEGRADED] == 1
     assert main[metrics.MODEL_LATENCY] == 4200
-    assert main["ChunkerType"] == "embedding_depth"
 
     # 分類分佈一筆一筆送，維度是 EventType 才能分類別看趨勢
     by_type = {payload["EventType"]: payload[metrics.EVENTS_BY_TYPE] for payload in payloads[1:]}

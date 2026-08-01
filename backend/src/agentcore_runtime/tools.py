@@ -100,10 +100,10 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
         },
     ),
     (
-        "deactivate_routine",
-        "Deactivate or cancel an existing scheduled routine for the elder.",
+        "delete_routine",
+        "Permanently delete an existing scheduled routine for the elder. If the elder wants it back later, create a new one.",
         {
-            "routine_id": (str, True, "要停用的行程 ID，例如 rtn_001"),
+            "routine_id": (str, True, "要刪除的行程 ID，例如 rtn_001"),
         },
     ),
     (
@@ -247,11 +247,8 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
 
 # 呼叫後代表 routine 定義或當日狀態已變更；chat.py 依此回 routines_updated
 ROUTINE_MUTATING_TOOLS = frozenset(
-    {"complete_routine", "create_routine", "update_routine", "deactivate_routine"}
+    {"complete_routine", "create_routine", "update_routine", "delete_routine"}
 )
-
-# 呼叫後代表已對照護者發出安全通知
-SAFETY_TOOLS = frozenset({"notify_caregiver"})
 
 
 def _args_model(tool_name: str, params: ParamSpec):

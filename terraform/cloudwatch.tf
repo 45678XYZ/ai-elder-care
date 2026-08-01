@@ -47,22 +47,6 @@ resource "aws_cloudwatch_metric_alarm" "batch_extractor_errors" {
   alarm_actions = [aws_sns_topic.batch_alerts.arn]
 }
 
-# 分塊器持續走機械切分，代表 LLM 分塊或 embedding 一直失敗——事件品質會默默下降，
-# 不會有任何錯誤浮上來，所以要靠指標抓。
-resource "aws_cloudwatch_metric_alarm" "chunker_fallback" {
-  alarm_name          = "${var.project_name}-chunker-fallback"
-  alarm_description   = "分塊器頻繁退回機械切分，事件品質可能已下降"
-  namespace           = var.metrics_namespace
-  metric_name         = "ChunkerFallback"
-  statistic           = "Sum"
-  period              = 3600
-  evaluation_periods  = 1
-  threshold           = 5
-  comparison_operator = "GreaterThanThreshold"
-  treat_missing_data  = "notBreaching"
-
-  alarm_actions = [aws_sns_topic.batch_alerts.arn]
-}
 
 # session sweep 若持續在補投，代表 close 之後的 SendMessage 常常失敗；
 # 機制上能自我修復，但持續發生是要修的問題。

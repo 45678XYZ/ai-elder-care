@@ -274,62 +274,14 @@ def _delete_routine(event, routine_id: str):
     if caller.role != auth.ROLE_CAREGIVER:
         return responses.error(403, "FORBIDDEN", "只有照護者可刪除例行公事")
 
-    params = event.get("queryStringParameters") or {}
-    client_request_id = params.get("client_request_id") or f"del-{routine_id}"
-
     versions = db.list_routine_versions(routine_id)
     if not versions:
         return responses.error(404, "ROUTINE_NOT_FOUND", "找不到指定的例行公事")
     current = versions[-1]
     auth.assert_can_access_elder(event, current["elder_id"])
 
-    if not current.get("active", True):
-        return responses.json_response(200, _definition(current))
-
-    change_request_id = routines.stable_id(
-        "del_", routine_id, caller.user_id, client_request_id
-    )
-    changes = {"active": False}
-    request_hash = routines.request_hash(changes)
-    replay = _find_change(versions, change_request_id, request_hash)
-    if replay:
-        return responses.json_response(200, _definition(replay))
-
-    now = routines.now_iso()
-    next_version = int(current["version"]) + 1
-    item = dict(current)
-    item.update(changes)
-    item.update(
-        {
-            "version": next_version,
-            "is_current": True,
-            "effective_from": now,
-            "version_time_key": routines.version_time_key(now, routine_id, next_version),
-            "current_sort_key": routines.current_sort_key(
-                False, current["created_at"], routine_id
-            ),
-            "updated_by": "caregiver",
-            "updated_by_id": caller.user_id,
-            "change_request_id": change_request_id,
-            "request_hash": request_hash,
-            "updated_at": now,
-        }
-    )
-    item.pop("effective_to", None)
-
-    try:
-        updated = db.replace_current_routine_version(current, item)
-    except db.ConditionFailedError:
-        replay = _find_change(
-            db.list_routine_versions(routine_id), change_request_id, request_hash
-        )
-        if replay is None:
-            return responses.error(
-                409, "REQUEST_IN_PROGRESS", "另一個刪除或修改正在進行，請稍後重試"
-            )
-        updated = replay
-
-    return responses.json_response(200, _definition(updated))
+    db.delete_routine(routine_id)
+    return responses.json_response(200, {"deleted": True, "routine_id": routine_id})
 
 
 # -----------------------------------------------------------------------------

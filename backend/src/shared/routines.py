@@ -18,10 +18,6 @@ from src.shared import db
 from src.shared.db import TZ_TAIPEI
 
 
-DEFAULT_GRACE_MINUTES = 120
-GRACE_MINUTES = DEFAULT_GRACE_MINUTES
-
-
 # 不同組合雜湊出相同字串會造成身分碰撞，因此以不可能出現在 ID 中的控制字元分隔
 _ID_SEPARATOR = "\x1f"
 
@@ -186,7 +182,7 @@ def resolve_occurrence(
     completion_event: dict[str, Any] | None,
     date_str: str,
     current: datetime,
-    grace_minutes: int | None = None,
+    grace_override: int | None = None,
 ) -> dict[str, Any] | None:
     """單一 routine 在指定日期的唯一 occurrence；該日無排程回 None。
 
@@ -215,7 +211,7 @@ def resolve_occurrence(
     if occurrence["scheduled_at"] is None:
         return None
 
-    grace = GRACE_MINUTES if grace_minutes is None else grace_minutes
+    grace = grace_minutes() if grace_override is None else grace_override
     deadline = datetime.fromisoformat(occurrence["scheduled_at"]) + timedelta(minutes=grace)
     occurrence["status"] = "missed" if current > deadline else "pending"
     return occurrence
@@ -226,7 +222,7 @@ def resolve_occurrences(
     completion_events: dict[str, dict[str, Any]],
     date_str: str,
     current: datetime,
-    grace_minutes: int | None = None,
+    grace_override: int | None = None,
 ) -> list[dict[str, Any]]:
     """指定日期的完整行程視圖，依 scheduled_at 排序；每個 routine 最多一筆。"""
     by_routine: dict[str, list[dict[str, Any]]] = {}
@@ -240,7 +236,7 @@ def resolve_occurrences(
             completion_events.get(routine_id),
             date_str,
             current,
-            grace_minutes,
+            grace_override,
         )
         if occurrence:
             items.append(occurrence)
@@ -328,5 +324,5 @@ def list_occurrences(
             if rid:
                 completion_map[rid] = evt
 
-    return resolve_occurrences(versions, completion_map, date_str, current, grace_minutes=grace)
+    return resolve_occurrences(versions, completion_map, date_str, current, grace_override=grace)
 

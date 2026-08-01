@@ -41,8 +41,6 @@ flowchart TB
         asrproviders["AWS ASR providers<br/>Transcribe zh-TW Streaming<br/>CE 備援 + Formo 六腔固定 prompt"]
         brain["AgentCore Runtime<br/>LangGraph 對話大腦 + 託管長期記憶"]
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
-        embed["Bedrock embedding model<br/>concept retrieval + turn segmentation"]
-        vectors[("S3 Vectors<br/>UCO concept index")]
         rules["deterministic safety rules"]
         tts["後端 TTS 模組<br/>語言/六腔路由 + 同語言備援"]
         ttsmodels["TTS providers<br/>OmniVoice / VoxHakka / BreezyVoice / Polly"]
@@ -74,9 +72,6 @@ flowchart TB
     closer -->|enqueue after closed| queue
     queue --> batch
     batch -->|batch extraction| model
-    batch -->|text embedding| embed
-    embed -->|query vector| vectors
-    vectors -->|Top-K candidate concepts| batch
     batch -->|normal events + batch state| ddb
     queue -->|重試耗盡| dlq
     dlq -->|DLQ event source| dlqreconciler
@@ -92,7 +87,7 @@ flowchart TB
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
 - **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論。`zh-TW` 以 Amazon Transcribe Streaming 為主力、Taiwan-Tongues CE 為備援；`hak:<六腔>` 以對應 Formo 固定-prompt SageMaker endpoint 為主力、共用 CE 為備援。CE/Formo 必須逐模型通過 staging/runtime、授權、存取、配額與容量核准，未核准時一律 fail closed；Transcribe 全程 memory-only，不使用 batch/S3。ASR 子系統完整架構見 [`docs/asr/framework.md`](asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
 - **後端 TTS** 同樣採 remote-only 與設定驅動 route。`lang` 明確決定中文或客語；客語六腔只讀 elder profile 並保存 turn 快照。客語失敗不得改用中文 voice；所有 TTS provider 失敗時仍提交文字 turn，`reply_audio_url=null`。完整規格見 [`docs/tts/framework.md`](tts/framework.md)。
-- AgentCore Runtime 的 tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：大腦在回應 chat Lambda 之前先呼叫 tools Lambda 寫入 completion event 或發送安全通知，並在回應 payload 明確回報 `routines_updated` 與 `safety_alert_triggered`。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
+- AgentCore Runtime 的 tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：大腦在回應 chat Lambda 之前先呼叫 tools Lambda 寫入 completion event 或發送安全通知，並在回應 payload 明確回報 `routines_updated`。安全通知由 `notify_caregiver` tool 即時發送（寫 DynamoDB + SNS），不需額外旗標回傳。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
 - batch extractor 的分類前先做候選概念檢索：以 Bedrock embedding 取查詢向量，向 S3 Vectors 的概念索引取 Top-K 候選後才呼叫分類模型；同一個 embedding 供應者也用於 turn 切分。索引維度在建立時固定，因此 index 名稱帶模型與維度，模型抽換以新索引並存、切換環境變數完成。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
 
@@ -201,7 +196,7 @@ Base table：PK `elder_id` (String)。
 `record_id` 只有兩類：
 
 - `TURN#<conversation_id>`：對話輪次。
-- `SESSION#<session_id>`：session metadata、凍結 snapshot 與 compact `chunk_manifest`。
+- `SESSION#<session_id>`：session metadata 與凍結 snapshot。
 
 `conversation_time_key=<created_at>#<conversation_id>`。`sessions-by-state` 的值與用途精確如下：
 
@@ -261,8 +256,7 @@ tool calling 副作用（routine create/update/deactivate/complete、safety even
 | `batch_attempts` | Number | 是 | 預設 `0` |
 | `batch_lease_owner`, `batch_lease_until` | String | 否 | at-least-once consumer lease |
 | `batch_error` | Map | 否 | 最近失敗的安全化 code/message/時間 |
-| `chunk_manifest` | List[Map] | 否 | 首次成功規劃後條件式持久化的 compact static metadata |
-| `chunk_planner_version` | String | 否 | 首次 manifest 使用的 planner 版本 |
+| `batch_extractor_pipeline` | String | 否 | 使用的 pipeline 名稱（`direct_seven`） |
 | `batch_extractor_version` | String | 否 | 完成 session 的 extractor 版本 |
 | `batch_completed_at` | String | 否 | 全部 chunk 完成時間 |
 | `schema_version` | Number | 是 | 初始 `1` |
@@ -279,7 +273,7 @@ tool calling 副作用（routine create/update/deactivate/complete、safety even
 
 final success 必須用單一 `TransactWrite`，並以該 ID 是下一個可提交 reservation 為條件，原子提交 turn 的 `request_status=completed` 與穩定 response、所有 realtime routine/event mutations、從 inflight 移除該 ID、按接納順序 append `turn_ids`／更新 `recent_conversation_ids`，以及更新 `turn_count`、`input_bytes`、`last_activity_at`；任何一項條件失敗都不得留下部分業務副作用。terminal failure 以 transaction／條件式更新把 turn 標成 `failed`、寫穩定安全化錯誤並移除 inflight reservation，且保證不含任何 routine/event side effects。business commit 一旦成功，turn 必為 `completed`；其後 HTTP／API Gateway delivery 失敗不得回寫 failed，相同 ID replay completed 結果即可，避免 client 改用新 ID 重複副作用。
 
-`closed` 後 `inflight_turn_ids=[]` 且 `inflight_turn_count=0`；不得新增、刪除或重排 turn，也不得修改 state、close metadata、計數、snapshot hash 或 frozen input。batch worker 唯一可變更的是 session 上明列的 batch control/result 欄位與首次條件式寫入的 `chunk_manifest`；不得 reopen session 或改變 frozen snapshot。
+`closed` 後 `inflight_turn_ids=[]` 且 `inflight_turn_count=0`；不得新增、刪除或重排 turn，也不得修改 state、close metadata、計數、snapshot hash 或 frozen input。batch worker 唯一可變更的是 session 上明列的 batch control/result 欄位；不得 reopen session 或改變 frozen snapshot。
 
 #### Session close、SQS recovery 與 DLQ
 
@@ -293,15 +287,14 @@ final success 必須用單一 `TransactWrite`，並以該 ID 是下一個可提�
 8. 正常 worker 只可條件式把 `pending→processing`，或在 `processing` 且 lease expired 時由 delivery／recovery 接管；不可從 `failed` claim。成功時條件式設 `completed`、清 lease並移除 batch GSI 欄位。queued duplicate 必須以訊息的 `session_id + session_snapshot_hash` 強一致核對 Base table：已為 `failed` 或 `completed` 時直接 ack 且不執行；仍為 `processing` 且 lease 尚未到期時也不執行並直接 ack，由原 lease owner 負責後續結果；只有 lease expired 才可由該 delivery／recovery 依相同條件式 claim 規則接管。`BATCH#PROCESSING` recovery 也只在 lease expired 時重投。
 9. worker 將失敗分成兩類：permanent validation/conflict 直接以條件式更新設 `batch_status=failed`、`BATCH#FAILED`、清除 `batch_lease_owner`／`batch_lease_until`、保存安全化 `batch_error`，然後 ack；retryable 錯誤不得先同步成 failed，而是 throw 讓 SQS retry/redrive。不得宣稱 broker redrive 會自動同步 DynamoDB。
 10. DLQ reconciler Lambda 以 DLQ event source 消費重試耗盡的訊息，按訊息中的 `session_id + session_snapshot_hash` 強一致讀取 Base table；只有 snapshot hash 相符且 session 尚非 `completed` 時，才條件式收斂為 `batch_status=failed`／`BATCH#FAILED`、清 lease、寫安全化錯誤並告警。條件成功或已是相同 terminal 狀態後才視為處理成功，讓 event source 刪除 DLQ message；hash 不符等衝突不得誤改 session，須保留重試並告警。
-11. 人工 replay 不依賴原 DLQ message，而是從 frozen session state 與既有 `chunk_manifest` 重建工作；必須先以 snapshot hash 等條件做 `failed→pending`、清錯誤／lease並設 `BATCH#PENDING`，成功後才重投。正常 worker 不得自行重開 failed，也不得以標記 completed 跳過失敗資料。
+11. 人工 replay 不依賴原 DLQ message，而是從 frozen session state 重建工作；必須先以 snapshot hash 等條件做 `failed→pending`、清錯誤／lease並設 `BATCH#PENDING`，成功後才重投。正常 worker 不得自行重開 failed，也不得以標記 completed 跳過失敗資料。
 
-#### Static topic chunks
+#### Direct Seven Pipeline
 
-- closed session 的 ordered input 是 immutable。batch planner 可使用模型或啟發式，因此不要求每次重新規劃都 deterministic；但首次成功的 `chunk_manifest` 必須以 attribute-not-exists 條件持久化，所有 retry、duplicate delivery、DLQ replay 都重用既有 manifest，不重新分段。
-- manifest 只存 compact metadata，例如 `chunk_id`、`ordinal`、core range 邊界與選用的 context range；不複製逐字稿，也不新增 sessions/chunks table。worker 依 range 回 Base table強一致讀取內容。
-- 所有 chunk 的 core ranges 必須依 `turn_ids` 順序 partition 全部 turns，且每個 turn 恰好屬於一個 core range。可有 bounded context overlap，但 overlap 僅供理解，context-only turn 不得 emit event 或 memory。
-- `chunk_id` 精確由 `stable-hash(session_snapshot_hash + first_core_turn_id + last_core_turn_id + ordinal)` 產生。topic label、模型文字或 runtime grouping 不得直接決定 ID。
-- MVP 以單一 session item 的 bounded `chunk_manifest` 運作。只有未來 metadata 超過既定界線，或需要獨立 audit／manual review workflow 時，才考慮新增 `extraction_jobs`；目前不新增 sessions 或 chunks table。
+- `direct_seven` pipeline 不分塊、不檢索、不做 RAC 分類。對整個 session 的 frozen turns 依字元上限（`SEVEN_BATCH_CHAR_LIMIT`）於 turn 邊界貪婪分批，每批一次 LLM 呼叫萃取七大類事件。
+- 萃取結果經 SharedTail 進行時間解析、canonical key 計算、slot 去重與型別驗證後寫入 events 表。
+- pipeline 輸出的 `type` 為七大高階類別之一，直接對應分類體系的 `type_id`。
+- retry 冪等性由 frozen turns（確定性輸入）與 conditional Put（確定性寫入）保證。
 
 ### `events` 表
 
@@ -323,10 +316,9 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 | `extraction_track` | String | 是 | 首次建立來源：`realtime` \| `batch` \| `manual` |
 | `ts` | String | 是 | 事件實際發生時間 |
 | `type` | String | 是 | 高階類別：`diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `safety` \| `other` |
-| `concept_id` | String | 自動萃取事件必填 | 分類體系的細分類節點，如 `UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication`；供後端摘要、統計與 alerts 篩選，API 不暴露 |
 | `taxonomy_version` | String | 自動萃取事件必填 | 寫入當時的分類體系版本，如 `uco-1.0.0`；抽換體系後舊事件保留原值 |
 | `detail` | String | 是 | canonical 事件的自然語言摘要描述 |
-| `structured_detail` | Map | 否 | JSON 格式的結構化細節屬性（如 `{"medication_name": "血壓藥", "dosage": "一顆", "timing": "早上飯後"}`）；欄位結構因 `concept_id` 不同而異，API 不暴露 |
+| `structured_detail` | Map | 否 | JSON 格式的結構化細節屬性（如 `{"medication_name": "血壓藥", "dosage": "一顆", "timing": "早上飯後"}`）；API 不暴露 |
 | `source` | String | 是 | `conversation` \| `manual` |
 | `conversation_id` | String | 否 | 對話事件主要來源 turn；維持 API 契約 |
 | `evidence_conversation_ids` | List[String] | 是 | 支持目前事件內容的來源 turn IDs |
@@ -341,14 +333,14 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 
 #### 分類體系
 
-事件分兩層分類：對外的**高階類別** `type`（前端與摘要使用，七類），以及對內的**細分類節點** `concept_id`（後端篩選、統計與 RAG 使用）。兩層都必須是可配置、可擴充、可抽換的資產，後端程式不硬編碼任何類別字串：
+事件以**高階類別** `type` 分類（前端與摘要使用，七類）。分類體系必須是可配置、可擴充、可抽換的資產，後端程式不硬編碼任何類別字串：
 
-- 高階類別定義、細分類節點體系、以及「節點 → 高階類別」的映射各自是獨立的資產檔，隨部署包一起版控。
-- 每筆事件寫入 `taxonomy_version` 記錄當時採用的體系版本；抽換或擴充體系只影響新建事件，舊事件保留原 `concept_id` 與 `taxonomy_version`。
-- 未知或無法映射的節點退回 `type=other` 並告警，不得靜默丟棄。
+- 高階類別定義（`high_level_types.json`）隨部署包一起版控。
+- 每筆事件寫入 `taxonomy_version` 記錄當時採用的體系版本；抽換或擴充體系只影響新建事件，舊事件保留原 `taxonomy_version`。
+- 未知或無法映射的類別退回 `type=other` 並告警，不得靜默丟棄。
 - 可配置的邊界到 `daily_summaries.sections` 為止：`sections` 與 `type` 固定一一對應，新增高階類別必須同步 `sections`、`docs/api.md` 與摘要生成器。
 
-`GET /events` 只用 `type` 過濾；`concept_id` 不對外暴露，MVP 也不為它另建索引，後端需要細分類篩選時在 Query 結果上以 `FilterExpression` 或程式端過濾。
+`GET /events` 用 `type` 過濾；MVP 不為它另建 GSI，先在 `events-by-time` Query 再以 `FilterExpression` 過濾。
 
 #### Canonical identity 與寫入規則
 
@@ -458,7 +450,7 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 
 ## 成本與可觀測性
 
-移除每輪額外完整 extraction 模型呼叫，預期可降低模型呼叫與 realtime latency 成本，但實際效果必須以 telemetry 驗證。至少觀測 chat latency、structured output 失敗率、safety rule 命中、每 session turn/input bytes、chunk 數、batch attempts、SQS duplicate/DLQ、partial summary 比例與重算延遲、去重合併率、`type`／`concept_id` 分佈、embedding 與檢索延遲；未量測前不承諾固定百分比節省。
+移除每輪額外完整 extraction 模型呼叫，預期可降低模型呼叫與 realtime latency 成本，但實際效果必須以 telemetry 驗證。至少觀測 chat latency、structured output 失敗率、safety rule 命中、每 session turn/input bytes、batch attempts、SQS duplicate/DLQ、partial summary 比例與重算延遲、去重合併率、`type` 分佈；未量測前不承諾固定百分比節省。
 
 ## 後端環境變數
 
@@ -505,7 +497,7 @@ e-hakka-care/
 └── README.md
 ```
 
-`backend/src/` 下 `handlers/` 是 API 與事件入口、`shared/` 是跨 handler 共用層、`extraction/` 是生活記錄的萃取 pipeline（分類體系資產、剪枝、分塊、萃取、canonical identity、去重），只由 batch 相關 Lambda 使用；`agentcore_runtime/` 是對話大腦，唯一不跑在 Lambda 上的部分，以 zip 部署到 AgentCore Runtime。
+`backend/src/` 下 `handlers/` 是 API 與事件入口、`shared/` 是跨 handler 共用層、`extraction/` 是生活記錄的萃取 pipeline（`direct_seven`：不分塊、不檢索，依 turn 邊界分批做七大類事件萃取，經 SharedTail 完成 canonical identity 與 slot 去重），只由 batch 相關 Lambda 使用；`agentcore_runtime/` 是對話大腦，唯一不跑在 Lambda 上的部分，以 zip 部署到 AgentCore Runtime。
 
 ## Verification
 
@@ -516,7 +508,7 @@ e-hakka-care/
 - **Batch 去重**：batch worker 先在記憶體內依 `EVENT_SLOT_MINUTES` 去重，再以 conditional Put 寫入；retry 冪等。
 - **Tool calling safety**：對話大腦在回應 chat Lambda 之前透過 `notify_caregiver` tool 同步建立 `type=safety` 的 event；batch 同 key 只做 revision enrichment。
 - **Close immutable／inflight recovery**：驗證 `/chat` reserve 與 close race、inflight 回 409、lease-expired turn 接管或安全失敗移除 reservation、`active→closing→closed`，以及 closed 後無法追加或修改 frozen turns、ordered IDs、counts 與 snapshot hash。
-- **Manifest retry reuse**：首次條件式保存 manifest 後，SQS retry、duplicate delivery 與 DLQ replay 的 manifest、core ranges、ordinal 與 chunk IDs 完全相同；所有 core turns 恰好一次，context-only 不 emit。
+- **Batch retry 冪等**：SQS retry、duplicate delivery 與 DLQ replay 時，pipeline 輸出依 frozen turns 與 snapshot hash 確定性產出相同 canonical key，conditional Put 確保事件不重複。
 - **SQS duplicate／DLQ／recovery**：模擬 closed 後 SendMessage 前中斷，由 `BATCH#PENDING` sweep 重投；processing lease 尚有效的相同 session/hash duplicate 不執行並直接 ack、由原 owner 收斂，僅 lease expired 可由 delivery／recovery 接管；failed/completed duplicate ack 不執行；retryable redrive 不假設同步 DDB；DLQ reconciler 依 session/hash 收斂 failed、清 lease與告警，人工 replay 先做 failed→pending 並從 frozen state/manifest 重建。
 - **Cross-track safety enrichment**：tool calling 先建 safety event，batch 以相同 canonical key 條件式增加 revision、detail/evidence/confidence，確認 event ID 不變且 evidence 可跨 chunk。
 - **摘要 partial→complete**：有 active/closing 或 batch pending/processing/failed session 時為 `partial`；等待窗口後可先寫 partial，相關 batch 完成後重算為 `complete`，相同或較舊 input cutoff 的 partial 不得蓋掉 complete。

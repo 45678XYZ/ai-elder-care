@@ -20,7 +20,7 @@
 | **`complete_routine`** | 將特定行程標記為已完成，並記錄事件。 | 口頭回報完成：「我吃過血壓藥了。」 |
 | **`create_routine`** | 幫長者建立一個新的例行行程或單次提醒。 | 新增未來行程：「幫我記下週一早上九點看醫生。」 |
 | **`update_routine`** | 更新現有行程的內容（時間、標題、頻率）。 | 更改行程資訊：「把明天散步改到下午四點。」 |
-| **`deactivate_routine`** | 停用或取消長者的既有行程。 | 取消行程：「我以後不用再吃那款感冒藥了。」 |
+| **`delete_routine`** | 刪除長者的既有行程（若要恢復則重新建立）。 | 取消行程：「我以後不用再吃那款感冒藥了。」 |
 
 ### 1.2 事件與摘要類 (Events & Summaries)
 | 工具名稱 | 功能描述 (供 LLM 判斷) | 調用契機 (Triggering Intent) |
@@ -85,11 +85,11 @@
 *   **回傳資料**：`{"status": "success", "data": {...}}` (回傳更新後的新版本)
 *   **系統影響**：對 `routines` 表進行 Transaction 升版更新 (`is_current` 轉移)。保留舊建檔記錄，未來日期將依照新設定執行。
 
-#### `deactivate_routine` (停用例行行程)
-*   **LLM 描述**：`Deactivate or cancel an existing scheduled routine for the elder.`
+#### `delete_routine` (刪除例行行程)
+*   **LLM 描述**：`Permanently delete an existing scheduled routine for the elder. If the elder wants it back later, create a new one.`
 *   **輸入參數**：`elder_id` (字串), `routine_id` (字串)
-*   **回傳資料**：回傳停用後的新版本狀態
-*   **系統影響**：透過底層設定 `"active": False`。停用後，未來日子不再出現此行程，但歷史紀錄保留不受影響。
+*   **回傳資料**：`{"status": "success", "message": "已刪除例行公事 rtn_xxx"}`
+*   **系統影響**：從 `routines` 表真刪除所有版本。事件表中的歷史完成紀錄不受影響。若要恢復則以 `create_routine` 重新建立。
 
 ---
 

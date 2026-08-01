@@ -98,7 +98,7 @@ def stack(monkeypatch):
         monkeypatch.setattr(
             chat,
             "invoke_agent_brain",
-            lambda eid, txt, lang="zh-TW": calls.append(txt) or (REPLY, True, False),
+            lambda eid, txt, lang="zh-TW": calls.append(txt) or (REPLY, True),
         )
         monkeypatch.setattr(chat.db, "get_elder", lambda elder_id: {"elder_id": elder_id})
         monkeypatch.setattr(chat, "get_tts_facade", lambda: DummyTTSFacade())
@@ -146,7 +146,7 @@ def test_agent_receives_explicit_language(monkeypatch):
     monkeypatch.setattr(chat, "AGENTCORE_RUNTIME_ARN", "arn:aws:bedrock-agentcore:::runtime/x")
     monkeypatch.setattr(chat, "get_agentcore_client", lambda: client)
 
-    reply, _, _ = chat.invoke_agent_brain(ELDER, "食飽吂？", "hak")
+    reply, _ = chat.invoke_agent_brain(ELDER, "食飽吂？", "hak")
 
     payload = json.loads(client.kwargs["payload"].decode())
     assert payload["lang"] == "hak"
@@ -158,7 +158,7 @@ def test_local_hakka_agent_fallback_does_not_switch_to_chinese(monkeypatch):
     from src.handlers import chat
 
     monkeypatch.setattr(chat, "AGENTCORE_RUNTIME_ARN", "")
-    reply, _, _ = chat.invoke_agent_brain(ELDER, "食飽吂？", "hak")
+    reply, _ = chat.invoke_agent_brain(ELDER, "食飽吂？", "hak")
 
     assert "𠊎" in reply
 
@@ -540,16 +540,15 @@ def test_invoke_agent_brain_reads_flags_from_payload(monkeypatch):
     """旗標由 runtime 明確回報，不再靠掃 trace 字串猜工具有沒有被呼叫。"""
     chat = _chat_module()
     fake = _FakeAgentCoreClient(
-        {"reply_text": REPLY, "routines_updated": True, "safety_alert_triggered": True}
+        {"reply_text": REPLY, "routines_updated": True}
     )
     monkeypatch.setattr(chat, "AGENTCORE_RUNTIME_ARN", "arn:aws:bedrock-agentcore:::runtime/x")
     monkeypatch.setattr(chat, "get_agentcore_client", lambda: fake)
 
-    reply, routines_updated, safety_alert = chat.invoke_agent_brain(ELDER, TRANSCRIPT, "zh-TW")
+    reply, routines_updated = chat.invoke_agent_brain(ELDER, TRANSCRIPT, "zh-TW")
 
     assert reply == REPLY
     assert routines_updated is True
-    assert safety_alert is True
 
     sent = fake.calls[0]
     assert len(sent["runtimeSessionId"]) >= 33
@@ -567,8 +566,7 @@ def test_invoke_agent_brain_falls_back_on_empty_reply(monkeypatch):
     monkeypatch.setattr(chat, "AGENTCORE_RUNTIME_ARN", "arn:aws:bedrock-agentcore:::runtime/x")
     monkeypatch.setattr(chat, "get_agentcore_client", lambda: fake)
 
-    reply, routines_updated, safety_alert = chat.invoke_agent_brain(ELDER, TRANSCRIPT)
+    reply, routines_updated = chat.invoke_agent_brain(ELDER, TRANSCRIPT)
 
     assert reply.strip()
     assert routines_updated is False
-    assert safety_alert is False
