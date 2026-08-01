@@ -24,6 +24,9 @@ terraform/build/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# plan 產物會夾帶變數值與資源屬性，且每次 plan 都不同，不進版控
+tfplan
+*.tfplan
 
 # --- AI tool configs (local, per-developer) ---
 .claude/

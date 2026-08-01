@@ -88,6 +88,10 @@ module "daily_digest" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
