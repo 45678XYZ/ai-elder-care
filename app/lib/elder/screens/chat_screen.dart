@@ -155,13 +155,93 @@ class _ChatScreenState extends State<ChatScreen>
               // 原始錯誤碼幫不上忙，但要留在歷史裡，長輩往回捲才知道哪一句沒進去。
               onError: (_) {
                 if (!mounted) return;
+                // 錯誤已經處理完這一輪，別讓後續的狀態回報再補救一次
+                // （否則同一輪會補兩則提示、錯誤計數也多加一次）。
+                _awaitingFinal = false;
                 _appendNotHeardHint();
+                _onListenFailed();
               },
+              onStatus: _onSpeechStatus,
             );
     } catch (_) {
       ok = false; // 平台不支援或測試環境無外掛，退回打字備援
     }
     if (mounted) setState(() => _micAvailable = ok);
+  }
+
+  /// 這一輪已經開始聆聽、但還沒收到最終結果。
+  ///
+  /// 用來分辨語音服務「正常收工」與「悄悄收工」：[_speech.listen] 有 `listenFor`
+  /// 上限（30 秒），時間到了辨識器會自己停下來。**如果那段時間裡長輩一句話都沒被
+  /// 收到，`onResult` 不會被呼叫、`onError` 也不會**——它只是安靜地結束。
+  ///
+  /// 沒有接 `onStatus` 之前，那一刻沒有任何人知道：畫面繼續顯示「我在聽」、秒數
+  /// 繼續往上跳，而底下早就沒在聽了。實機看到過連續 400 秒沒有任何逐字稿。
+  bool _awaitingFinal = false;
+
+  /// 這一輪觸發的長者檔案重讀。開下一輪聆聽之前要等它落地——
+  /// 見 [_handleQuestion] 裡的說明。
+  Future<void>? _profileRefresh;
+
+  /// 語音服務的狀態回報（`listening`／`notListening`／`done`）。
+  ///
+  /// 只處理一件事：**聆聽結束了，但這一輪從頭到尾沒有最終結果**。那代表剛才
+  /// 什麼都沒收到（沒開口、環境太吵、辨識器自己放棄），要嘛重開一輪、要嘛收手，
+  /// 不能就這樣停在 listening。
+  ///
+  /// 走 [_onListenFailed] 與錯誤同一條路：對長輩來說「聽不到」跟「聽錯」沒有差別，
+  /// 而連續失敗的收手邏輯兩邊都需要。
+  void _onSpeechStatus(String status) {
+    if (!mounted) return;
+    final ended = status == 'done' || status == 'notListening';
+    if (!ended || !_awaitingFinal) return;
+    _awaitingFinal = false;
+    _appendNotHeardHint();
+    _onListenFailed();
+  }
+
+  /// 連續辨識失敗的次數。成功收到一句就歸零。
+  ///
+  /// Android 的語音服務在連續幾輪之後很容易開始回錯誤（辨識器忙碌、逾時、no match），
+  /// 而 `cancelOnError: true` 會讓那一輪的聆聽直接取消。原本 onError 只補一句提示、
+  /// 沒有把迴圈接回去，於是 `_phase` 卡在 listening——畫面一直說「我在聽」、秒數照跳，
+  /// 但沒有任何人開始下一輪。長輩看到的就是「講什麼都沒反應」。實機大約撐四輪。
+  int _consecutiveListenErrors = 0;
+
+  /// 連續失敗幾次就收手。無限重試會變成一直閃提示的空轉，比直接停下來更難懂。
+  static const _maxConsecutiveListenErrors = 3;
+
+  /// 這一輪聆聽失敗了：決定要重開一輪，還是收手回待機。
+  void _onListenFailed() {
+    _consecutiveListenErrors++;
+
+    if (!_conversationActive) {
+      setState(() => _setPhase(_Phase.idle));
+      return;
+    }
+
+    if (_consecutiveListenErrors >= _maxConsecutiveListenErrors) {
+      setState(() {
+        _conversationActive = false;
+        _setPhase(_Phase.idle);
+      });
+      // 講清楚下一步要做什麼。停在這裡而不說話的話，長輩只會一直對著手機講。
+      _appendHint('現在聽不太到，請按一下麥克風再說一次，或用下方打字。');
+      return;
+    }
+
+    // 重開一輪之前先讓語音服務收乾淨：Android 的辨識器還沒結束時再 listen，
+    // 下一次會立刻再報一次忙碌，變成錯誤接錯誤。
+    Future.delayed(const Duration(milliseconds: 400), () async {
+      if (!mounted || !_conversationActive) return;
+      try {
+        await _speech.stop();
+      } catch (_) {
+        // 已經停了或平台不支援，照樣往下開新的一輪
+      }
+      if (!mounted || !_conversationActive) return;
+      _listenTurn();
+    });
   }
 
   /// 統一切換階段：管理 listening 秒數計時器。
@@ -192,6 +272,9 @@ class _ChatScreenState extends State<ChatScreen>
     // 之間回來，照樣把階段拉回 speaking。
     _turnSeq++;
     setState(() => _conversationActive = false);
+    // 主動停止會讓語音服務回報 notListening，那是預期中的收工，不該被
+    // [_onSpeechStatus] 當成「悄悄收工」而補一則「沒聽清楚」。
+    _awaitingFinal = false;
     await _speech.stop();
     // 錄到一半按停止：整段丟掉而不是送出。長輩按停止的意思是「不要了」，
     // 把半句話送去辨識並記進資料，跟他的意圖相反。
@@ -212,12 +295,35 @@ class _ChatScreenState extends State<ChatScreen>
     if (AppSession.instance.isHakka) return _recordTurn();
 
     var handled = false; // 每輪只處理一次最終結果
+
+    // 從這裡到收到最終結果之間，若語音服務悄悄收工，要靠 [_onSpeechStatus] 接住。
+    _awaitingFinal = true;
+
     await _speech.listen(
+      // 靜音多久算講完。預設 3 秒對長輩太短——他們講一句話中間本來就會停頓
+      // （想詞、換氣），一停超過門檻辨識器就結束這一段、重開新的一段，而
+      // `recognizedWords` 從新那段的開頭算起，畫面上前半句就整段消失了。
+      //
+      // 曾經試過在 App 這邊跨段累積，判準是「新的一段不以舊的一段開頭就收起舊的」。
+      // 那是錯的：辨識器會**修正已經吐出來的內容**（補標點、改詞），修正後的字串
+      // 不見得以前一版開頭，於是舊的被當成獨立一段收起來、新的又是完整句子，
+      // 逐字稿變成「把我說的話改成客語把我說的話改成客語四海腔」——而那串會原樣
+      // 送到後端當成長輩說的話。與其猜辨識器的行為，不如把門檻放寬讓它別斷。
+      pauseFor: const Duration(seconds: 6),
       onResult: (text, isFinal) {
         if (!mounted) return;
+
         setState(() => _question = text);
+        // 逐字稿邊講邊長，也要跟著捲，否則長輩看不到自己正在說的那一句。
+        // 不用動畫：部分結果來得很密，每次都播動畫畫面會一直抖。
+        _scrollToBottom(animate: false);
+
         if (isFinal && !handled) {
           handled = true;
+          // 這一輪有結果了，狀態回報不必再補救。
+          _awaitingFinal = false;
+          // 收到一句完整的就代表辨識器恢復正常了，錯誤計數歸零。
+          _consecutiveListenErrors = 0;
           final q = text.trim();
           if (q.isEmpty) {
             if (_conversationActive) _listenTurn();
@@ -304,12 +410,26 @@ class _ChatScreenState extends State<ChatScreen>
             _Message(isElder: true, text: reply.transcript));
       }
 
-      // 長輩用講的完成或新增了行程。重整不等回應也不擋這一輪對話——它只是背景把
-      // 今日畫面與本地通知換成新的（見 RoutineSync），對話本身不該為它停下來。
+      // 對話可能已經改了後端的狀態。兩件事都不等回應、也不擋這一輪對話——它們只是
+      // 背景把今日畫面、本地通知與語言設定換成新的，對話本身不該為它們停下來。
       //
-      // 放在 seq 檢查之前是刻意的：這個副作用**已經發生在後端了**，使用者中途按停止
-      // 不會讓它回復。不重整的話，行程明明完成了，今日畫面卻還是舊的。
-      if (reply.routinesUpdated) unawaited(RoutineSync.refresh());
+      // 放在 seq 檢查之前是刻意的：這些副作用**已經發生在後端了**，使用者中途按停止
+      // 不會讓它回復。不同步的話，行程明明完成了、語言明明改過了，今日畫面卻還是舊的。
+      //
+      // 行程不看 `routinesUpdated` 而是每輪都拉：那個旗標只涵蓋後端「知道自己改了」
+      // 的情況，而長輩也可能透過別的路徑（照護者同時在改、上一輪漏掉的旗標）讓資料
+      // 變動。每輪多一次查詢換掉「畫面一直是舊的」，這個交換划算。
+      unawaited(RoutineSync.refresh());
+      // 長輩可以用講的改語言與腔調（後端 update_elder_profile），那條路不經過
+      // App 的按鈕，不重讀的話語言鈕會跟他實際在用的語言對不上。
+      //
+      // **要記住這個 future 並在開下一輪之前等它**：長輩說「跟我講客話」之後，
+      // 下一輪就該切到錄音那條路。如果只是 unawaited 丟著，`_listenTurn()` 會在
+      // 資料回來之前就用舊的 `isHakka` 決定走哪條——他改完語言，下一輪照樣是
+      // 華語逐字稿，看起來像根本沒改成功。
+      //
+      // 實務上不會拖慢：它跟後面的 TTS 播放同時進行，唸完早就回來了。
+      _profileRefresh = AppSession.instance.refreshSelectedElder();
 
       // 使用者在等待期間按了停止（或又開了新的一輪）：這份回應已經沒人要了。
       // 不顯示、不唸、不改階段——那一輪的停止動作已經把畫面收成 idle。
@@ -325,6 +445,16 @@ class _ChatScreenState extends State<ChatScreen>
       setState(() => _conversationActive = false); // 出錯就停迴圈，避免一直重打
       _appendNotHeardHint();
     }
+
+    // 開下一輪之前先讓長者檔案的重讀落地：`_listenTurn` 要靠 `isHakka` 決定走
+    // 裝置端辨識還是錄音，用到舊值的話「用講的改語言」會晚一輪才生效。
+    // 失敗不擋——拿不到新資料就沿用現在這份，總比停在這裡好。
+    try {
+      await _profileRefresh;
+    } catch (_) {
+      // refreshSelectedElder 自己已經吞掉錯誤，這裡只是保險
+    }
+    _profileRefresh = null;
 
     if (!mounted || seq != _turnSeq) return;
     setState(() => _setPhase(_Phase.idle));
@@ -435,15 +565,33 @@ class _ChatScreenState extends State<ChatScreen>
     _scrollToBottom();
   }
 
-  /// 新訊息進來後捲到底。等這一幀畫完才捲，否則 maxScrollExtent 還是舊的。
-  void _scrollToBottom() {
+  /// 捲到最新的一句。等這一幀畫完才捲，否則 maxScrollExtent 還是舊的。
+  ///
+  /// 捲兩次是必要的：泡泡裡是會換行的長文字，第一幀之後高度可能還在長
+  /// （字體、換行、圖片都會影響），只捲一次會停在半途，最新那句露不出來。
+  /// 第二次補在 120ms 後，涵蓋掉那段成長。
+  ///
+  /// [animate] 為 false 時直接跳——聆聽中的逐字稿每來一個部分結果就捲一次，
+  /// 每次都播動畫會讓畫面一直抖。
+  void _scrollToBottom({bool animate = true}) {
+    void go() {
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      final target = _scrollCtrl.position.maxScrollExtent;
+      if ((target - _scrollCtrl.offset).abs() < 4) return;
+      if (animate) {
+        _scrollCtrl.animateTo(
+          target,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollCtrl.jumpTo(target);
+      }
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollCtrl.hasClients) return;
-      _scrollCtrl.animateTo(
-        _scrollCtrl.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+      go();
+      Future.delayed(const Duration(milliseconds: 120), go);
     });
   }
 

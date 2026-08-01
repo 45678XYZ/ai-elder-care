@@ -195,6 +195,51 @@ void main() {
     expect(AppSession.instance.elderBirthYear, 1950);
     expect(AppSession.instance.elderAddressRegion, '新竹縣竹東鎮');
   });
+
+  group('性別', () {
+    testWidgets('三個選項都在，而且一開始都沒選', (tester) async {
+      await pumpSetup(tester);
+      for (final g in Gender.values) {
+        expect(find.text(g.label), findsOneWidget);
+      }
+      // 不預選是刻意的：「還沒問到」與「長輩回答其他」不能長得一樣。
+      expect(AppSession.instance.elderGender, isNull);
+    });
+
+    testWidgets('選了會存下來，而且存的是後端的 enum 值', (tester) async {
+      await pumpSetup(tester);
+      await fill(tester);
+      await tester.tap(find.text('女'));
+      await tester.pump();
+      await submit(tester);
+
+      // 畫面上是「女」，送出去與存起來的必須是 'female'——api.md 的值域是
+      // male|female|other，送中文後端會擋。
+      expect(AppSession.instance.elderGender, 'female');
+    });
+
+    testWidgets('沒選也送得出去——這一欄是選填', (tester) async {
+      await pumpSetup(tester);
+      await fill(tester);
+      await submit(tester);
+
+      expect(AppSession.instance.setupDone, isTrue, reason: '沒選性別不該卡住整個設定');
+      expect(AppSession.instance.elderGender, isNull);
+    });
+
+    testWidgets('再按一次可以取消選取', (tester) async {
+      // 不預選就一定要有反悔的路，否則手滑選到之後再也回不到「沒填」。
+      await pumpSetup(tester);
+      await fill(tester);
+      await tester.tap(find.text('男'));
+      await tester.pump();
+      await tester.tap(find.text('男'));
+      await tester.pump();
+      await submit(tester);
+
+      expect(AppSession.instance.elderGender, isNull);
+    });
+  });
 }
 
 /// 導航目的地的替身：這裡只在乎資料存不存得住，不驗落點長什麼樣。
