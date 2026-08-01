@@ -139,9 +139,12 @@ resource "aws_bedrockagent_knowledge_base" "kb" {
   storage_configuration {
     type = "S3_VECTORS"
 
+    # index_arn 與 vector_bucket_arn 互斥：帶 bucket 是請 Bedrock 自己在該 bucket 建索引
+    # （要另外給 index_name），帶 index_arn 則是指定既有索引。本檔上面已經明確建了
+    # aws_s3vectors_index.kb（維度、距離度量、non-filterable metadata 都要自己控），
+    # 所以走 index_arn；bucket 由索引自己帶出來，不必也不能再指定一次。
     s3_vectors_configuration {
-      vector_bucket_arn = aws_s3vectors_vector_bucket.kb.vector_bucket_arn
-      index_arn         = aws_s3vectors_index.kb.index_arn
+      index_arn = aws_s3vectors_index.kb.index_arn
     }
   }
 
