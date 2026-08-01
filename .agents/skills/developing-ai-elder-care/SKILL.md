@@ -11,7 +11,7 @@ Paths below are relative to the repository root, so they resolve from your works
 
 ## Which doc owns what
 
-New here? Read `docs/framework.md` first — it's the big picture (modules, architecture, data model, repo layout). Then use this table to find the authoritative doc for a topic and read it before acting:
+先依工作範圍選擇權威文件；不要為局部修改預載整份系統文件。只有變更系統架構、資料模型、模組邊界或 repo 佈局時才完整閱讀 `docs/framework.md`。
 
 | Topic | Authoritative doc |
 |---|---|
@@ -22,6 +22,7 @@ New here? Read `docs/framework.md` first — it's the big picture (modules, arch
 | User journeys (elder & caregiver) | `docs/user-journey.md` |
 | Branching, commit format, PR & merge rules | `docs/workflow.md` |
 | Backend setup & running tests | `backend/README.md` |
+| ASR/TTS 與 Chat 語音串接 | `developing-ai-elder-care-speech` skill；依其中的按需閱讀表載入文件 |
 
 ## Rules for agents
 

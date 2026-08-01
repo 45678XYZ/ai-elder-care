@@ -3,6 +3,8 @@
 TTS 將 Agent 的繁體中文或客語漢字回覆合成 MP3。公開 API 仍是 `POST /chat`；
 provider、endpoint 與模型名稱不對 App 公開。
 
+修改時只讀下表中與變更直接相關的文件；不需預載整組 TTS 文件或歷史 ADR。
+
 | 文件 | 用途 |
 |---|---|
 | [framework.md](framework.md) | 架構、路由、失敗語意與 Agent／Flutter 串接 |
