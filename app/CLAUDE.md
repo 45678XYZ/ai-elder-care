@@ -10,6 +10,7 @@
 - 狀態管理：目前無框架（`StatefulWidget`）；引入前先確認全隊一致
 - 語音：裝置端 ASR `speech_to_text`、TTS `flutter_tts`；正式 `/chat` 回傳音檔用 `just_audio`，客語錄音走 `record`
 - 網路：`http`（`lib/shared/services/api_client.dart`）
+- 登入：`amazon_cognito_identity_dart_2`（SRP，純 Dart 不動原生設定）；沒帶 `--dart-define=COGNITO_USER_POOL_ID` 時自動退回 demo 假帳號
 
 ## 設計方向：暖紙手帳
 
