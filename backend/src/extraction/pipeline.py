@@ -1,25 +1,396 @@
-"""Direct Seven Pipeline：不分塊、不檢索、單次（或依字元上限分批）七大類萃取。"""
+"""Direct Seven Pipeline：不分塊、不檢索、單次（或依字元上限分批）七大類萃取。
 
-from collections.abc import Mapping, Sequence
+整合設定、LLM 呼叫記帳、shared tail 收斂、與 pipeline 主入口。
+"""
+
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 import json
 import logging
+import os
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from src.shared import bedrock
 from src.shared.models import health_note_texts
 
-from .canonical import PredicateLexicon, build_family_aliases
-from .config import EXTRACTION_PROMPT_GUIDED, EXTRACTION_STRUCTURED_OUTPUT, ExtractionConfig
-from .models import ExtractedEvent, Turn
-from .results import LlmUsage, PipelineResult
-from .shared_tail import EventOrigin, SharedTail, SuspectedRoutineLookup
+from .canonical import (
+    PredicateLexicon,
+    build_family_aliases,
+    canonical_event_key,
+    event_id_for,
+    normalize_predicate,
+    normalize_subject,
+)
+from .dedup import deduplicate
+from .models import CanonicalEvent, DedupStats, ExtractedEvent, Turn
 from .taxonomy import Taxonomy
+from .temporal import resolve_observed_at
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+TAXONOMY_ASSETS_DIR = ASSETS_DIR / "taxonomy"
+
+EXTRACTION_PROMPT_GUIDED = "prompt_guided"
+EXTRACTION_STRUCTURED_OUTPUT = "structured_output"
+
+HIGH_LEVEL_TYPE_IDS: tuple[str, ...] = (
+    "diet",
+    "activity",
+    "sleep",
+    "medication",
+    "wellbeing",
+    "safety",
+    "other",
+)
+
+
+def _env_int(key: str, default: int) -> int:
+    raw = os.environ.get(key, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_str(key: str, default: str) -> str:
+    return os.environ.get(key, "").strip() or default
+
+
+@dataclass(frozen=True)
+class ExtractionConfig:
+    """一次 batch 執行所使用的萃取設定。"""
+
+    event_slot_minutes: int = 30
+    taxonomy_version: str | None = None
+    extraction_mode: str = EXTRACTION_PROMPT_GUIDED
+
+    model_id: str = ""
+    extractor_model_id: str = ""
+
+    embedding_model_id: str = "amazon.titan-embed-text-v2:0"
+    embedding_dim: int = 1024
+
+    seven_batch_char_limit: int = 12000
+
+    batch_extractor_version: str = "batch-extractor-1"
+
+    taxonomy_assets_dir: Path = field(default=TAXONOMY_ASSETS_DIR)
+
+    def model_for(self, stage: str) -> str | None:
+        """取某個階段要用的模型；回 None 代表交給 shared.bedrock 的預設。"""
+        specific = {"extractor": self.extractor_model_id}.get(stage, "")
+        return specific or self.model_id or None
+
+    @classmethod
+    def from_env(cls) -> "ExtractionConfig":
+        return cls(
+            event_slot_minutes=_env_int("EVENT_SLOT_MINUTES", 30),
+            taxonomy_version=os.environ.get("TAXONOMY_VERSION", "").strip() or None,
+            extraction_mode=_env_str("EXTRACTION_MODE", EXTRACTION_PROMPT_GUIDED),
+            model_id=_env_str("BEDROCK_MODEL_ID", ""),
+            extractor_model_id=_env_str("BEDROCK_EXTRACTOR_MODEL_ID", ""),
+            embedding_model_id=_env_str("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0"),
+            embedding_dim=_env_int("EMBEDDING_DIM", 1024),
+            seven_batch_char_limit=_env_int("SEVEN_BATCH_CHAR_LIMIT", 12000),
+            batch_extractor_version=_env_str("BATCH_EXTRACTOR_VERSION", "batch-extractor-1"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# LLM Usage & PipelineResult
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LlmUsage:
+    """單一 session 執行期間的 LLM 呼叫記帳累積器。"""
+
+    call_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: int = 0
+    usage_missing_count: int = 0
+    structured_output_degraded: int = 0
+
+    def record(self, metadata: Mapping[str, Any]) -> None:
+        self.call_count += 1
+
+        usage = metadata.get("usage") if metadata else None
+        input_tokens = usage.get("inputTokens") if isinstance(usage, Mapping) else None
+        output_tokens = usage.get("outputTokens") if isinstance(usage, Mapping) else None
+
+        if not isinstance(usage, Mapping) or input_tokens is None or output_tokens is None:
+            self.usage_missing_count += 1
+
+        self.input_tokens += int(input_tokens or 0)
+        self.output_tokens += int(output_tokens or 0)
+        self.latency_ms += int((metadata or {}).get("latency_ms") or 0)
+
+        if metadata and metadata.get("structured_output") is False:
+            self.structured_output_degraded += 1
+
+
+@dataclass(frozen=True)
+class PipelineResult:
+    """Extraction Pipeline run() 的輸出型別。"""
+
+    session_id: str
+    pipeline_name: str
+    events: tuple[CanonicalEvent, ...]
+    dedup: DedupStats = field(default_factory=DedupStats)
+    usage: LlmUsage = field(default_factory=LlmUsage)
+    manifest: Any = None
+    dropped_events: int = 0
+    unmatched_predicates: int = 0
+    stage_metrics: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def metrics(self) -> dict[str, Any]:
+        type_distribution: dict[str, int] = dict.fromkeys(HIGH_LEVEL_TYPE_IDS, 0)
+        for event in self.events:
+            type_distribution[event.type] = type_distribution.get(event.type, 0) + 1
+
+        common: dict[str, Any] = {
+            "pipeline_name": self.pipeline_name,
+            "event_count": len(self.events),
+            "dropped_events": self.dropped_events,
+            "unmatched_predicates": self.unmatched_predicates,
+            "dedup_merge_rate": round(self.dedup.merge_rate, 4),
+            "dedup_key_merged": self.dedup.key_merged,
+            "dedup_alias_merged": self.dedup.alias_merged,
+            "llm_call_count": self.usage.call_count,
+            "llm_input_tokens": self.usage.input_tokens,
+            "llm_output_tokens": self.usage.output_tokens,
+            "llm_usage_missing_count": self.usage.usage_missing_count,
+            "model_latency_ms": self.usage.latency_ms,
+            "type_distribution": type_distribution,
+        }
+
+        merged = dict(self.stage_metrics)
+        merged.update(common)
+        return merged
+
+
+# ---------------------------------------------------------------------------
+# Shared Tail
+# ---------------------------------------------------------------------------
+
+_MARKER_FIELDS: frozenset[str] = frozenset(
+    {"classification_confidence", "raw_predicate", "suspected_routine_id"}
+)
+
+_EXCLUDED_GLOBAL_PROPERTIES: frozenset[str] = frozenset({"source_utterance"})
+
+SuspectedRoutineLookup = Callable[[str, str, str], str | None]
+
+
+@dataclass(frozen=True)
+class EventOrigin:
+    """一批事件草稿的共同來源脈絡。"""
+
+    reference_datetime: str
+    evidence_conversation_ids: tuple[str, ...]
+    source_chunk_id: str | None = None
+    classification_confidence: float | None = None
+
+
+@dataclass(frozen=True)
+class _TailResult:
+    events: tuple[CanonicalEvent, ...]
+    dedup: DedupStats
+    dropped_events: int = 0
+    unmatched_predicates: int = 0
+
+
+@dataclass
+class _SharedTail:
+    """有狀態尾段累積器：逐筆 absorb，最後一次 finalize。"""
+
+    config: ExtractionConfig
+    taxonomy: Taxonomy
+    lexicon: PredicateLexicon
+    embedder: Any = None
+    suspected_routine_lookup: SuspectedRoutineLookup | None = None
+    family_aliases: Mapping[str, str] = field(default_factory=dict)
+
+    _drafts: list[CanonicalEvent] = field(default_factory=list, init=False, repr=False)
+    _dropped_events: int = field(default=0, init=False, repr=False)
+    _unmatched_predicates: int = field(default=0, init=False, repr=False)
+
+    def absorb(
+        self,
+        *,
+        elder_id: str,
+        session_id: str,
+        extracted: ExtractedEvent,
+        origin: EventOrigin,
+    ) -> bool:
+        ts = resolve_observed_at(
+            extracted.observed_at, extracted.raw_temporal_expression, origin.reference_datetime
+        )
+
+        ref_date = origin.reference_datetime.split("T")[0]
+        ts_date = ts.split("T")[0]
+        if ts_date < ref_date:
+            logger.info(
+                "過往歷史回憶事件已排除：ts=%s ref_date=%s concept_id=%s predicate=%s",
+                ts, ref_date, extracted.concept_id, extracted.predicate,
+            )
+            self._dropped_events += 1
+            return False
+
+        subject = normalize_subject(extracted.subject, self.lexicon, extra_aliases=self.family_aliases)
+
+        predicate = normalize_predicate(
+            extracted.concept_id,
+            extracted.predicate,
+            self.lexicon,
+            self.taxonomy,
+            embedder=self.embedder,
+        )
+        if not predicate.value:
+            logger.warning(
+                "事件缺少可用謂語，已丟棄：source_chunk_id=%s concept_id=%s",
+                origin.source_chunk_id,
+                extracted.concept_id,
+            )
+            self._dropped_events += 1
+            return False
+
+        key = canonical_event_key(ts, subject, predicate.value, self.config.event_slot_minutes)
+        structured = dict(extracted.attributes)
+
+        hit_confidence = origin.classification_confidence
+        if hit_confidence is not None:
+            structured["classification_confidence"] = hit_confidence
+        confidences = [
+            value for value in (hit_confidence, extracted.confidence) if value is not None
+        ]
+        confidence = min(confidences) if confidences else None
+
+        if predicate.raw_predicate and predicate.raw_predicate != predicate.value:
+            structured["raw_predicate"] = predicate.raw_predicate
+
+        if self.suspected_routine_lookup is not None:
+            suspected = self.suspected_routine_lookup(extracted.concept_id, predicate.value, ts)
+            if suspected:
+                structured["suspected_routine_id"] = suspected
+
+        evidence_ids = origin.evidence_conversation_ids
+        event = CanonicalEvent(
+            elder_id=elder_id,
+            event_id=event_id_for(elder_id, key),
+            canonical_event_key=key,
+            ts=ts,
+            type=self.taxonomy.high_level_type(extracted.concept_id),
+            concept_id=extracted.concept_id,
+            taxonomy_version=self.config.taxonomy_version or self.taxonomy.taxonomy_version,
+            subject=subject,
+            predicate=predicate.value,
+            detail=extracted.summary,
+            structured_detail=structured,
+            confidence=confidence,
+            session_id=session_id,
+            source_chunk_id=origin.source_chunk_id,
+            conversation_id=evidence_ids[0] if evidence_ids else None,
+            evidence_conversation_ids=tuple(evidence_ids),
+        )
+        self._drafts.append(event)
+        if not predicate.matched:
+            self._unmatched_predicates += 1
+        return predicate.matched
+
+    def finalize(self) -> _TailResult:
+        deduped_events, dedup_stats = deduplicate(
+            self._drafts,
+            slot_minutes=self.config.event_slot_minutes,
+            lexicon=self.lexicon,
+            embedder=self.embedder,
+        )
+
+        valid_events: list[CanonicalEvent] = []
+        for event in deduped_events:
+            if _validate_event(event, self.taxonomy):
+                valid_events.append(event)
+            else:
+                logger.warning(
+                    "事件未通過型別驗證，已丟棄：event_id=%s concept_id=%s type=%s",
+                    event.event_id,
+                    event.concept_id,
+                    event.type,
+                )
+                self._dropped_events += 1
+
+        return _TailResult(
+            events=tuple(valid_events),
+            dedup=dedup_stats,
+            dropped_events=self._dropped_events,
+            unmatched_predicates=self._unmatched_predicates,
+        )
+
+
+def _global_property_names(taxonomy: Taxonomy) -> frozenset[str]:
+    names = {
+        name
+        for prop in (taxonomy.property_registry.get("global_properties") or [])
+        if (name := prop.get("name")) and name not in _EXCLUDED_GLOBAL_PROPERTIES
+    }
+    return frozenset(names)
+
+
+def _node_own_property_names(taxonomy: Taxonomy, concept_id: str) -> frozenset[str]:
+    node_properties = taxonomy.property_registry.get("node_properties") or {}
+    props = node_properties.get(concept_id)
+    if not isinstance(props, list):
+        return frozenset()
+    return frozenset(name for prop in props if (name := prop.get("name")))
+
+
+def _ancestor_chain_including_self(taxonomy: Taxonomy, concept_id: str) -> tuple[str, ...]:
+    chain = [concept_id, *taxonomy.ancestors(concept_id)]
+    ordered = tuple(reversed([cid for cid in chain if taxonomy.get(cid) is not None]))
+    if ordered and taxonomy.nodes[ordered[0]].level == 0:
+        return ordered[1:]
+    return ordered
+
+
+def _allowed_structured_detail_keys(taxonomy: Taxonomy, concept_id: str) -> frozenset[str]:
+    if taxonomy.is_pseudo_concept(concept_id):
+        return _MARKER_FIELDS
+    allowed = set(_MARKER_FIELDS) | _global_property_names(taxonomy)
+    for node_id in _ancestor_chain_including_self(taxonomy, concept_id):
+        allowed |= _node_own_property_names(taxonomy, node_id)
+    return frozenset(allowed)
+
+
+def _validate_event(event: CanonicalEvent, taxonomy: Taxonomy) -> bool:
+    if taxonomy.get(event.concept_id) is None:
+        return False
+    if event.type not in taxonomy.type_ids:
+        return False
+    if not (event.ts and event.subject and event.predicate and event.detail):
+        return False
+    allowed = _allowed_structured_detail_keys(taxonomy, event.concept_id)
+    for key in event.structured_detail or {}:
+        if key not in allowed:
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Seven Type Extraction (LLM call)
+# ---------------------------------------------------------------------------
 
 SEVEN_TYPE_EXTRACTOR_VERSION = "seven-type-extractor-1"
 MAX_REPAIR_ATTEMPTS = 1
@@ -377,6 +748,11 @@ def _to_extracted_event(
     )
 
 
+# ---------------------------------------------------------------------------
+# Turn Batching & Pipeline
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class TurnBatch:
     ordinal: int
@@ -406,11 +782,6 @@ def plan_turn_batches(turns: Sequence[Turn], char_limit: int) -> tuple[TurnBatch
     return tuple(batches)
 
 
-# ---------------------------------------------------------------------------
-# Pipeline
-# ---------------------------------------------------------------------------
-
-
 def _render_batch_transcript(turns: Sequence[Turn]) -> str:
     return "\n".join(f"[{turn.created_at}] {turn.speaker}：{turn.text}" for turn in turns)
 
@@ -438,7 +809,7 @@ class DirectSevenPipeline:
         elder: Mapping[str, Any] | None = None,
     ) -> PipelineResult:
         family_aliases = build_family_aliases(elder.get("family") if elder else None)
-        tail = SharedTail(
+        tail = _SharedTail(
             config=self.config,
             taxonomy=self.taxonomy,
             lexicon=self.lexicon,

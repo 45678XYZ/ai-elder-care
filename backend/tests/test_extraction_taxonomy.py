@@ -10,7 +10,7 @@ from typing import get_args
 
 import pytest
 
-from src.extraction.config import TAXONOMY_ASSETS_DIR
+from src.extraction.pipeline import TAXONOMY_ASSETS_DIR
 from src.extraction.taxonomy import TaxonomyError, load_taxonomy
 from src.shared.models import SUMMARY_SECTION_KEYS, EventType
 

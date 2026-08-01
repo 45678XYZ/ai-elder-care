@@ -21,7 +21,7 @@ from typing import Any
 import json
 import logging
 
-from .config import TAXONOMY_ASSETS_DIR
+TAXONOMY_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "taxonomy"
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 """ExtractionConfig 測試：env 驅動與分階段模型覆寫。"""
 
-from src.extraction.config import (
+from src.extraction.pipeline import (
     EXTRACTION_PROMPT_GUIDED,
     ExtractionConfig,
 )

@@ -12,7 +12,7 @@ import pytest
 from moto import mock_aws
 
 from src.extraction.models import CanonicalEvent
-from src.extraction.results import PipelineResult
+from src.extraction.pipeline import PipelineResult
 from src.shared import bedrock
 
 CONVERSATIONS_TABLE = "conversations-test"

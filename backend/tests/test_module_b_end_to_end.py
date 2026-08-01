@@ -12,9 +12,9 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from src.extraction.config import ExtractionConfig
+from src.extraction.pipeline import ExtractionConfig
 from src.extraction.canonical import load_predicate_lexicon
-from src.extraction.seven_type import DirectSevenPipeline
+from src.extraction.pipeline import DirectSevenPipeline
 from src.extraction.taxonomy import load_taxonomy
 from tests.conftest import FakeConverseClient, StubEmbeddingProvider
 

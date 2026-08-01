@@ -24,7 +24,7 @@ import logging
 import re
 import unicodedata
 
-from .config import TAXONOMY_ASSETS_DIR
+TAXONOMY_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "taxonomy"
 from .taxonomy import Taxonomy
 from .temporal import day_key, parse_ts
 
