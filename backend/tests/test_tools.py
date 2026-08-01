@@ -240,6 +240,63 @@ def test_handle_update_elder_profile_skips_duplicate_health_note(monkeypatch):
     assert len(stored["health_notes"]) == 1
 
 
+def test_handle_update_elder_profile_lang_preference(monkeypatch):
+    """測試透過工具切換語言偏好。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "lang_preference": "hak",
+    })
+
+    assert res["status"] == "success"
+    assert "lang_preference" in res["updated_fields"]
+    assert stored["lang_preference"] == "hak"
+    assert res["data"]["lang_preference"] == "hak"
+
+
+def test_handle_update_elder_profile_hakka_dialect(monkeypatch):
+    """測試透過工具切換客語腔調。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "hakka_dialect": "htia_hailu",
+    })
+
+    assert res["status"] == "success"
+    assert "hakka_dialect" in res["updated_fields"]
+    assert stored["hakka_dialect"] == "htia_hailu"
+    assert res["data"]["hakka_dialect"] == "htia_hailu"
+
+
+def test_handle_update_elder_profile_invalid_lang_ignored(monkeypatch):
+    """無效的語言值不報錯但不寫入。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "lang_preference": "invalid-lang",
+    })
+
+    # 沒有任何有效欄位可更新
+    assert res["status"] == "error"
+    assert "lang_preference" not in stored
+
+
+def test_handle_update_elder_profile_invalid_dialect_ignored(monkeypatch):
+    """無效的腔調值不報錯但不寫入。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "hakka_dialect": "htia_unknown",
+    })
+
+    assert res["status"] == "error"
+    assert "hakka_dialect" not in stored
+
+
 def test_handle_get_elder_profile_flattens_health_notes(monkeypatch):
     """給模型的檔案只帶文字，note_id 這種內部識別碼不進 prompt。"""
     _fake_elder_store(monkeypatch)

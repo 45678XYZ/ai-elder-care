@@ -102,9 +102,10 @@
 *   **系統影響**：無副作用 (唯讀)。提供 Agent 學習長輩喜好並用於自然對話。
 
 #### `update_elder_profile` (更新長者個人檔案)
-*   **LLM 描述**：`Update the elder's profile, including adding new health notes, appending to lifestyle habits, or changing their nickname based on conversation.`
-*   **輸入參數**：`elder_id` (字串), `health_note_to_add` (字串，欲新增的健康注意事項), `habit_note_to_append` (字串，欲補充的生活習慣與喜好), `nickname` (字串，新暱稱)
+*   **LLM 描述**：`Update the elder's profile, including adding new health notes, appending to lifestyle habits, changing their nickname, or switching language preference based on conversation. Only set lang_preference/hakka_dialect when the elder EXPLICITLY asks to switch.`
+*   **輸入參數**：`elder_id` (字串), `health_note_to_add` (字串，欲新增的健康注意事項), `habit_note_to_append` (字串，欲補充的生活習慣與喜好), `nickname` (字串，新暱稱), `lang_preference` (字串，選填：zh-TW 或 hak), `hakka_dialect` (字串，選填：htia_sixian / htia_hailu / htia_dapu / htia_raoping / htia_zhaoan / htia_nansixian)
 *   **回傳資料**：`{"status": "success", "message": "已成功更新長者個人檔案", "updated_fields": [...], "data": {...}}`
+*   **語言切換**：`lang_preference` 與 `hakka_dialect` 僅在長者**明確要求**切換語言時才填入。無效值會被靜默忽略，不中斷對話。此路徑與 `PATCH /elders` 的 REST API 路徑並行：前者供對話中切換，後者供前端 UI 操作。
 *   **健康註記的寫入方式**：`health_note_to_add` 會以 `source: "agent"` 原子 append 進 `health_notes`（`db.append_health_note`），**不做讀出再整份寫回**。同一個欄位照護者也會在 App 上增刪，整份覆寫會讓其中一邊的結果無聲消失。已存在的相同內容不重複加入。
 *   **來源標示**：由此工具寫入的註記在 API 上帶 `source: "agent"`，與照護者手填的 `caregiver` 分開，讓照護者看得出哪幾筆是 AI 從談話裡聽來的（契約見 `docs/api.md` 的 health_notes 物件）。
 *   **回傳的 `health_notes`**：攤平成純文字陣列，不含 `note_id` 等內部識別碼。
