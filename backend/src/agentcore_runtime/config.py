@@ -21,5 +21,8 @@ KB_RETRIEVE_TOP_K = int(os.environ.get("KB_RETRIEVE_TOP_K", "4"))
 
 AGENT_MODEL_ID = os.environ.get("AGENT_MODEL_ID", "")
 
+# 網路搜尋（Tavily API）；空字串時 web_search 回報未配置
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+
 # 單輪對話的工具呼叫上限；防模型在 tools ↔ agent 之間無限繞圈把 chat Lambda 的 28 秒耗盡
 MAX_TOOL_ITERATIONS = int(os.environ.get("MAX_TOOL_ITERATIONS", "6"))

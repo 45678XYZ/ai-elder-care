@@ -392,3 +392,10 @@ variable "cwa_api_key" {
   default     = ""
 }
 
+variable "tavily_api_key" {
+  description = "Tavily Search API key（https://tavily.com/）"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+

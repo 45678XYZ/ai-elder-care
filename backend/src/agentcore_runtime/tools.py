@@ -15,6 +15,7 @@ Classic agent 的 knowledge base association。
 
 import json
 import logging
+import urllib.request
 from typing import Any, Dict, List, Tuple
 
 import boto3
@@ -375,6 +376,66 @@ def _make_knowledge_tool() -> StructuredTool:
     )
 
 
+def _make_web_search_tool() -> StructuredTool:
+    """網路搜尋工具（Tavily API）。
+
+    用於查詢即時資訊：天氣、新聞、活動、最新政策等衛教知識庫查不到的內容。
+    """
+
+    def _run(query: str) -> str:
+        if not config.TAVILY_API_KEY:
+            return json.dumps(
+                {"status": "error", "message": "網路搜尋未配置"}, ensure_ascii=False
+            )
+        try:
+            payload = json.dumps({
+                "api_key": config.TAVILY_API_KEY,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": 3,
+                "include_answer": True,
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                "https://api.tavily.com/search",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            answer = data.get("answer", "")
+            results = [
+                {"title": r.get("title", ""), "content": r.get("content", ""), "url": r.get("url", "")}
+                for r in data.get("results", [])[:3]
+            ]
+            return json.dumps(
+                {"status": "success", "answer": answer, "results": results},
+                ensure_ascii=False,
+            )
+        except Exception:
+            logger.exception("網路搜尋失敗：query=%s", query)
+            return json.dumps(
+                {"status": "error", "message": "網路搜尋暫時無法使用"}, ensure_ascii=False
+            )
+
+    return StructuredTool.from_function(
+        func=_run,
+        name="web_search",
+        description=(
+            "Search the internet for real-time information that is not available in the health knowledge base. "
+            "Use this when the elder asks about: current weather, news, local events, latest government policies, "
+            "bus schedules, or any question requiring up-to-date information. "
+            "Do NOT use this for general health education questions (use search_health_knowledge instead)."
+        ),
+        args_schema=_args_model(
+            "web_search",
+            {"query": (str, True, "搜尋關鍵字，用繁體中文")},
+        ),
+    )
+
+
 def build_tools(
     elder_id: str,
     *,
@@ -387,4 +448,5 @@ def build_tools(
         for name, description, params in TOOL_SPECS
     ]
     tools.append(_make_knowledge_tool())
+    tools.append(_make_web_search_tool())
     return tools
