@@ -247,11 +247,38 @@ def _to_turn(raw: dict[str, Any]) -> Turn:
     )
 
 
+def _has_realtime_safety_event(elder_id: str, event: Any) -> bool:
+    """檢查同一 elder 是否已有 realtime 寫入的 safety 事件（by evidence_conversation_ids 交集或相近時間）。"""
+    if event.type != "safety":
+        return False
+    existing, _ = db.list_events(elder_id, event_type="safety", limit=20)
+    for ex in existing:
+        if ex.get("extraction_track") != "realtime":
+            continue
+        ex_conv_ids = set(ex.get("evidence_conversation_ids") or [])
+        batch_conv_ids = set(event.evidence_conversation_ids or ())
+        if ex_conv_ids and batch_conv_ids and ex_conv_ids & batch_conv_ids:
+            return True
+        # 時間範圍收斂：同一 elder 在 ±10 分鐘內的 realtime safety 視為同一事件
+        from src.extraction.temporal import parse_ts
+        try:
+            ex_ts = parse_ts(ex["ts"])
+            ev_ts = parse_ts(event.ts)
+            if abs((ex_ts - ev_ts).total_seconds()) <= 600:
+                return True
+        except (KeyError, ValueError):
+            continue
+    return False
+
+
 def _write_events(result: Any) -> tuple[int, list[str]]:
     """透過條件式 Put 將事件寫入 DynamoDB；遇到完全相同之 `event_id` 與內容視為冪等成功。"""
     written = 0
     conflicts: list[str] = []
     for event in result.events:
+        if _has_realtime_safety_event(event.elder_id, event):
+            logger.info("跳過 batch safety 事件（realtime 已存在）：event_id=%s", event.event_id)
+            continue
         try:
             db.create_event(event.to_event_item())
             written += 1

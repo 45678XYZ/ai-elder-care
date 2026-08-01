@@ -62,13 +62,13 @@ def _checkpointer():
     return AgentCoreMemorySaver(config.AGENT_MEMORY_ID, region_name=config.AWS_REGION)
 
 
-def build_graph(elder_id: str):
+def build_graph(elder_id: str, *, session_id: str | None = None, conversation_id: str | None = None):
     """組出綁定該長者的對話圖。
 
     每輪重建而非全域快取：工具把 elder_id 閉包在內部（見 tools.py），跨長者共用同一份圖
     會把工具呼叫寫到別人的紀錄上。
     """
-    tools = build_tools(elder_id)
+    tools = build_tools(elder_id, session_id=session_id, conversation_id=conversation_id)
     model = _build_model().bind_tools(tools)
 
     def agent_node(state: CompanionState) -> Dict[str, Any]:

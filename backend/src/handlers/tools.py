@@ -528,12 +528,20 @@ def _resolve_alert_id(state: dict, context_event_id: str | None) -> str | None:
     return state.get("alert_id")
 
 
-def _write_safety_event(elder_id: str, alert_id: str, detail: str) -> dict[str, Any]:
+def _write_safety_event(
+    elder_id: str,
+    alert_id: str,
+    detail: str,
+    *,
+    confidence: float = 1.0,
+    session_id: str | None = None,
+    conversation_id: str | None = None,
+) -> dict[str, Any]:
     """以 canonical key 寫入 type=safety event，冪等收斂。"""
     canonical_key = safety_alert_key(alert_id)
     event_id = event_id_for(elder_id, canonical_key)
     now_iso = routines.now_iso()
-    event, is_new = db.put_event_if_absent({
+    item: dict[str, Any] = {
         "elder_id": elder_id,
         "canonical_event_key": canonical_key,
         "event_id": event_id,
@@ -542,7 +550,14 @@ def _write_safety_event(elder_id: str, alert_id: str, detail: str) -> dict[str, 
         "detail": detail,
         "source": "conversation",
         "extraction_track": "realtime",
-    })
+        "confidence": confidence,
+    }
+    if session_id:
+        item["session_id"] = session_id
+    if conversation_id:
+        item["conversation_id"] = conversation_id
+        item["evidence_conversation_ids"] = [conversation_id]
+    event, is_new = db.put_event_if_absent(item)
     return event
 
 
@@ -553,6 +568,8 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
     message_content = params.get("message", "")
     rag_content = params.get("rag_content", "")
     context_event_id: Optional[str] = params.get("context_event_id")
+    _session_id: Optional[str] = params.get("_session_id")
+    _conversation_id: Optional[str] = params.get("_conversation_id")
 
     if not elder_id or not message_content:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 message"}
@@ -585,7 +602,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
             # ② 產生 alert_id 並寫入 type=safety event
             alert_id = f"alert_{uuid.uuid4().hex[:12]}"
             event_detail = f"🚨【緊急警報已通報照護者】{message_content}"
-            event = _write_safety_event(elder_id, alert_id, event_detail)
+            event = _write_safety_event(elder_id, alert_id, event_detail, session_id=_session_id, conversation_id=_conversation_id)
 
             # ③ 更新 In-Memory 狀態鎖（含 alert_id）
             _emergency_state[elder_id] = {
@@ -608,13 +625,13 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
             if alert_id:
                 # ② 寫入同一 canonical key，收斂到同一 type=safety event
                 escalation_detail = f"🚨🚨【狀況急遽惡化 - 已通報照護者】{message_content}"
-                event = _write_safety_event(elder_id, alert_id, escalation_detail)
+                event = _write_safety_event(elder_id, alert_id, escalation_detail, session_id=_session_id, conversation_id=_conversation_id)
                 active_event_id = event["event_id"]
             else:
                 # ③ 若無任何 alert_id，建立新 episode（安全降級：寧可多發一次警報）
                 alert_id = f"alert_{uuid.uuid4().hex[:12]}"
                 escalation_detail = f"🚨🚨【狀況急遽惡化 - 已通報照護者】{message_content}"
-                event = _write_safety_event(elder_id, alert_id, escalation_detail)
+                event = _write_safety_event(elder_id, alert_id, escalation_detail, session_id=_session_id, conversation_id=_conversation_id)
                 active_event_id = event["event_id"]
 
             # ④ 更新狀態鎖
@@ -647,7 +664,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
             # ② 寫入同一 canonical key，收斂到同一 type=safety event
             mitigation_detail = (f"⚠️【長者自述緩解 - 待家屬確認】{message_content} "
                                  f"(alert_id={alert_id})")
-            event = _write_safety_event(elder_id, alert_id, mitigation_detail)
+            event = _write_safety_event(elder_id, alert_id, mitigation_detail, session_id=_session_id, conversation_id=_conversation_id)
 
             # ③ 更新 In-Memory 狀態為 unverified_mitigation
             _emergency_state[elder_id] = {

@@ -213,7 +213,14 @@ def runtime_session_id(elder_id: str) -> str:
     return f"eldercare-{digest}-{elder_id}"[:_RUNTIME_SESSION_ID_MAX_LEN]
 
 
-def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> Tuple[str, bool]:
+def invoke_agent_brain(
+    elder_id: str,
+    transcript: str,
+    lang: str = "zh-TW",
+    *,
+    session_id: str | None = None,
+    conversation_id: str | None = None,
+) -> Tuple[str, bool]:
     """呼叫 AgentCore Runtime 上的對話大腦進行推導。
 
     大腦的實作在 backend/src/agentcore_runtime/；本函式只負責組請求與解讀回應。
@@ -242,20 +249,22 @@ def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> T
             False,
         )
 
-    session_id = runtime_session_id(elder_id)
+    rt_session_id = runtime_session_id(elder_id)
     payload = {
         "elder_id": elder_id,
         "text": transcript,
         "lang": lang,
         "local_time": taiwan_now(),
-        "session_key": session_id,
+        "session_key": rt_session_id,
+        "session_id": session_id,
+        "conversation_id": conversation_id,
     }
 
     try:
         response = get_agentcore_client().invoke_agent_runtime(
             agentRuntimeArn=AGENTCORE_RUNTIME_ARN,
             qualifier=AGENTCORE_ENDPOINT_NAME,
-            runtimeSessionId=session_id,
+            runtimeSessionId=rt_session_id,
             contentType="application/json",
             payload=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         )
@@ -622,7 +631,9 @@ def run_turn(
 
     try:
         reply_text, routines_updated = invoke_agent_brain(
-            req.elder_id, transcript, req.lang
+            req.elder_id, transcript, req.lang,
+            session_id=req.session_id,
+            conversation_id=conversation_id,
         )
     except Exception:
         raise TurnFailure(500, "INTERNAL_ERROR", "對話服務目前無法使用")
