@@ -16,3 +16,23 @@
 #     --function-name e-hakka-care-tools --region us-west-2 \
 #     --query 'Environment.Variables.CWA_API_KEY' --output text
 cwa_api_key = "CWA-請填入實際授權碼"
+
+# --- 台灣華語 TTS（BreezyVoice）---
+#
+# 預設全部關閉，zh-TW 走 Polly Zhiyu（`cmn-CN`，不是台灣口音）。要換成台灣華語，
+# 得先照 tts-container/breezyvoice/README.md 建好映像與 model artifact，把兩個 URI
+# 填進來，再開 endpoint。四個值缺一不可：tts_models.tf 的 check block 會擋下只填一半
+# 的組合。
+#
+# ⚠️ 開啟後會常駐一台 ml.g4dn.4xlarge（無 autoscaling），約 US$1.5/hr。不用時把
+# tts_enable_breezyvoice_endpoint 改回 false 並 apply，endpoint 才會真的收掉。
+#
+# tts_model_artifact_bucket       = "e-hakka-care-tts-artifacts"
+# tts_breezyvoice_image_uri       = "<account>.dkr.ecr.us-west-2.amazonaws.com/e-hakka-care-tts-breezyvoice:<tag>"
+# tts_breezyvoice_model_data_url  = "s3://e-hakka-care-tts-artifacts/tts/breezyvoice/model.tar.gz"
+# tts_enable_breezyvoice_endpoint = true
+#
+# production gate。這個值不是開關而是「驗證已完成」的宣告：設 true 之前必須跑完
+# staging 音質、繁體輸入、容量與 P95 驗收（見 docs/tts/model-catalog.md）。
+# 維持 false 時 endpoint 會建起來但 Lambda 仍走 Polly，可用於先驗證再切換。
+# tts_breezyvoice_approved = false
