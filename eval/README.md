@@ -18,6 +18,8 @@
 ```
 eval/
 ├── README.md                 ← 本檔案
+├── PROGRESS.md               ← 進度追蹤
+├── MODEL_SELECTION.md        ← 模型選型結論報告
 ├── scripts/                  ← 情境化對話腳本（原始素材）
 │   ├── demo-script.md
 │   ├── elder_tts_asr_conversations.jsonl
@@ -25,7 +27,12 @@ eval/
 ├── corpus/                   ← 從腳本抽取的測試語料
 │   ├── asr_test_utterances.jsonl    (25 筆 CE + 4 筆 Formo)
 │   └── tts_test_utterances.jsonl    (5 筆 OmniVoice + 7 筆 VoxHakka)
-└── notebooks/                ← SageMaker notebooks（待建立）
+├── notebooks/                ← SageMaker 評估 notebooks
+│   ├── tts_eval_sagemaker.ipynb     (VoxHakka + OmniVoice 評估)
+│   └── asr_eval_sagemaker.ipynb     (CE + Formo + Roundtrip 評估)
+└── processing/               ← Processing Job 腳本（留作參考，quota=0 未使用）
+    ├── tts_eval.py
+    └── submit_tts_job.py
 ```
 
 ## 模型推論 API 摘要
@@ -93,8 +100,27 @@ from TTS.utils.synthesizer import Synthesizer
 - **OmniVoice 需要參考音檔**：voice cloning 架構，合成品質受 ref_audio 影響。
 - **Roundtrip 測試**：TTS → ASR 的測試更貼近產品實際 pipeline。
 
-## 待辦
+## 評估結論
 
-- [ ] 確認可用的 AWS SageMaker 資源（instance type、quota）
-- [ ] 建立 SageMaker notebook 或 processing job
-- [ ] 部署模型 endpoint 進行推論測試
+完整結論請見 [`MODEL_SELECTION.md`](MODEL_SELECTION.md)。摘要如下：
+
+### 方案一：純中文 (zh-TW) — 推薦 MVP
+
+| 環節 | 選用 | 備註 |
+| --- | --- | --- |
+| ASR | Amazon Transcribe Streaming `zh-TW` | AWS managed，低延遲 |
+| TTS | Amazon Polly `zh-TW` Neural | AWS managed，自然度高 |
+
+### 方案二：純客語 (hak) — 長期目標
+
+| 環節 | 選用 | 備註 |
+| --- | --- | --- |
+| ASR | FormoSpeech Whisper-v3 | MOS 3.21/5，需 LLM 容錯 |
+| TTS | OmniVoice | MOS 4.31/5，接近真人語感 |
+
+### 關鍵數據
+
+- **TTS**：OmniVoice MOS 4.31 >> VoxHakka MOS 1.79（VoxHakka 不適合面對長者）
+- **ASR**：Taiwan-Tongues-CE MOS 4.67（中文優異）；FormoSpeech MOS 3.21（客語可用但有字級偏差）
+- **Roundtrip**（TTS→ASR）：OmniVoice→CE MOS 3.39，OmniVoice→Formo MOS 3.21
+- **授權**：OmniVoice / VoxHakka 皆 CC BY-NC 4.0，production 需另議授權

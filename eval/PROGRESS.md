@@ -47,26 +47,28 @@ aws sagemaker stop-notebook-instance --notebook-instance-name tts-asr-eval
 
 ### 1. 建立 ASR 評估 notebook（當前任務）
 
-- [ ] `eval/notebooks/asr_eval_sagemaker.ipynb`
+- [x] `eval/notebooks/asr_eval_sagemaker.ipynb`
 - 測試 Taiwan-Tongues-CE（faster-whisper）和 FormoSpeech Whisper-v3（transformers）
-- 輸入：TTS 合成的音檔 + 預錄的測試音檔
-- 評分：完整度 / 正確度 / 可用度
-- Roundtrip 測試：TTS → ASR pipeline
+- 輸入：TTS 合成的音檔 + edge-tts 合成的 zh-TW 測試音檔
+- 評分：完整度 / 正確度 / 可用度（ipywidgets interactive scoring）
+- Roundtrip 測試：TTS → ASR pipeline（VoxHakka + OmniVoice → CE）
 
 ### 2. Git 整理
 
 - [ ] Commit 新檔案到 `eval/sagemaker-asr-tts` 分支：
   - `eval/notebooks/tts_eval_sagemaker.ipynb`
+  - `eval/notebooks/asr_eval_sagemaker.ipynb`
+  - `eval/MODEL_SELECTION.md`
   - `eval/processing/tts_eval.py`（Processing Job 版，留作參考）
   - `eval/processing/submit_tts_job.py`（同上）
-- [ ] 更新 `eval/README.md` 目錄結構（notebooks 已建立）
-- [ ] 考慮刪除 `eval/processing/`（quota=0 無法使用）
+- [x] 更新 `eval/README.md` 目錄結構（notebooks + processing + 新文件）
+- [x] `eval/processing/` 保留作參考（quota=0 無法使用，但腳本有文件價值）
 
 ### 3. 結果整理
 
-- [ ] 從 S3 拉取評分 CSV
-- [ ] 整理成結論報告（哪個模型適合 production pipeline）
-- [ ] 更新 `eval/README.md` 加入結論
+- [x] 評分數據已整理於 `eval/MODEL_SELECTION.md`（MOS 分數 + 選型依據）
+- [x] 整理成結論報告 → `eval/MODEL_SELECTION.md`（方案一 zh-TW managed / 方案二 hak self-hosted）
+- [x] 更新 `eval/README.md` 加入結論摘要與連結
 
 ---
 
