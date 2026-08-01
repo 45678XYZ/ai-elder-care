@@ -259,6 +259,9 @@ class DemoRepository implements CareRepository {
       name: fields['name'] as String?,
       nickname: fields['nickname'] as String?,
       langPreference: fields['lang_preference'] as String?,
+      // 後端已開放長者本人改這兩個欄位（欄位層級白名單），demo 要跟著支援，
+      // 否則長者端的腔調鈕按了完全沒反應——值被靜默丟掉，回來的還是舊腔。
+      hakkaDialect: fields['hakka_dialect'] as String?,
       addressRegion: fields['address_region'] as String?,
       habitNote: fields['habit_note'] as String?,
       family: rawFamily == null

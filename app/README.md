@@ -60,7 +60,7 @@ app/
 | `widgets/almanac_face.dart` | 農民曆牌面 Widget：顯示國曆/農曆日期與節氣 |
 | `widgets/calendar_tear.dart` | 撕頁日曆 Widget：模擬日曆撕頁效果的日期顯示 |
 | `widgets/greeting_slot.dart` | 時段問候語 Widget：依早/午/晚顯示不同問候語與背景圖 |
-| `widgets/lang_toggle.dart` | 長者自行切換語言的兩顆鈕：`ElderLangToggle`（說話：華語／客語）與 `ElderTextLangToggle`（畫面文字：一般漢字／客語漢字）。兩者獨立，講客語不等於讀得懂客語漢字 |
+| `widgets/lang_toggle.dart` | 長者自行切換的三顆鈕：`ElderLangToggle`（說話：華語／客語）、`ElderDialectToggle`（客語腔調六選一，選了客語才出現）、`ElderTextLangToggle`（畫面文字：一般漢字／客語漢字）。三者獨立——講客語不等於讀得懂客語漢字，腔調則只有講客語時才有意義 |
 
 ### caregiver/ — 照護者模式
 
@@ -71,7 +71,7 @@ app/
 | `screens/summaries_screen.dart` | 每日摘要畫面：顯示 AI 每日為長者生成的健康與生活摘要 |
 | `screens/timeline_screen.dart` | 事件時間軸畫面：以時間倒序呈現長者近期生活事件（用藥、活動、安全事件等） |
 | `screens/stats_screen.dart` | 統計圖表畫面：互動輪數趨勢、行程完成率、逐日數據 |
-| `screens/setup_screen.dart` | 設定管理畫面：長者資料編輯、行程管理、通知偏好 |
+| `screens/setup_screen.dart` | 初次設定：建立長輩基本資料（姓名、稱呼、出生年、居住地區、說話語言、客語腔調），只在還沒有長輩資料時出現一次 |
 
 ### shared/ — 共用模組
 
@@ -188,6 +188,10 @@ app/
 | `elder_lang_toggle_test.dart` | 說話語言切換；重點是長者選華語時切得回來（不被照護者設的 `lang_preference` 蓋掉） |
 | `elder_text_lang_test.dart` | 畫面文字語言切換；重點是兩顆鈕互不連動，以及切換後另一顆的標題要跟著換 |
 | `routine_delete_test.dart` | 刪除例行公事走 `DELETE /routines/{id}`，不是舊的 `PATCH active:false` |
+| `elder_dialect_test.dart` | 客語腔調切換；重點是**寫失敗要講出來**——腔調只讀長者檔案，沒寫進去等於沒生效 |
+| `setup_fields_test.dart` | 初次設定的出生年／居住地區／腔調；兩條儲存路徑都驗（已登入與註冊流程） |
+| `address_region_test.dart` | 管理頁改居住地區；空字串不給存（PATCH 沒有清空欄位的語意） |
+| `create_elder_test.dart` | `POST /elders` 資料層，以及「照護者端不建立長輩」這條規則 |
 
 ---
 
@@ -251,15 +255,19 @@ flutter test       # 所有測試通過
 
 **已完成**
 
-- 長者模式：語音問答免手持迴圈（裝置端華語 ASR → TTS，打字備援）、今日行程與手動完成、農民曆撕曆頁首、連結家人
-- 照護者模式：長輩管理（健康狀況／生活習慣／家人／例行公事增刪改）、每日摘要、統計、事件時間軸
-- 長者端可自行切換**說話語言**（華語／客語）與**畫面文字**（一般漢字／客語漢字），兩者獨立
-- demo 資料完整，不接後端可跑完整個流程
 - **Cognito 登入**：`CognitoAuthBackend` 走 SRP 真連 User Pool，含註冊、信箱驗證碼、ID token 過期自動換新
 - **正式 `/chat`**：`USE_BACKEND=true` 時走 `POST /chat`（含 session 與 Polly 語音回覆）。RAG PoC 的 `/ask` 只剩 demo 模式在用
+- 長者模式：語音問答免手持迴圈、今日行程與手動完成、農民曆撕曆頁首、連結家人
+- 兩種語言的輸入路徑都通了：華語裝置端辨識送 `text`、客語錄音送 `audio` 由後端辨識（api.md 兩種都收）
+- 照護者模式：長輩管理（健康狀況／生活習慣／居住地區／家人／例行公事增刪改）、每日摘要、統計、事件時間軸
+- 長者端可自行切換**說話語言**、**客語腔調**（六腔）與**畫面文字**（一般漢字／客語漢字），三者獨立
+- demo 資料完整，不接後端可跑完整個流程
 
 **未完成**
 
 - **`elder_accounts` 對應表沒有人寫**：註冊時選「長輩」的帳號拿到的 token 不會有 `elder_id` claim，後端一律視為照護者。畫面仍會進長者模式，資料也存取得到（首次設定的 `POST /elders` 會把建立者綁進 `caregiver_ids`，等於自己是自己的照護者），但這不是設計上的正解
-- **客語語音**：`lang_preference` 已能切，但 `chat_screen` 仍走華語辨識迴圈，錄音送後端那條未接
-- `POST /elders`：首次設定只寫本機，尚未建到後端
+- **`POST /elders`**：首次設定只寫本機（`setup_screen.dart`），尚未建到後端
+
+剩下的順序：先補 `elder_accounts`（長者帳號才拿得到 `elder_id` claim），再讓首次設定
+改呼叫 `POST /elders`。兩件都好了之後 `DemoRepository` / `DemoData` / `DemoAuthBackend`
+就可以整批移除。

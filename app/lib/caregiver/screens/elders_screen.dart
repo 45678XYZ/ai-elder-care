@@ -105,42 +105,6 @@ class _EldersScreenState extends State<EldersScreen> {
     if (created.remind) await _ensureNotificationPermission();
   }
 
-  /// 新增一位長輩（`POST /elders`）。
-  ///
-  /// 這是照護者上線後的第一步（demo Act 1）：建立者的 token `sub` 會被後端自動加進
-  /// `caregiver_ids`，所以建完立刻就看得到這位長輩，不必再走一次綁定。
-  ///
-  /// 建完切換過去並重載：下一步一定是幫這位長輩排行程，停在上一位身上很容易
-  /// 沒注意就把行程加到別人頭上。
-  Future<void> _addElder() async {
-    final draft = await showModalBottomSheet<_ElderDraft>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.cardAlt,
-      shape: const RoundedRectangleBorder(borderRadius: AppRadius.voicePanel),
-      builder: (_) => const _ElderForm(),
-    );
-    if (draft == null || !mounted) return;
-
-    final Elder created;
-    try {
-      created = await AppSession.instance.createElder(draft.toJson());
-    } catch (e) {
-      if (mounted) _showError('新增長輩失敗：$e');
-      return;
-    }
-    if (!mounted) return;
-
-    _reload();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.barDark,
-        content: Text('已新增「${created.name}」，接下來可以幫他排行程',
-            style: const TextStyle(color: AppColors.onDark)),
-      ),
-    );
-  }
-
   /// 寫入失敗的統一提示。
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -336,6 +300,32 @@ class _EldersScreenState extends State<EldersScreen> {
     _replaceElder(updated);
   }
 
+  /// 編輯居住地區（`PATCH /elders/{id}` 的 `address_region`）。
+  ///
+  /// 為什麼照護者要改得了：這個欄位是對話大腦查天氣的依據（後端的
+  /// `get_weather_forecast` 工具），長輩問「明天會不會下雨」全靠它。而長輩會搬家、
+  /// 也可能是子女幫忙填錯的——初次設定填完就永久唯讀，等於錯了沒人救得回來。
+  Future<void> _editAddressRegion(Elder elder) async {
+    final region = await showDialog<String>(
+      context: context,
+      builder: (ctx) =>
+          _AddressRegionDialog(initial: elder.addressRegion ?? ''),
+    );
+    if (region == null || !mounted) return;
+
+    final Elder updated;
+    try {
+      updated = await CareRepo.instance
+          .updateElder(elder.elderId, {'address_region': region});
+    } catch (e) {
+      if (mounted) _showError('儲存失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    _replaceElder(updated);
+  }
+
   /// 刪除一筆健康註記（`DELETE /elders/{id}/health_notes/{note_id}`）。
   ///
   /// 先問一次再刪：健康資訊刪掉之後照護者不會記得原本寫了什麼，而 AI 補上的那幾筆
@@ -467,22 +457,14 @@ class _EldersScreenState extends State<EldersScreen> {
                   return ListView(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                     children: [
-                      SectionHeader(
-                        '長輩資料',
-                        trailing: TextButton.icon(
-                          onPressed: _addElder,
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            foregroundColor: AppColors.accentText,
-                          ),
-                          icon: const Icon(Icons.person_add_alt, size: 18),
-                          label: Text('新增長輩',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(color: AppColors.accentText)),
-                        ),
-                      ),
+                      // 沒有「新增長輩」：綁定是**長者發起**的——長輩在他自己的
+                      // 手機上輸入照護者 ID（`POST /elders/{id}/caregivers`），綁上
+                      // 之後 `GET /elders` 就回完整資料，這一頁自然看得到。
+                      //
+                      // 從照護者這邊 `POST /elders` 造出來的長輩沒有帳號可以登入：
+                      // elder_accounts（sub→elder_id）是註冊時寫的，建立長者資料
+                      // 不會產生帳號對應。那會是一筆沒人進得去的孤兒資料。
+                      const SectionHeader('長輩資料'),
                       const SizedBox(height: AppSpacing.sm),
                       if (elder != null)
                         _ElderProfileCard(
@@ -490,6 +472,7 @@ class _EldersScreenState extends State<EldersScreen> {
                           onAddNote: () => _addHealthNote(elder),
                           onRemoveNote: (n) => _removeHealthNote(elder, n),
                           onEditHabit: () => _editHabitNote(elder),
+                          onEditRegion: () => _editAddressRegion(elder),
                           onAddFamily: () => _addFamilyMember(elder),
                           onRemoveFamily: (i) => _removeFamilyMember(elder, i),
                         ),
@@ -577,6 +560,7 @@ class _ElderProfileCard extends StatefulWidget {
     required this.onAddNote,
     required this.onRemoveNote,
     required this.onEditHabit,
+    required this.onEditRegion,
     required this.onAddFamily,
     required this.onRemoveFamily,
   });
@@ -586,6 +570,9 @@ class _ElderProfileCard extends StatefulWidget {
   final VoidCallback onAddNote;
   final ValueChanged<HealthNote> onRemoveNote;
   final VoidCallback onEditHabit;
+
+  /// 編輯居住地區。天氣工具吃這個欄位，錯了長輩問天氣就答不準。
+  final VoidCallback onEditRegion;
   final VoidCallback onAddFamily;
 
   /// 依位置刪除——`FamilyMember` 沒有 ID。
@@ -849,6 +836,31 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
             ),
             child: (elder.habitNote?.trim().isNotEmpty ?? false)
                 ? Text(elder.habitNote!, style: text.bodyMedium)
+                : Text('尚未填寫',
+                    style: text.bodySmall?.copyWith(color: AppColors.chevron)),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          // 居住地區同樣要能改：長輩會搬家，而且這是初次設定時由子女代填的欄位，
+          // 填錯的機會不小。錯了的後果是天氣問了答不準（後端 get_weather_forecast
+          // 吃這個值），而不是明顯的壞掉，所以更需要一個看得到、改得動的地方。
+          _ProfileRow(
+            label: '居住地區',
+            trailing: Tooltip(
+              message: '編輯居住地區',
+              child: TextButton(
+                onPressed: widget.onEditRegion,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  padding: EdgeInsets.zero,
+                  foregroundColor: AppColors.accentText,
+                ),
+                child: Text('編輯',
+                    style:
+                        text.labelSmall?.copyWith(color: AppColors.accentText)),
+              ),
+            ),
+            child: (elder.addressRegion?.trim().isNotEmpty ?? false)
+                ? Text(elder.addressRegion!, style: text.bodyMedium)
                 : Text('尚未填寫',
                     style: text.bodySmall?.copyWith(color: AppColors.chevron)),
           ),
@@ -1250,6 +1262,84 @@ class _FamilyMemberDialogState extends State<_FamilyMemberDialog> {
 ///
 /// 允許存成空字串（等於清空）——`PATCH` 沒有把欄位改回 null 的語意，空字串是
 /// 契約內能表達「這裡沒東西」的方式。
+/// 編輯居住地區。單行、不給空字串。
+///
+/// 不做縣市／鄉鎮的下拉選單：那要維護一份全台行政區清單，而且長輩實際住的地方
+/// 未必對得上行政區劃（眷村、部落、某某社區）。天氣工具吃的是地名字串，讓照護者
+/// 照自己知道的寫比較準。
+class _AddressRegionDialog extends StatefulWidget {
+  const _AddressRegionDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_AddressRegionDialog> createState() => _AddressRegionDialogState();
+}
+
+class _AddressRegionDialogState extends State<_AddressRegionDialog> {
+  late final _ctrl = TextEditingController(text: widget.initial);
+
+  @override
+  void initState() {
+    super.initState();
+    // 「儲存」在空字串時是停用的，所以每次輸入都要重畫——沒有這個監聽，
+    // 原本是空的地區打了字之後按鈕還是灰的，看起來像壞掉。
+    _ctrl.addListener(_onChanged);
+  }
+
+  void _onChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    _ctrl.removeListener(_onChanged);
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return AlertDialog(
+      backgroundColor: AppColors.cardAlt,
+      title: Text('居住地區', style: text.titleMedium),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _ctrl,
+            autofocus: true,
+            style: text.bodyLarge,
+            decoration: InputDecoration(
+              hintText: '例如：台北市大安區',
+              hintStyle: text.bodyLarge?.copyWith(color: AppColors.chevron),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text('※ 長輩問天氣時要靠它',
+              style: text.labelSmall?.copyWith(color: AppColors.chevron)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          // 空字串不送：api.md 的 PATCH 是部分更新，沒有「清空欄位」的語意，
+          // 送空值只會讓後端存一個沒有意義的空地區。
+          onPressed: _ctrl.text.trim().isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_ctrl.text.trim()),
+          style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
+          child: const Text('儲存'),
+        ),
+      ],
+    );
+  }
+}
+
 class _HabitNoteDialog extends StatefulWidget {
   const _HabitNoteDialog({required this.initial});
 
@@ -1512,236 +1602,6 @@ class _RoutineDraft {
 }
 
 /// 新增例行公事表單。失焦即驗證、錯誤訊息在欄位下方、有明確關閉鈕（§8／§12）。
-/// 新增長輩的表單內容（`POST /elders` 的 request 欄位，見 docs/api.md）。
-class _ElderDraft {
-  const _ElderDraft({
-    required this.name,
-    required this.nickname,
-    required this.lang,
-    required this.healthNotes,
-    required this.family,
-  });
-
-  final String name;
-  final String nickname;
-  final String lang;
-  final List<String> healthNotes;
-  final List<FamilyMember> family;
-
-  /// 只帶公開欄位：`elder_id`、`caregiver_ids`、`created_at`、`updated_at` 是
-  /// server-owned，傳了後端回 400 `INVALID_PARAMETER`。
-  ///
-  /// 空字串不送，讓後端套它自己的預設（api.md：未提供的 `health_notes`、`family`
-  /// 由後端補 `[]`），而不是送一堆空值進去。
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        if (nickname.isNotEmpty) 'nickname': nickname,
-        'lang_preference': lang,
-        if (healthNotes.isNotEmpty) 'health_notes': healthNotes,
-        if (family.isNotEmpty)
-          'family': [
-            for (final m in family)
-              {
-                'relation': m.relation,
-                'name': m.name,
-                if (m.note != null && m.note!.isNotEmpty) 'note': m.note,
-              },
-          ],
-      };
-}
-
-/// 新增長輩的表單。
-///
-/// 欄位取捨照 demo Act 1 的實際輸入：姓名、暱稱、語言、健康狀況、家人。
-/// 出生年、性別、居住地區 api.md 有但這裡不收——照護者現場輸入的欄位愈多愈慢，
-/// 而那三個目前沒有任何畫面在用；需要時走 `PATCH /elders/{id}` 補。
-class _ElderForm extends StatefulWidget {
-  const _ElderForm();
-
-  @override
-  State<_ElderForm> createState() => _ElderFormState();
-}
-
-class _ElderFormState extends State<_ElderForm> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameCtrl = TextEditingController();
-  final _nicknameCtrl = TextEditingController();
-
-  /// 健康狀況與家人用「一行一筆」的多行輸入，不做動態增減列。
-  ///
-  /// 動態列在手機上要處理新增、刪除、捲動與鍵盤遮擋，欄位一多就變成一堆小按鈕；
-  /// 而這兩項的內容本來就是短句，換行輸入對照護者更快，也不會有「按了加號卻沒填」
-  /// 留下的空列。家人一行寫「關係,姓名,備註」，逗號分隔。
-  final _healthCtrl = TextEditingController();
-  final _familyCtrl = TextEditingController();
-
-  String _lang = 'zh-TW';
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _nicknameCtrl.dispose();
-    _healthCtrl.dispose();
-    _familyCtrl.dispose();
-    super.dispose();
-  }
-
-  /// 一行一筆，去掉空白行。
-  static List<String> _lines(String raw) => [
-        for (final l in raw.split('\n'))
-          if (l.trim().isNotEmpty) l.trim(),
-      ];
-
-  /// 「關係,姓名,備註」→ [FamilyMember]。關係與姓名缺一不可，備註選填。
-  ///
-  /// 分隔符同時接受半形與全形逗號：照護者在手機上打中文時輸入法給的是全形，
-  /// 只認半形的話會整行被當成關係、姓名變空的。
-  static List<FamilyMember> _parseFamily(String raw) {
-    final out = <FamilyMember>[];
-    for (final line in _lines(raw)) {
-      final parts = line.split(RegExp('[,，]')).map((p) => p.trim()).toList();
-      if (parts.length < 2 || parts[0].isEmpty || parts[1].isEmpty) continue;
-      out.add(FamilyMember(
-        relation: parts[0],
-        name: parts[1],
-        note: parts.length > 2 && parts[2].isNotEmpty ? parts[2] : null,
-      ));
-    }
-    return out;
-  }
-
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    Navigator.of(context).pop(_ElderDraft(
-      name: _nameCtrl.text.trim(),
-      nickname: _nicknameCtrl.text.trim(),
-      lang: _lang,
-      healthNotes: _lines(_healthCtrl.text),
-      family: _parseFamily(_familyCtrl.text),
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          child: Form(
-            key: _formKey,
-            autovalidateMode: AutovalidateMode.onUserInteraction,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(child: Text('新增長輩', style: text.titleMedium)),
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      tooltip: '關閉',
-                      icon: const Icon(Icons.close, color: AppColors.ink),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Text('姓名', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _nameCtrl,
-                  style: text.bodyLarge,
-                  decoration: _elderDecoration('例如：陳阿蘭'),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? '請填寫長輩姓名' : null,
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                Text('稱呼', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _nicknameCtrl,
-                  style: text.bodyLarge,
-                  decoration: _elderDecoration('例如：阿蘭嬤（AI 會這樣叫他）'),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                Text('說話的語言', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: AppSpacing.sm,
-                  children: [
-                    for (final l in const [('zh-TW', '華語'), ('hak', '客語')])
-                      _ChoicePill(
-                        label: l.$2,
-                        selected: _lang == l.$1,
-                        onTap: () => setState(() => _lang = l.$1),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                // 建檔時送純字串陣列（api.md 相容舊契約），後端一律標成
-                // source=caregiver。之後單筆增刪走管理頁，那裡才分得出哪幾筆是
-                // 對話中 AI 補上的。
-                Text('健康狀況', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _healthCtrl,
-                  style: text.bodyLarge,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: _elderDecoration('一行一項\n例如：高血壓'),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                Text('家人', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _familyCtrl,
-                  style: text.bodyLarge,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: _elderDecoration('一行一位，用逗號分開\n例如：兒子,陳志明,在台北工作'),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: FilledButton(
-                    onPressed: _submit,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.accentText,
-                      foregroundColor: Colors.white,
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.all(AppRadius.field),
-                      ),
-                    ),
-                    child: Text('建立', style: text.labelLarge),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  InputDecoration _elderDecoration(String hint) => InputDecoration(
-        hintText: hint,
-        hintStyle: const TextStyle(color: AppColors.chevron),
-        filled: true,
-        fillColor: AppColors.card,
-        enabledBorder: const OutlineInputBorder(
-          borderRadius: BorderRadius.all(AppRadius.field),
-          borderSide: BorderSide(color: AppColors.border),
-        ),
-        focusedBorder: const OutlineInputBorder(
-          borderRadius: BorderRadius.all(AppRadius.field),
-          borderSide: BorderSide(color: AppColors.accent, width: 2),
-        ),
-      );
-}
-
 class _RoutineForm extends StatefulWidget {
   const _RoutineForm();
 

@@ -7,6 +7,7 @@ class Elder {
     this.birthYear,
     this.gender,
     required this.langPreference,
+    this.hakkaDialect = 'htia_sixian',
     this.addressRegion,
     this.healthNotes = const [],
     this.family = const [],
@@ -24,6 +25,14 @@ class Elder {
 
   /// 語言偏好；可用值見 docs/api.md。
   final String langPreference;
+
+  /// 客語腔調，六選一（見 [HakkaDialect]）。**只在 [langPreference] 是 `hak` 時有意義。**
+  ///
+  /// api.md：「客語腔調是 ASR/TTS 唯一來源」，而且「後端只讀 elder profile 的
+  /// `hakka_dialect`，App 不在 `/chat` 傳腔調」——所以這個值一定要寫進長者檔案，
+  /// 存在本機沒有任何效果。這也是它跟 [langPreference] 的關鍵差別：後者每次
+  /// `/chat` 都會帶上去，前者不會。
+  final String hakkaDialect;
 
   /// 居住地區（如「台北市大安區」）。
   final String? addressRegion;
@@ -49,6 +58,7 @@ class Elder {
     int? birthYear,
     String? gender,
     String? langPreference,
+    String? hakkaDialect,
     String? addressRegion,
     List<HealthNote>? healthNotes,
     List<FamilyMember>? family,
@@ -62,6 +72,7 @@ class Elder {
         birthYear: birthYear ?? this.birthYear,
         gender: gender ?? this.gender,
         langPreference: langPreference ?? this.langPreference,
+        hakkaDialect: hakkaDialect ?? this.hakkaDialect,
         addressRegion: addressRegion ?? this.addressRegion,
         healthNotes: healthNotes ?? this.healthNotes,
         family: family ?? this.family,
@@ -77,6 +88,8 @@ class Elder {
         birthYear: json['birth_year'] as int?,
         gender: json['gender'] as String?,
         langPreference: json['lang_preference'] as String? ?? 'zh-TW',
+        hakkaDialect:
+            json['hakka_dialect'] as String? ?? HakkaDialect.defaultValue,
         addressRegion: json['address_region'] as String?,
         healthNotes: (json['health_notes'] as List<dynamic>?)
                 ?.map(HealthNote.fromJson)
@@ -94,6 +107,45 @@ class Elder {
             ? null
             : DateTime.tryParse(json['updated_at'] as String),
       );
+}
+
+/// 客語腔調。值與 api.md 的 `hakka_dialect` enum 一一對應，**不可自創**——
+/// 後端對其他值回 400 `INVALID_PARAMETER`。
+///
+/// 六腔各自有獨立的 ASR 與 TTS 模型端點（terraform/asr_models.tf、tts_models.tf），
+/// 所以選錯不是「口音不太像」而是**辨識不出來**：四縣的長輩被設成海陸，他每一句
+/// 都會失敗。這也是為什麼不能只列常見的幾種了事。
+///
+/// 宣告順序即畫面上的排列順序，四縣排第一（api.md 的預設）。
+enum HakkaDialect {
+  sixian('htia_sixian', '四縣'),
+  hailu('htia_hailu', '海陸'),
+  dapu('htia_dapu', '大埔'),
+  raoping('htia_raoping', '饒平'),
+  zhaoan('htia_zhaoan', '詔安'),
+  nansixian('htia_nansixian', '南四縣');
+
+  const HakkaDialect(this.value, this.label);
+
+  /// 送給後端的字串（api.md 的 enum 值）。
+  final String value;
+
+  /// 畫面上顯示的腔調名。兩種書寫語言下相同，是專有名詞，不進 i18n 對照表。
+  ///
+  /// **不附範例句**：六腔的例句要有可靠來源才敢放，來源查不到就不放——寫錯的
+  /// 客語比沒有客語更糟，長輩聽到不對的腔會選錯。
+  final String label;
+
+  /// api.md 的預設腔調。認不得的值一律落回這裡，不讓畫面顯示空白。
+  static const defaultValue = 'htia_sixian';
+
+  /// 後端字串 → 列舉；未知值回 [sixian]（與後端預設一致）。
+  static HakkaDialect fromValue(String? v) {
+    for (final d in values) {
+      if (d.value == v) return d;
+    }
+    return sixian;
+  }
 }
 
 /// 單筆健康註記。欄位規格見 docs/api.md 的 health_notes 物件。

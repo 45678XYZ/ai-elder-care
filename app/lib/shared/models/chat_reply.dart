@@ -1,6 +1,8 @@
 /// 正式 `POST /chat` 端點的回應。欄位規格見 docs/api.md。
 ///
-/// 目前後端尚未接上，僅 [ApiClient.chat] 的型別骨架引用；App 實際串接的是 RAG PoC 的 [AskResult]。
+/// 長者端已經走這條：`CareRepo.chat()` →（真後端）`ApiRepository` → `ChatSession`
+/// → [ApiClient.chat]。RAG PoC 的 `/ask`／[AskResult] 只剩 `DemoRepository` 在用，
+/// 那是 demo 模式的行為，不是主線。
 class ChatReply {
   const ChatReply({
     required this.conversationId,
