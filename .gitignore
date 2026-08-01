@@ -1,4 +1,7 @@
 # --- Flutter / Dart ---
+# 全字庫原始字型（共約 120 MB）只是拿來裁子集的來源，不進版控。
+# 實際打包的是 assets/fonts/TWSungHakka.ttf（2.4 KB），那個要進。
+app/assets/fonts/TW-Sung-*.ttf
 app/.dart_tool/
 app/build/
 app/.flutter-plugins
