@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../i18n/strings.dart';
 import '../../theme/app_theme.dart';
 
 /// 例行公事狀態的視覺定義。api.md 的 `status`：`pending` | `done` | `missed`。
@@ -74,7 +75,8 @@ class RoutineStatusChip extends StatelessWidget {
           Icon(s.icon, size: elderMode ? 26 : 16, color: s.fg),
           SizedBox(width: elderMode ? 8 : 5),
           Text(
-            s.label,
+            // 照護者端不受影響：只有長者帳號設得了書寫語言，[t] 對其他人一律原樣回。
+            t(s.label),
             style: (elderMode ? text.headlineSmall : text.labelSmall)
                 ?.copyWith(color: s.fg),
           ),

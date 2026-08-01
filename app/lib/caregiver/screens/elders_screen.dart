@@ -185,33 +185,10 @@ class _EldersScreenState extends State<EldersScreen> {
     );
   }
 
-  /// 切換長輩的語音語言（`PATCH /elders/{id}` 的 `lang_preference`）。
-  ///
-  /// 這是全 App 唯一能改語言的地方：介面文字一律華語、長者端不提供切換，
-  /// 這個值只決定長輩說話與聽回覆走華語還是客語（客語裝置端無法辨識，改走錄音送後端）。
-  Future<void> _changeLang(Elder elder, String lang) async {
-    if (elder.langPreference == lang) return;
-
-    final Elder updated;
-    try {
-      updated = await CareRepo.instance
-          .updateElder(elder.elderId, {'lang_preference': lang});
-    } catch (e) {
-      if (mounted) _showError('切換語言失敗：$e');
-      return;
-    }
-    if (!mounted) return;
-
-    _replaceElder(updated);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.barDark,
-        content: Text(
-            '已改為${updated.langPreference == 'hak' ? '客語' : '華語'}，長輩下次說話時生效',
-            style: const TextStyle(color: AppColors.onDark)),
-      ),
-    );
-  }
+  // 語言切換不在這一頁：改由長輩自己在長者端今日頁切（見 elder/widgets/lang_toggle.dart）。
+  // 真正知道自己講哪一種話的是長輩本人，而照護者設錯時長輩沒有自救的辦法。
+  // 兩邊都能改反而更糟——長者的選擇只寫本機、照護者的寫後端，同時存在就會互相覆蓋，
+  // 而長輩那一份必須贏（實際在說話的是他），照護者這顆按下去等於按不動。
 
   /// 就地換掉 AppSession 裡的那一筆長者。
   ///
@@ -510,7 +487,6 @@ class _EldersScreenState extends State<EldersScreen> {
                       if (elder != null)
                         _ElderProfileCard(
                           elder: elder,
-                          onLangChanged: (lang) => _changeLang(elder, lang),
                           onAddNote: () => _addHealthNote(elder),
                           onRemoveNote: (n) => _removeHealthNote(elder, n),
                           onEditHabit: () => _editHabitNote(elder),
@@ -594,11 +570,10 @@ class _PolicyLink extends StatelessWidget {
   }
 }
 
-/// 長輩基本資料。語音語言與健康狀況可改，其餘唯讀。
+/// 長輩基本資料。健康狀況、生活習慣與家人可改，其餘唯讀。
 class _ElderProfileCard extends StatefulWidget {
   const _ElderProfileCard({
     required this.elder,
-    required this.onLangChanged,
     required this.onAddNote,
     required this.onRemoveNote,
     required this.onEditHabit,
@@ -607,9 +582,6 @@ class _ElderProfileCard extends StatefulWidget {
   });
 
   final Elder elder;
-
-  /// 切換語音語言（`lang_preference`）。這是全 App 唯一能改它的地方。
-  final ValueChanged<String> onLangChanged;
 
   final VoidCallback onAddNote;
   final ValueChanged<HealthNote> onRemoveNote;
@@ -696,7 +668,6 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
   @override
   Widget build(BuildContext context) {
     final elder = widget.elder;
-    final onLangChanged = widget.onLangChanged;
     final text = Theme.of(context).textTheme;
     final age =
         elder.birthYear == null ? null : DateTime.now().year - elder.birthYear!;
@@ -736,35 +707,6 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: AppSpacing.lg),
-
-          // 語音語言——全 App 唯一能改的地方（長者端不提供切換）
-          _ProfileRow(
-            label: '說話語言',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    _LangOption(
-                      label: '華語',
-                      selected: elder.langPreference != 'hak',
-                      onTap: () => onLangChanged('zh-TW'),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    _LangOption(
-                      label: '客語',
-                      selected: elder.langPreference == 'hak',
-                      onTap: () => onLangChanged('hak'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                Text('※ 影響語音辨識',
-                    style: text.bodySmall?.copyWith(color: AppColors.chevron)),
-              ],
-            ),
           ),
           const SizedBox(height: AppSpacing.md),
 
@@ -911,59 +853,6 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
                     style: text.bodySmall?.copyWith(color: AppColors.chevron)),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// 語言選項。選中同時用實心底與勾表示，不只靠顏色（MASTER.md §6）。
-class _LangOption extends StatelessWidget {
-  const _LangOption({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Semantics(
-      button: true,
-      selected: selected,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: const BorderRadius.all(AppRadius.pill),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 44),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.accentText : Colors.transparent,
-            borderRadius: const BorderRadius.all(AppRadius.pill),
-            border: Border.all(
-              // 未選取走 borderInteractive 而不是 border：後者是輸入框線，
-              // 壓在紙色底上只有 1.3:1，看不出這裡有一顆可以按的東西。
-              color:
-                  selected ? AppColors.accentText : AppColors.borderInteractive,
-              width: selected ? 2 : 1,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (selected) ...[
-                const Icon(Icons.check, size: 15, color: Colors.white),
-                const SizedBox(width: 4),
-              ],
-              Text(label,
-                  style: text.labelSmall?.copyWith(
-                      color: selected ? Colors.white : AppColors.inkSecondary)),
-            ],
-          ),
-        ),
       ),
     );
   }
