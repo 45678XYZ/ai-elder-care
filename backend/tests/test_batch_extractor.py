@@ -104,7 +104,7 @@ def stack(monkeypatch):
     importlib.reload(importlib.import_module("src.handlers.batch_extractor"))
 
 
-def seed_closed_session(sessions, *, with_manifest=False):  # with_manifest kept for compat
+def seed_closed_session(sessions):
     table = boto3.resource("dynamodb").Table(CONVERSATIONS_TABLE)
     for index, turn_id in enumerate(TURN_IDS):
         table.put_item(
@@ -130,9 +130,6 @@ def seed_closed_session(sessions, *, with_manifest=False):  # with_manifest kept
         "started_at": "2026-07-26T09:00:00.000+08:00",
         "last_activity_at": "2026-07-26T09:05:00.000+08:00",
     }
-    if with_manifest:
-        session["chunk_manifest"] = [MANIFEST_ENTRY]
-        session["chunk_planner_version"] = "chunk-planner-1"
     sessions.put_session(session)
     sessions.begin_closing(ELDER, SESSION, close_reason="client_requested")
     return sessions.finalize_closed(

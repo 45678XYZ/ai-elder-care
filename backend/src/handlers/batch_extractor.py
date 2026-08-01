@@ -177,7 +177,6 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         result.metrics,
         elder_id=elder_id,
         session_id=session_id,
-        chunker_type=config.chunker_type,
     )
     metrics.emit_batch_outcome(
         sessions.CLAIM_ACQUIRED,

@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .chunk_planner import ChunkManifest
 from .models import CanonicalEvent, DedupStats
 
 HIGH_LEVEL_TYPE_IDS: tuple[str, ...] = (
@@ -56,7 +55,7 @@ class PipelineResult:
     events: tuple[CanonicalEvent, ...]
     dedup: DedupStats = field(default_factory=DedupStats)
     usage: LlmUsage = field(default_factory=LlmUsage)
-    manifest: ChunkManifest | None = None
+    manifest: Any = None
     dropped_events: int = 0
     unmatched_predicates: int = 0
     stage_metrics: dict[str, Any] = field(default_factory=dict)
