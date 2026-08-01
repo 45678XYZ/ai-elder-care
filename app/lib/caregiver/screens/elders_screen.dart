@@ -1539,10 +1539,15 @@ class _RoutineCard extends StatelessWidget {
                                 ?.copyWith(color: AppColors.chevron)),
                       ],
                     ),
-                    if (routine.createdBy == 'conversation')
-                      Text('· 對話中建立',
-                          style: text.bodySmall
-                              ?.copyWith(color: AppColors.chevron)),
+                    // 兩種來源都標。原本只標「對話中建立」，自己排的那幾筆是
+                    // 空白——但空白讀起來像「還沒載到」而不是「我排的」，
+                    // 一整頁混在一起時照護者還是得逐筆回想哪筆是誰弄的。
+                    Text(
+                      routine.createdBy == 'conversation'
+                          ? '· 長者在對話中建立'
+                          : '· 照護者建立',
+                      style: text.bodySmall?.copyWith(color: AppColors.chevron),
+                    ),
                   ],
                 ),
               ],

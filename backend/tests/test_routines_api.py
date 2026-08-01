@@ -280,6 +280,7 @@ def test_get_daily_view_derives_status(store):
             "type": "medication",
             "scheduled_at": "2026-07-14T09:00:00+08:00",
             "status": "done",
+            "created_by": "caregiver",
             "completed_at": "2026-07-14T09:05:00.000+08:00",
             "completed_by": "conversation",
         },
@@ -289,6 +290,7 @@ def test_get_daily_view_derives_status(store):
             "type": "other",
             "scheduled_at": "2026-07-14T19:00:00+08:00",
             "status": "pending",
+            "created_by": "caregiver",
         },
     ]
 
@@ -473,6 +475,60 @@ def test_delete_routine_conflict_different_request_id(store):
     assert resp["statusCode"] == 409
 
 
+def test_delete_routine_by_elder_allows_own_conversation_routine(store):
+    """長者可刪自己在對話中建立的行程。"""
+    _seed_routine(store, created_by="conversation")
+    resp = handler.handler(
+        _event(
+            "DELETE",
+            routine_id="rtn_001",
+            params={"client_request_id": "req-del-1"},
+            resource="/routines/{routine_id}",
+            claims=_elder_claims(),
+        ),
+        None,
+    )
+
+    assert resp["statusCode"] == 200
+    assert _body(resp)["deleted"] is True
+    assert len(store["versions"]) == 0
+
+
+def test_delete_routine_by_elder_rejects_caregiver_routine(store):
+    """照護者建立的行程對長輩唯讀，長者刪不掉（與對話工具同一條政策）。"""
+    _seed_routine(store)  # created_by 預設 caregiver
+    resp = handler.handler(
+        _event(
+            "DELETE",
+            routine_id="rtn_001",
+            params={"client_request_id": "req-del-1"},
+            resource="/routines/{routine_id}",
+            claims=_elder_claims(),
+        ),
+        None,
+    )
+
+    assert _code(resp) == (403, "FORBIDDEN")
+    assert len(store["versions"]) == 1  # 沒被刪掉
+
+
+def test_delete_routine_by_caregiver_allows_conversation_routine(store):
+    """照護者不受來源限制，對話建立的也刪得掉。"""
+    _seed_routine(store, created_by="conversation")
+    resp = handler.handler(
+        _event(
+            "DELETE",
+            routine_id="rtn_001",
+            params={"client_request_id": "req-del-1"},
+            resource="/routines/{routine_id}",
+        ),
+        None,
+    )
+
+    assert resp["statusCode"] == 200
+    assert len(store["versions"]) == 0
+
+
 def test_delete_routine_missing_request_id(store):
     """DELETE 不帶 client_request_id 應回 400。"""
     _seed_routine(store)
@@ -608,6 +664,7 @@ def test_complete_writes_manual_event_and_returns_done(store):
         "type": "medication",
         "scheduled_at": "2026-07-14T09:00:00+08:00",
         "status": "done",
+        "created_by": "caregiver",
         "completed_at": domain.to_iso(NOW),
         "completed_by": "caregiver",
     }

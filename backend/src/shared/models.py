@@ -438,6 +438,7 @@ class RoutineOccurrence(BaseModel):
     type: str = Field(default="other", description="分類")
     scheduled_at: str = Field(..., description="預定時間 (ISO 8601)")
     status: Literal["pending", "done", "missed"] = Field(..., description="完成狀態")
+    created_by: str = Field(default="caregiver", description="建立者角色 (caregiver/conversation)")
     completed_at: str | None = Field(default=None, description="完成時間 (ISO 8601)")
     completed_by: str | None = Field(default=None, description="完成角色 (conversation/elder/caregiver)")
 

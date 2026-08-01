@@ -171,6 +171,9 @@ abstract final class DemoData {
       ]);
 
   /// 當日行程：三種狀態各一，好驗證 done／pending／missed 的視覺是否真的分得出來。
+  ///
+  /// `createdBy` 與 [routines] 的定義一致（rtn_003 是對話中建立的那筆）——長者頁
+  /// 靠它決定哪幾列給刪，兩邊對不上的話畫面會標錯來源。
   static Future<DailyRoutineView> dailyRoutines(String date) =>
       _delayed(DailyRoutineView(
         date: date,
@@ -181,6 +184,7 @@ abstract final class DemoData {
             type: 'medication',
             scheduledAt: _today.add(const Duration(hours: 9)),
             status: 'done',
+            createdBy: 'caregiver',
             completedAt: _today.add(const Duration(hours: 9, minutes: 5)),
             completedBy: 'conversation',
           ),
@@ -190,6 +194,7 @@ abstract final class DemoData {
             type: 'diet',
             scheduledAt: _today.add(const Duration(hours: 7, minutes: 30)),
             status: 'missed',
+            createdBy: 'conversation',
           ),
           RoutineOccurrence(
             routineId: 'rtn_003',
@@ -197,6 +202,7 @@ abstract final class DemoData {
             type: 'other',
             scheduledAt: _today.add(const Duration(hours: 15)),
             status: 'pending',
+            createdBy: 'conversation',
           ),
           RoutineOccurrence(
             routineId: 'rtn_002',
@@ -204,6 +210,7 @@ abstract final class DemoData {
             type: 'other',
             scheduledAt: _today.add(const Duration(hours: 19)),
             status: 'pending',
+            createdBy: 'caregiver',
           ),
         ],
       ));
@@ -216,6 +223,9 @@ abstract final class DemoData {
         type: o.type,
         scheduledAt: o.scheduledAt,
         status: 'done',
+        // 來源要跟著帶回來：真後端回的是同一筆 occurrence，完成不會改變它是誰
+        // 建的。漏掉的話長者頁打完勾，那顆刪除鈕會跟著消失。
+        createdBy: o.createdBy,
         completedAt: DateTime.now(),
         completedBy: 'elder',
       ));
