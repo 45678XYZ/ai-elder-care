@@ -411,3 +411,12 @@ variable "summary_partial_alarm_threshold" {
   type        = number
   default     = 10
 }
+
+# --- 中央氣象署 Open Data ---
+
+variable "cwa_api_key" {
+  description = "中央氣象署開放資料 API 授權碼（https://opendata.cwa.gov.tw/）"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

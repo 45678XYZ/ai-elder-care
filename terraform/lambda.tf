@@ -335,6 +335,7 @@ module "tools" {
     TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
     TABLE_ROUTINES             = aws_dynamodb_table.routines.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    CWA_API_KEY                = var.cwa_api_key
   }
 }
 

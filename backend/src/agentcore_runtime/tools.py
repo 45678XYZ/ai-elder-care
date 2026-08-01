@@ -202,6 +202,34 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
             "limit": (int, False, "要回顧最近幾句對話，預設為 8，最多 15。建議用預設值即可。"),
         },
     ),
+    (
+        "get_weather_forecast",
+        "Get the current weather forecast for the elder's area. Use when the elder asks about weather, "
+        "temperature, rain, or whether to bring an umbrella/wear warm clothes. Also useful for proactive "
+        "care reminders related to weather (e.g., cold snap warning, heat stroke prevention).",
+        {
+            "location": (
+                str,
+                False,
+                "氣象署地區名稱（如：臺北市、高雄市）。不填則自動從長者居住地取得。",
+            ),
+        },
+    ),
+    (
+        "get_events_by_time",
+        "Query the elder's life events within a specific date range. Use when the elder asks about what "
+        "happened on particular days (e.g., 'Did I take my medicine last Tuesday?', 'What exercise did I do "
+        "this week?'). Unlike get_recent_events which returns the latest 20, this tool filters by exact dates.",
+        {
+            "start_date": (str, True, "查詢起始日期，格式為 YYYY-MM-DD"),
+            "end_date": (str, True, "查詢結束日期，格式為 YYYY-MM-DD"),
+            "event_type": (
+                str,
+                False,
+                "可選的事件類型過濾：routine_completion, wellbeing, activity, family, diet, safety, other",
+            ),
+        },
+    ),
 ]
 
 # 呼叫後代表 routine 定義或當日狀態已變更；chat.py 依此回 routines_updated
