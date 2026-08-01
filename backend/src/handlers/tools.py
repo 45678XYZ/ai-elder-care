@@ -165,7 +165,7 @@ def _build_escalation_email(elder_id: str, message_content: str) -> str:
 def handle_get_today_routines(params: Dict[str, Any]) -> Dict[str, Any]:
     """工具一：查詢長者指定日期的例行行程清單與動態完成狀態。"""
     elder_id = params.get("elder_id")
-    date_str = params.get("date", time.strftime("%Y-%m-%d"))
+    date_str = params.get("date", routines.today())
 
     if not elder_id:
         return {"status": "error", "message": "缺少必要參數 elder_id"}
@@ -186,7 +186,7 @@ def handle_complete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
     """工具二：標記行程完成，並同步連動寫入 events 表。"""
     elder_id = params.get("elder_id")
     routine_id = params.get("routine_id")
-    date_str = params.get("date", time.strftime("%Y-%m-%d"))
+    date_str = params.get("date", routines.today())
     completed_by = params.get("completed_by", "conversation")
 
     if not elder_id or not routine_id:
@@ -525,7 +525,7 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
 def handle_remind_pending_routines(params: Dict[str, Any]) -> Dict[str, Any]:
     """工具六：查詢長者今日尚未完成 (pending) 的例行行程並回傳提醒事項。"""
     elder_id = params.get("elder_id")
-    date_str = params.get("date", time.strftime("%Y-%m-%d"))
+    date_str = params.get("date", routines.today())
 
     if not elder_id:
         return {"status": "error", "message": "缺少必要參數 elder_id"}
