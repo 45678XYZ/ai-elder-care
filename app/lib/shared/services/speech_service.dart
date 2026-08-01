@@ -1,5 +1,27 @@
 import 'package:speech_to_text/speech_to_text.dart';
 
+/// 同一輪聆聽裡，從「目前認定的文字」與「剛收到的文字」挑出該用的那一份。
+///
+/// Android 的辨識器會**在同一輪裡重新分段**：分段之後 `recognizedWords` 從新的一段
+/// 從頭算起，畫面上前半句當場消失，送出去的也只剩後半句。實機是講完
+/// 「我今天 11 點要去吃午餐」之後看著逐字稿被削掉。
+///
+/// 判準：新的一份比較短、而且是舊的一部分 → 那是重新分段，留舊的。
+/// 真正的修正（補標點、改詞）長得不一樣，那種要用新的。
+///
+/// **絕不把兩份接起來**——接起來會變成「把我說的話改成客語把我說的話改成客語
+/// 四海腔」那種重複句，而那串會原樣送到後端當成長輩說的話。這裡永遠是二選一。
+///
+/// 代價：辨識器正當地收回多吐的字時也會被擋下來，逐字稿留著一兩個多餘的字。
+/// 比起半句話消失，這個交換划算——時間與意圖通常都在前半句。
+String mergeRecognized(String current, String next) {
+  final a = next.trim();
+  final b = current.trim();
+  if (a.isEmpty) return b;
+  if (b.length > a.length && b.contains(a)) return b;
+  return a;
+}
+
 /// 裝置端語音辨識（speech_to_text，底層走 Android 系統語音服務）。
 ///
 /// 華語（zh-TW）在裝置端辨識成文字後，由 App 以 text 送 `/ask`（現在）或 `/chat`（之後）。

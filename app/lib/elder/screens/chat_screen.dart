@@ -126,6 +126,7 @@ class _ChatScreenState extends State<ChatScreen>
     AppSession.langRevision.removeListener(_onLangChanged);
     AppSession.textLangRevision.removeListener(_onTextLangChanged);
     _listenTimer?.cancel();
+    _silenceTimer?.cancel();
     _scrollCtrl.dispose();
     _pulse.dispose();
     _speech.cancel();
@@ -158,6 +159,7 @@ class _ChatScreenState extends State<ChatScreen>
                 // 錯誤已經處理完這一輪，別讓後續的狀態回報再補救一次
                 // （否則同一輪會補兩則提示、錯誤計數也多加一次）。
                 _awaitingFinal = false;
+                _silenceTimer?.cancel();
                 _appendNotHeardHint();
                 _onListenFailed();
               },
@@ -179,6 +181,28 @@ class _ChatScreenState extends State<ChatScreen>
   /// 繼續往上跳，而底下早就沒在聽了。實機看到過連續 400 秒沒有任何逐字稿。
   bool _awaitingFinal = false;
 
+  /// 這一輪目前認定的辨識文字（見 [mergeRecognized]）。
+  ///
+  /// Android 的辨識器會**在同一輪裡重新分段**：分段之後 `recognizedWords` 從新的
+  /// 一段從頭算起，畫面上前半句當場消失、送出去的也只剩後半句。實機是講完
+  /// 「我今天 11 點要去吃午餐」之後看著逐字稿被削掉。
+  String _bestHeard = '';
+
+  /// 收到辨識文字之後的靜音收尾計時。
+  ///
+  /// `listen` 的 `pauseFor` 由外掛與系統語音服務共同決定，實機不保證準時觸發——
+  /// 長輩講完了，畫面卻停在「我在聽」、秒數一路跳到 `listenFor` 上限（30 秒）
+  /// 才收工。所以 App 這邊自己再看一次：最後一次收到文字之後靜音超過
+  /// [_silenceCutoff] 就主動 stop，讓最終結果現在就出來。
+  Timer? _silenceTimer;
+
+  /// 講完之後最多等這麼久就收尾。
+  ///
+  /// 比 `pauseFor` 的 6 秒短，所以正常情況下由這裡決定節奏，`pauseFor` 只當外層
+  /// 保險。不能再短：長輩講一句話中間本來就會停頓（想詞、換氣），切太快會把
+  /// 半句話當成一句送出去。
+  static const _silenceCutoff = Duration(seconds: 4);
+
   /// 這一輪觸發的長者檔案重讀。開下一輪聆聽之前要等它落地——
   /// 見 [_handleQuestion] 裡的說明。
   Future<void>? _profileRefresh;
@@ -196,8 +220,35 @@ class _ChatScreenState extends State<ChatScreen>
     final ended = status == 'done' || status == 'notListening';
     if (!ended || !_awaitingFinal) return;
     _awaitingFinal = false;
+    _silenceTimer?.cancel();
+
+    // 已經聽到內容、只是最終結果沒送來（主動 stop 之後常常是這樣：辨識器直接
+    // 收工，不再補一次 isFinal）。那句話不能就這樣丟掉，直接當成定案送出——
+    // 否則長輩看到自己的話出現在畫面上，然後被一句「沒聽清楚」蓋掉。
+    final heard = _bestHeard.trim();
+    if (heard.isNotEmpty) {
+      _bestHeard = '';
+      _consecutiveListenErrors = 0;
+      _handleQuestion(text: heard, continueLoop: true);
+      return;
+    }
+
     _appendNotHeardHint();
     _onListenFailed();
+  }
+
+  /// 重新開始算靜音。每收到一次辨識文字就往後推。
+  void _armSilenceCutoff() {
+    _silenceTimer?.cancel();
+    _silenceTimer = Timer(_silenceCutoff, () async {
+      if (!mounted) return;
+      try {
+        // stop 保留已辨識的內容並觸發最終結果；cancel 會整段丟掉，不能用。
+        await _speech.stop();
+      } catch (_) {
+        // 已經停了或平台不支援：`onStatus` 那條路會接住
+      }
+    });
   }
 
   /// 連續辨識失敗的次數。成功收到一句就歸零。
@@ -275,6 +326,7 @@ class _ChatScreenState extends State<ChatScreen>
     // 主動停止會讓語音服務回報 notListening，那是預期中的收工，不該被
     // [_onSpeechStatus] 當成「悄悄收工」而補一則「沒聽清楚」。
     _awaitingFinal = false;
+    _silenceTimer?.cancel();
     await _speech.stop();
     // 錄到一半按停止：整段丟掉而不是送出。長輩按停止的意思是「不要了」，
     // 把半句話送去辨識並記進資料，跟他的意圖相反。
@@ -287,6 +339,8 @@ class _ChatScreenState extends State<ChatScreen>
   Future<void> _listenTurn() async {
     if (!_conversationActive || !_micAvailable) return;
     // 只清「正在辨識中」的暫存，不動 _messages——歷史要留著。
+    _silenceTimer?.cancel();
+    _bestHeard = '';
     setState(() {
       _setPhase(_Phase.listening);
       _question = '';
@@ -313,18 +367,25 @@ class _ChatScreenState extends State<ChatScreen>
       onResult: (text, isFinal) {
         if (!mounted) return;
 
-        setState(() => _question = text);
+        // 顯示的與送出的都走同一份，畫面上看到什麼就是送出什麼。
+        final heard = mergeRecognized(_bestHeard, text);
+        _bestHeard = heard;
+        setState(() => _question = heard);
         // 逐字稿邊講邊長，也要跟著捲，否則長輩看不到自己正在說的那一句。
         // 不用動畫：部分結果來得很密，每次都播動畫畫面會一直抖。
         _scrollToBottom(animate: false);
 
+        // 有文字了才開始算靜音。還沒開口就算的話，會在長輩想詞的時候切掉他。
+        if (!isFinal && heard.isNotEmpty) _armSilenceCutoff();
+
         if (isFinal && !handled) {
           handled = true;
+          _silenceTimer?.cancel();
           // 這一輪有結果了，狀態回報不必再補救。
           _awaitingFinal = false;
           // 收到一句完整的就代表辨識器恢復正常了，錯誤計數歸零。
           _consecutiveListenErrors = 0;
-          final q = text.trim();
+          final q = heard.trim();
           if (q.isEmpty) {
             if (_conversationActive) _listenTurn();
           } else {
