@@ -251,6 +251,9 @@ def _display_fields(version: dict[str, Any], date_str: str) -> dict[str, Any]:
         "title": version.get("title", ""),
         "type": version.get("type", "other"),
         "scheduled_at": scheduled_at(date_str, version.get("schedule") or {}),
+        # 來源跟著採用的版本走，不另外查定義列表：completion-first 時採用的是 completion
+        # event 所記版本，而 routine 被刪掉後定義列表已查無此筆、當日 occurrence 卻還在。
+        "created_by": version.get("created_by", "caregiver"),
     }
 
 

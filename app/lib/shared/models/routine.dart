@@ -131,6 +131,7 @@ class RoutineOccurrence {
     required this.type,
     required this.scheduledAt,
     required this.status,
+    this.createdBy,
     this.completedAt,
     this.completedBy,
   });
@@ -142,6 +143,11 @@ class RoutineOccurrence {
 
   /// 狀態；可用值與判定規則見 docs/api.md。
   final String status;
+
+  /// 建立來源；與定義列表同一組值（見 docs/api.md）。長者端據此決定能不能刪
+  /// ——照護者建立的對長輩唯讀。後端取的是這筆 occurrence 實際採用的那一版，
+  /// 所以不必另外呼叫定義列表去對。
+  final String? createdBy;
   final DateTime? completedAt;
 
   /// 完成者；可用值見 docs/api.md。
@@ -155,6 +161,7 @@ class RoutineOccurrence {
         scheduledAt: DateTime.tryParse(json['scheduled_at'] as String? ?? '') ??
             DateTime.fromMillisecondsSinceEpoch(0),
         status: json['status'] as String? ?? 'pending',
+        createdBy: json['created_by'] as String?,
         completedAt: json['completed_at'] == null
             ? null
             : DateTime.tryParse(json['completed_at'] as String),

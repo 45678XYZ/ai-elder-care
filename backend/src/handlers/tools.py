@@ -347,7 +347,7 @@ def handle_update_routine(params: Dict[str, Any]) -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 
 def handle_delete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
-    """工具 3.2：刪除長者的例行公事（真刪除，若要恢復則重新建立）。"""
+    """工具 3.2：刪除長者自建的例行公事（照護者建立的不可由對話刪除）。"""
     elder_id = params.get("elder_id")
     routine_id = params.get("routine_id")
 
@@ -358,10 +358,21 @@ def handle_delete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
         versions = db.list_routine_versions(routine_id)
         if not versions:
             return {"status": "error", "message": "找不到指定的例行公事"}
-        if versions[-1].get("elder_id") != elder_id:
+        current = versions[-1]
+        if current.get("elder_id") != elder_id:
             return {"status": "error", "message": "資料不符，無法刪除此行程"}
 
-        db.delete_routine(routine_id)
+        if current.get("created_by") != "conversation":
+            return {
+                "status": "error",
+                "message": "這個行程是照護者建立的，無法由對話中刪除，請聯繫照護者處理",
+            }
+
+        db.delete_routine(
+            routine_id,
+            deleted_by=f"conversation:{elder_id}",
+            client_request_id=f"tool_{routine_id}_{int(time.time())}",
+        )
         return {"status": "success", "message": f"已刪除例行公事 {routine_id}"}
     except Exception as e:
         print(f"[Error] handle_delete_routine 失敗: {e}")
@@ -1064,6 +1075,40 @@ def handle_get_events_by_time(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"查詢事件失敗: {str(e)}"}
 
 
+# -----------------------------------------------------------------------------
+# 工具十五：將已完成的例行公事退回待辦狀態
+# -----------------------------------------------------------------------------
+
+def handle_uncomplete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具十五：將已完成的例行公事退回待辦（pending）狀態，用於長者誤觸完成時撤銷。"""
+    elder_id = params.get("elder_id")
+    routine_id = params.get("routine_id")
+    date_str = params.get("date", routines.today())
+
+    if not elder_id or not routine_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
+
+    try:
+        deleted = db.delete_routine_completion(elder_id, routine_id, date_str)
+        if deleted:
+            return {
+                "status": "success",
+                "routine_id": routine_id,
+                "routine_date": date_str,
+                "message": "已將行程退回待辦狀態",
+            }
+        else:
+            return {
+                "status": "not_found",
+                "routine_id": routine_id,
+                "routine_date": date_str,
+                "message": "該行程今日尚未完成，無需退回",
+            }
+    except Exception as e:
+        print(f"[Error] handle_uncomplete_routine 失敗: {e}")
+        return {"status": "error", "message": f"退回待辦失敗: {str(e)}"}
+
+
 # 工具分流映射字典 (Function Name -> Handler Function)
 # -----------------------------------------------------------------------------
 
@@ -1082,6 +1127,7 @@ TOOL_HANDLERS = {
     "get_recent_conversations": handle_get_recent_conversations,
     "get_weather_forecast": handle_get_weather_forecast,
     "get_events_by_time": handle_get_events_by_time,
+    "uncomplete_routine": handle_uncomplete_routine,
 }
 
 

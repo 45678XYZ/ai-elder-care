@@ -526,6 +526,7 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
       "type": "medication",
       "scheduled_at": "2026-07-14T09:00:00+08:00",
       "status": "done",
+      "created_by": "caregiver",
       "completed_at": "2026-07-14T09:05:00+08:00",
       "completed_by": "conversation"
     },
@@ -534,13 +535,16 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
       "title": "量血壓",
       "type": "other",
       "scheduled_at": "2026-07-14T19:00:00+08:00",
-      "status": "pending"
+      "status": "pending",
+      "created_by": "conversation"
     }
   ]
 }
 ```
 
 `status` 為 `pending|done|missed`。所有當日查詢與摘要的歷史解析都使用 `occurrence_cutoff=min(query_or_summary_cutoff, routine_date 的台灣日界結束 23:59:59.999+08:00)`；當日查詢的 `query_or_summary_cutoff` 是本次查詢時間，摘要則是後端 `input_through_at`。若 canonical completion event 已存在，occurrence 固定為 done，`title`、`type`、`scheduled_at` 等顯示定義優先採 event 記錄之 `routine_version` 對應的不可變版本，`completed_at`、`completed_by` 等完成資料採該 event；即使同日稍後改版，也保留完成當時資料。只有未完成 occurrence 才以 `occurrence_cutoff` 前最新有效版本收斂，同日 cutoff 前的新 schedule 可 supersede 舊 schedule但不新增第二筆。歷史日期越過台灣日界後 cutoff 封頂，後續版本不得 retroactively 改寫。未完成且超過唯一 occurrence 的 `scheduled_at + grace period` 才為 missed；grace 預設 120 分鐘，由 `ROUTINE_GRACE_MINUTES` 設定，routines、摘要與統計共用。completion canonical identity 為 `elder_id + routine_id + routine_date`，`routine_version` 只記錄完成採用版本；`completed_by` 為 `conversation|elder|caregiver`。
+
+`created_by` 與定義列表同一組值（`caregiver|conversation`），取該 occurrence 實際採用之版本的建立來源——completion-first 時即 event 所記 `routine_version` 那一版。App 據此標示來源，並判斷長者端可否刪除（見 DELETE）；不需為此另外呼叫定義列表，routine 已刪除但當日仍有 completion 的 occurrence 在定義列表中查無此筆。
 
 ### POST /routines — 建立（照護者）
 
@@ -563,13 +567,15 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 
 Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_id + authenticated actor sub + client_request_id`，並保存正規化 request hash；後端以單一 transaction 驗證 scoped request、保護 current version、關閉舊版並建立唯一下一版。並行相同 scope/hash 回同一結果且不建立額外版本；同一 scope 搭配不同 hash 回 409 `IDEMPOTENCY_CONFLICT`。並行的另一次修改先行改版、本次未成立時回 409 `REQUEST_IN_PROGRESS`，client 以同一 `client_request_id` 重試。長者帳號呼叫回 403 `FORBIDDEN`；`routine_id` 不存在回 404 `ROUTINE_NOT_FOUND`。
 
-### DELETE /routines/{routine_id} — 刪除（照護者）
+### DELETE /routines/{routine_id} — 刪除（兩端，長者限自建）
 
-照護者硬刪除指定例行公事的所有版本，並寫入輕量 tombstone（version=0，TTL 7 天後自動清除）供冪等重播。
+硬刪除指定例行公事的所有版本，並寫入輕量 tombstone（version=0，TTL 7 天後自動清除）供冪等重播。
+
+照護者可刪任一筆。長者只能刪 `created_by=conversation`（自己在對話中建立）的那些；刪照護者建立的回 403 `FORBIDDEN`。與對話工具 `delete_routine` 同一條政策，差別只在入口。
 
 必須帶 Query 參數 `client_request_id`。相同 `client_request_id` 重試冪等回 200；不同 `client_request_id` 對已刪除的 routine 回 409 `IDEMPOTENCY_CONFLICT`。未提供 `client_request_id` 回 400 `MISSING_REQUEST_ID`。
 
-Response 200：`{"deleted": true, "routine_id": "rtn_xxx"}`。長者帳號呼叫回 403 `FORBIDDEN`；`routine_id` 不存在（且無 tombstone）回 404 `ROUTINE_NOT_FOUND`。
+Response 200：`{"deleted": true, "routine_id": "rtn_xxx"}`。`routine_id` 不存在（且無 tombstone）回 404 `ROUTINE_NOT_FOUND`。冪等重播只比對 tombstone 的 `client_request_id`，不再檢查角色——能重播的就是當初刪掉它的那個呼叫端。
 
 ### POST /routines/{routine_id}/complete — 手動完成（兩端）
 
@@ -640,5 +646,6 @@ Response 200：`{"deleted": true, "routine_id": "rtn_xxx"}`。長者帳號呼叫
 | `GET /routines` | 定義／當日行程 | 兩端 |
 | `POST /routines` | 建立 routine | 照護者 |
 | `PATCH /routines/{id}` | 修改／停用 routine | 照護者 |
+| `DELETE /routines/{id}` | 刪除 routine | 兩端；長者限 `created_by=conversation` |
 | `POST /routines/{id}/complete` | 手動確認完成 | 兩端 |
 | `GET /stats` | 互動與行程統計 | 照護者 |

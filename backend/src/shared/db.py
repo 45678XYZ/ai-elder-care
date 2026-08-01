@@ -462,7 +462,8 @@ def get_caregiver_by_sub(sub: str) -> dict[str, Any] | None:
     try:
         resp = table.query(
             IndexName="by-sub",
-            KeyConditionExpression="sub = :s",
+            KeyConditionExpression="#s = :s",
+            ExpressionAttributeNames={"#s": "sub"},
             ExpressionAttributeValues={":s": sub},
         )
         items = resp.get("Items", [])
@@ -481,7 +482,8 @@ def batch_get_caregivers_by_subs(subs: list[str]) -> dict[str, dict[str, Any]]:
         for sub in subs:
             resp = table.query(
                 IndexName="by-sub",
-                KeyConditionExpression="sub = :s",
+                KeyConditionExpression="#s = :s",
+                ExpressionAttributeNames={"#s": "sub"},
                 ExpressionAttributeValues={":s": sub},
             )
             items = resp.get("Items", [])
@@ -1170,6 +1172,26 @@ def complete_routine_with_event(
         "completed_by": completed_by,
         "event_id": event["event_id"],
     }
+
+
+def delete_routine_completion(elder_id: str, routine_id: str, routine_date: str) -> bool:
+    """刪除 routine completion event，讓該行程退回未完成狀態。回傳是否有刪除。"""
+    from src.extraction.canonical import event_id_for
+
+    canonical_key = routine_completion_key(routine_id, routine_date)
+    event_id = event_id_for(elder_id, canonical_key)
+
+    table = get_dynamodb_resource().Table(TABLE_EVENTS)
+    try:
+        table.delete_item(
+            Key={"elder_id": elder_id, "event_id": event_id},
+            ConditionExpression="attribute_exists(event_id)",
+        )
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise DBError(f"刪除 routine completion 失敗: {e.response['Error']['Message']}")
 
 
 # -----------------------------------------------------------------------------

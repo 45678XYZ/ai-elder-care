@@ -44,6 +44,14 @@ class AsyncView<T> extends StatelessWidget {
       future: future,
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
+          // 換上新的 future 時 FutureBuilder 會保留上一份 snapshot（`inState` 只換
+          // 狀態、不丟資料）。手上還有成功資料就繼續畫它：背景重拉不該把畫面退回
+          // 轉圈，也不該把照護者捲到一半的清單彈回最上面——ListView 被換成轉圈畫面
+          // 就等於整棵重建，捲動位置跟著歸零。
+          // 上一次是失敗的就不套用：那時該畫的是轉圈，不是把錯誤留在畫面上。
+          if (snap.hasData && !snap.hasError) {
+            return _success(context, snap.data as T);
+          }
           return _Centered(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -90,26 +98,32 @@ class AsyncView<T> extends StatelessWidget {
           );
         }
 
-        final data = snap.data as T;
-        if (isEmpty?.call(data) ?? false) {
-          return _Centered(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(emptyIcon, size: 44, color: AppColors.chevron),
-                const SizedBox(height: AppSpacing.md),
-                Text(t(emptyText),
-                    textAlign: TextAlign.center,
-                    style: _bodyStyle(context)
-                        ?.copyWith(color: AppColors.inkSecondary)),
-              ],
-            ),
-          );
-        }
-
-        return builder(context, data);
+        return _success(context, snap.data as T);
       },
     );
+  }
+
+  /// 成功態：空的畫空狀態，否則交給呼叫端。
+  ///
+  /// 抽出來是因為背景重拉那條路要重畫同一份資料，不能只是複製一次判斷——
+  /// 兩邊分岔的話會出現「重拉時空清單短暫顯示成有資料」這種說不清的畫面。
+  Widget _success(BuildContext context, T data) {
+    if (isEmpty?.call(data) ?? false) {
+      return _Centered(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(emptyIcon, size: 44, color: AppColors.chevron),
+            const SizedBox(height: AppSpacing.md),
+            Text(t(emptyText),
+                textAlign: TextAlign.center,
+                style: _bodyStyle(context)
+                    ?.copyWith(color: AppColors.inkSecondary)),
+          ],
+        ),
+      );
+    }
+    return builder(context, data);
   }
 
   TextStyle? _bodyStyle(BuildContext c) {

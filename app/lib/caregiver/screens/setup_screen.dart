@@ -122,9 +122,9 @@ class _SetupScreenState extends State<SetupScreen> {
       );
       return;
     }
-    // TODO: 串接後 POST /elders 建立長者資料
-    //   （name / nickname / birth_year / address_region / lang_preference）。
-    // 目前先持久化到本機：標記已完成首次設定並存長者資料，之後啟動不再進此畫面。
+    // 兩件事一起做：存本機（標記已完成首次設定，之後啟動不再進此畫面）＋
+    // `POST /elders` 建立長者資料。實際送出在 session_store 的 saveSetup／
+    // consumePendingSetup 裡——後端那一步失敗不擋流程，本機這份仍然算數。
     final email = widget.email;
     final name = _nameCtrl.text.trim();
     final nickname = _nicknameCtrl.text.trim();

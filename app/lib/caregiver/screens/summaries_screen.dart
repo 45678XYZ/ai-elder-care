@@ -6,6 +6,7 @@ import '../../shared/services/care_repository.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
+import '../../shared/widgets/auto_refresh.dart';
 import '../../shared/widgets/care_header.dart';
 import '../../shared/widgets/status_chip.dart';
 import '../../theme/app_theme.dart';
@@ -25,7 +26,8 @@ class SummariesScreen extends StatefulWidget {
   State<SummariesScreen> createState() => _SummariesScreenState();
 }
 
-class _SummariesScreenState extends State<SummariesScreen> {
+class _SummariesScreenState extends State<SummariesScreen>
+    with AutoRefreshState<SummariesScreen> {
   late Future<ApiPage<DailySummary>> _future;
   bool _generating = false;
 
@@ -34,6 +36,31 @@ class _SummariesScreenState extends State<SummariesScreen> {
     super.initState();
     _load();
   }
+
+  /// 今天的摘要是後端一路補上去的（partial → 完整），照護者開著這一頁等的就是那個。
+  @override
+  Future<void> autoRefresh() async {
+    try {
+      // 先確保清單載好再取 id：第一次進來時 `selectedElderId` 要等
+      // `ensureEldersLoaded` 之後才有值，太早取會拿到 null 而把好結果誤判成過期。
+      // 這個呼叫是冪等的（有資料就直接返回），不會多打一次 `GET /elders`。
+      await AppSession.instance.ensureEldersLoaded();
+      final requested = AppSession.instance.selectedElderId;
+      final page = await _fetch();
+      if (!mounted) return;
+      // 切長輩走 `onElderChanged → _reload()`，跟這一趟背景重拉是兩個並行的請求，
+      // **後回來的贏**。前一位的比較慢時，標題顯示的是新長輩、摘要卻是上一位的。
+      if (AppSession.instance.selectedElderId != requested) return;
+      setState(() => _future = Future.value(page));
+    } catch (_) {
+      // 靜默：畫面維持上一份成功的資料
+    }
+  }
+
+  /// 手動生成進行中不插隊：那條路自己會在完成後 `_reload`，
+  /// 兩份結果同時回來會讓畫面在新舊之間跳一下。
+  @override
+  bool get canAutoRefresh => !_generating;
 
   void _load() {
     _future = _fetch();

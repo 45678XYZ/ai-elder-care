@@ -126,6 +126,7 @@ class _ChatScreenState extends State<ChatScreen>
     AppSession.langRevision.removeListener(_onLangChanged);
     AppSession.textLangRevision.removeListener(_onTextLangChanged);
     _listenTimer?.cancel();
+    _silenceTimer?.cancel();
     _scrollCtrl.dispose();
     _pulse.dispose();
     _speech.cancel();
@@ -158,6 +159,7 @@ class _ChatScreenState extends State<ChatScreen>
                 // 錯誤已經處理完這一輪，別讓後續的狀態回報再補救一次
                 // （否則同一輪會補兩則提示、錯誤計數也多加一次）。
                 _awaitingFinal = false;
+                _silenceTimer?.cancel();
                 _appendNotHeardHint();
                 _onListenFailed();
               },
@@ -179,6 +181,35 @@ class _ChatScreenState extends State<ChatScreen>
   /// 繼續往上跳，而底下早就沒在聽了。實機看到過連續 400 秒沒有任何逐字稿。
   bool _awaitingFinal = false;
 
+  /// 這一輪目前認定的辨識文字（見 [mergeRecognized]）。
+  ///
+  /// Android 的辨識器會**在同一輪裡重新分段**：分段之後 `recognizedWords` 從新的
+  /// 一段從頭算起，畫面上前半句當場消失、送出去的也只剩後半句。實機是講完
+  /// 「我今天 11 點要去吃午餐」之後看著逐字稿被削掉。
+  String _bestHeard = '';
+
+  /// 收到辨識文字之後的靜音收尾計時。
+  ///
+  /// `listen` 的 `pauseFor` 由外掛與系統語音服務共同決定，實機不保證準時觸發——
+  /// 長輩講完了，畫面卻停在「我在聽」、秒數一路跳到 `listenFor` 上限（30 秒）
+  /// 才收工。所以 App 這邊自己再看一次：最後一次收到文字之後靜音超過
+  /// [_silenceCutoff] 就主動 stop，讓最終結果現在就出來。
+  Timer? _silenceTimer;
+
+  /// 講完之後最多等這麼久就收尾。
+  ///
+  /// 比 `pauseFor` 的 6 秒短，所以正常情況下由這裡決定節奏，`pauseFor` 只當外層
+  /// 保險。不能再短：長輩講一句話中間本來就會停頓（想詞、換氣），切太快會把
+  /// 半句話當成一句送出去。
+  static const _silenceCutoff = Duration(seconds: 4);
+
+  /// 這一輪的辨識結果已經送出去了。
+  ///
+  /// 有兩條路會送出同一輪：`onResult` 的最終結果，以及 `onStatus` 收工時的補送。
+  /// 兩條路**必須看同一個旗標**——各自用自己的區域變數時，狀態先到、結果後到就會
+  /// 送兩次：畫面上兩顆一模一樣的泡泡，後端也收到兩次 /chat。
+  bool _turnConsumed = false;
+
   /// 這一輪觸發的長者檔案重讀。開下一輪聆聽之前要等它落地——
   /// 見 [_handleQuestion] 裡的說明。
   Future<void>? _profileRefresh;
@@ -196,8 +227,42 @@ class _ChatScreenState extends State<ChatScreen>
     final ended = status == 'done' || status == 'notListening';
     if (!ended || !_awaitingFinal) return;
     _awaitingFinal = false;
+    _silenceTimer?.cancel();
+
+    // 已經聽到內容、只是最終結果還沒到。那句話不能丟掉，但**也不能立刻送**：
+    // 主動 stop 之後狀態回報常常比 `onResult` 早一步到，立刻送就會跟隨後到達的
+    // 最終結果送成兩筆——畫面上兩顆一模一樣的泡泡、後端兩次 /chat，第二次還會
+    // 撞上同一輪而回錯誤，最後長輩看到的是「沒聽清楚」。實機重現過。
+    //
+    // 所以留一小段時間給最終結果先走。時間到了還沒有人處理這一輪，才由這裡補送。
+    if (_bestHeard.trim().isNotEmpty) {
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (!mounted || _turnConsumed || !_conversationActive) return;
+        final heard = _bestHeard.trim();
+        if (heard.isEmpty) return;
+        _turnConsumed = true;
+        _consecutiveListenErrors = 0;
+        _handleQuestion(text: heard, continueLoop: true);
+      });
+      return;
+    }
+
     _appendNotHeardHint();
     _onListenFailed();
+  }
+
+  /// 重新開始算靜音。每收到一次辨識文字就往後推。
+  void _armSilenceCutoff() {
+    _silenceTimer?.cancel();
+    _silenceTimer = Timer(_silenceCutoff, () async {
+      if (!mounted) return;
+      try {
+        // stop 保留已辨識的內容並觸發最終結果；cancel 會整段丟掉，不能用。
+        await _speech.stop();
+      } catch (_) {
+        // 已經停了或平台不支援：`onStatus` 那條路會接住
+      }
+    });
   }
 
   /// 連續辨識失敗的次數。成功收到一句就歸零。
@@ -275,18 +340,31 @@ class _ChatScreenState extends State<ChatScreen>
     // 主動停止會讓語音服務回報 notListening，那是預期中的收工，不該被
     // [_onSpeechStatus] 當成「悄悄收工」而補一則「沒聽清楚」。
     _awaitingFinal = false;
+    _silenceTimer?.cancel();
+    // 按了停止就別再由補送那條路送出去——長輩按停止的意思是「不要了」。
+    _turnConsumed = true;
     await _speech.stop();
     // 錄到一半按停止：整段丟掉而不是送出。長輩按停止的意思是「不要了」，
     // 把半句話送去辨識並記進資料，跟他的意圖相反。
     await _recorder.cancel();
     await _audio.stop();
-    if (mounted) setState(() => _setPhase(_Phase.idle));
+    if (!mounted) return;
+    setState(() {
+      _setPhase(_Phase.idle);
+      // 那句話不會送出去了，暫存泡泡也不該留在畫面上——留著就是一句沒人回應的
+      // 話掛在那裡，長輩以為它進去了。
+      _question = '';
+    });
   }
 
   /// 聆聽一句話；靜音斷句後拿到最終文字（華語）或音檔（客語）就送出。
   Future<void> _listenTurn() async {
     if (!_conversationActive || !_micAvailable) return;
     // 只清「正在辨識中」的暫存，不動 _messages——歷史要留著。
+    _silenceTimer?.cancel();
+    _bestHeard = '';
+    _turnConsumed = false;
+    _sawPartialThisTurn = false;
     setState(() {
       _setPhase(_Phase.listening);
       _question = '';
@@ -294,7 +372,17 @@ class _ChatScreenState extends State<ChatScreen>
 
     if (AppSession.instance.isHakka) return _recordTurn();
 
-    var handled = false; // 每輪只處理一次最終結果
+    // 開新的一輪之前把上一個 session 徹底丟掉。
+    //
+    // 用 cancel 不用 stop：stop **保留**已辨識的內容，於是上一輪那份最終結果會晚一步
+    // 送進來——而那時新的一輪已經裝好自己的回呼，它收到的是上一句話。畫面上就是同一句
+    // 話隔了一輪又出現一顆泡泡。cancel 才會丟棄。
+    try {
+      await _speech.cancel();
+    } catch (_) {
+      // 沒在聽或平台不支援，照樣往下開新的一輪
+    }
+    if (!mounted || !_conversationActive) return;
 
     // 從這裡到收到最終結果之間，若語音服務悄悄收工，要靠 [_onSpeechStatus] 接住。
     _awaitingFinal = true;
@@ -313,18 +401,55 @@ class _ChatScreenState extends State<ChatScreen>
       onResult: (text, isFinal) {
         if (!mounted) return;
 
-        setState(() => _question = text);
+        // 這一輪已經定案、送出去了。
+        //
+        // 外掛在 `stop()` 之後還會把最後一次結果補送進來，而且是**非同步**的：
+        // `await _speech.stop()` 早就回來、泡泡也已經移進歷史（`_question` 清空），
+        // 它才姍姍來遲。照收的話 `_question` 又被寫回去，那顆「正在辨識中」的暫存
+        // 泡泡重新亮起來——畫面上就是同一句逐字稿兩份，一直掛到回覆進來、下一輪
+        // 把它清掉為止。實機看到的正是「送出後到回覆之間重複，回覆後消失」。
+        //
+        // 定案之後這一輪的回呼一律不理，連 `_bestHeard` 都不動。
+        if (_turnConsumed) return;
+
+        // 顯示的與送出的都走同一份，畫面上看到什麼就是送出什麼。
+        final heard = mergeRecognized(_bestHeard, text);
+        _bestHeard = heard;
+        setState(() => _question = heard);
         // 逐字稿邊講邊長，也要跟著捲，否則長輩看不到自己正在說的那一句。
         // 不用動畫：部分結果來得很密，每次都播動畫畫面會一直抖。
         _scrollToBottom(animate: false);
 
-        if (isFinal && !handled) {
-          handled = true;
+        // 有文字了才開始算靜音。還沒開口就算的話，會在長輩想詞的時候切掉他。
+        if (!isFinal) {
+          _sawPartialThisTurn = true;
+          if (heard.isNotEmpty) _armSilenceCutoff();
+        }
+
+        // 上一輪的最終結果遲到了。
+        //
+        // 特徵是「這一輪一個部分結果都沒有，內容卻跟剛送出去的那一句一模一樣」——
+        // 真的在講話一定先有部分結果（`partialResults: true`）。照收的話就是同一句話
+        // 隔了一輪又送一次，畫面兩顆一樣的泡泡、後端也多記一筆。
+        //
+        // 上面的 cancel 應該已經擋掉大部分，這裡是最後一道：丟掉它，這一輪繼續聽。
+        if (isFinal &&
+            !_sawPartialThisTurn &&
+            heard.trim().isNotEmpty &&
+            heard.trim() == _lastSentText) {
+          _bestHeard = '';
+          setState(() => _question = '');
+          return;
+        }
+
+        if (isFinal && !_turnConsumed) {
+          _turnConsumed = true;
+          _silenceTimer?.cancel();
           // 這一輪有結果了，狀態回報不必再補救。
           _awaitingFinal = false;
           // 收到一句完整的就代表辨識器恢復正常了，錯誤計數歸零。
           _consecutiveListenErrors = 0;
-          final q = text.trim();
+          final q = heard.trim();
           if (q.isEmpty) {
             if (_conversationActive) _listenTurn();
           } else {
@@ -377,7 +502,53 @@ class _ChatScreenState extends State<ChatScreen>
     String? audioBase64,
     required bool continueLoop,
   }) async {
+    // 同一時間只准有一輪在飛。
+    //
+    // 語音迴圈本來就是嚴格輪流的——下一輪由這個函式的最後一行開啟——所以「上一輪
+    // 還在飛就又進來一輪」一定是 bug，不管是哪一條路造成的。擋在這裡而不是在各條
+    // 路上各放一個旗標：那種旗標會被下一輪的 [_listenTurn] 重設，時序一錯就漏，
+    // 而且每多一條送出的路就要記得多加一次。這裡是所有路的共同出口，擋一次就夠。
+    //
+    // 沒擋的後果實機看得到：同一句話兩顆一模一樣的泡泡，後端也收到兩次 `/chat`，
+    // 第二次撞上同一輪回錯誤，錯誤處理補一句「沒聽清楚」——看起來像沒聽到，
+    // 其實是自己撞掉的。而且那條錯誤路徑會跳過長者檔案重讀，於是長輩用講的改了
+    // 語言，主頁那顆鈕還停在舊的。
+    //
+    // 比對的是**序號**而不是單純一個布林值：[_stopConversation] 會把 [_turnSeq]
+    // 往前推、作廢在飛的那一輪，那種情況一定要放行。用布林值的話，長輩按了停止、
+    // 再按麥克風重講，那句話會卡在還沒回來的舊請求後面被默默丟掉——比重複更糟。
+    if (_inFlightTurn != null && _inFlightTurn == _turnSeq) return;
+
     final seq = ++_turnSeq;
+    _inFlightTurn = seq;
+    try {
+      await _runTurn(
+        seq: seq,
+        text: text,
+        audioBase64: audioBase64,
+        continueLoop: continueLoop,
+      );
+    } finally {
+      // 只清自己那一輪：中途被作廢時 [_inFlightTurn] 已經屬於別人了。
+      if (_inFlightTurn == seq) _inFlightTurn = null;
+    }
+  }
+
+  /// 還在飛的那一輪的序號；null = 沒有。見 [_handleQuestion] 的說明。
+  int? _inFlightTurn;
+
+  /// 這一輪收過部分結果沒有。用來認出「上一輪遲到的最終結果」，見 [_listenTurn]。
+  bool _sawPartialThisTurn = false;
+
+  /// 最近一次真的送出去的辨識文字。同上，用來認出遲到的重複。
+  String _lastSentText = '';
+
+  Future<void> _runTurn({
+    required int seq,
+    String? text,
+    String? audioBase64,
+    required bool continueLoop,
+  }) async {
     await _speech.stop();
     // 問題定案，移進歷史；暫存的辨識文字清掉，避免同一句出現兩次。
     //
@@ -385,6 +556,9 @@ class _ChatScreenState extends State<ChatScreen>
     // transcript 回來再補。先放一顆空泡泡而不是什麼都不放，是為了讓長輩看得到
     // 「我剛才那句進去了」，畫面不會在思考期間完全空著。
     final bubbleIndex = _messages.length;
+    // 記下來給下一輪比對：外掛把上一個 session 的最終結果延後送進新一輪時，
+    // 靠這個認出來（見 [_listenTurn] 的 cancel 與 onResult 裡的說明）。
+    if (text != null) _lastSentText = text.trim();
     setState(() {
       _setPhase(_Phase.thinking);
       _messages.add(_Message(isElder: true, text: text ?? _pendingElderBubble));

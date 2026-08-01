@@ -14,6 +14,7 @@ import '../../shared/services/notification_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
+import '../../shared/widgets/auto_refresh.dart';
 import '../../shared/widgets/care_header.dart';
 import '../../shared/widgets/sign_out_button.dart';
 import '../../theme/app_theme.dart';
@@ -32,7 +33,8 @@ class EldersScreen extends StatefulWidget {
   State<EldersScreen> createState() => _EldersScreenState();
 }
 
-class _EldersScreenState extends State<EldersScreen> {
+class _EldersScreenState extends State<EldersScreen>
+    with AutoRefreshState<EldersScreen> {
   static const _uuid = Uuid();
 
   late Future<List<Routine>> _future;
@@ -42,6 +44,26 @@ class _EldersScreenState extends State<EldersScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  /// 長輩用講的也能新增行程、改健康狀況，照護者這一頁得跟得上。
+  @override
+  Future<void> autoRefresh() async {
+    try {
+      // 先確保清單載好再取 id：第一次進來時 `selectedElderId` 要等
+      // `ensureEldersLoaded` 之後才有值，太早取會拿到 null 而把好結果誤判成過期。
+      // 這個呼叫是冪等的（有資料就直接返回），不會多打一次 `GET /elders`。
+      await AppSession.instance.ensureEldersLoaded();
+      final requested = AppSession.instance.selectedElderId;
+      final list = await _fetch();
+      if (!mounted) return;
+      // 切長輩走 `onElderChanged → _reload()`，跟這一趟背景重拉是兩個並行的請求，
+      // **後回來的贏**。
+      if (AppSession.instance.selectedElderId != requested) return;
+      setState(() => _future = Future.value(list));
+    } catch (_) {
+      // 靜默：畫面維持上一份成功的資料
+    }
   }
 
   void _load() {
@@ -61,6 +83,12 @@ class _EldersScreenState extends State<EldersScreen> {
       return const [];
     }
     final list = await CareRepo.instance.routines(elderId: elderId);
+    // 守在動狀態之前，不是只守呼叫端：`_load()` 與背景重拉是並行的，這一趟出去的
+    // 期間照護者可能已經切到別位長輩。套下去的後果不只是清單顯示錯人——底下那行
+    // 會把**上一位長輩的服藥提醒**排進這支手機，而畫面顯示的也是上一位的行程，
+    // 照護者以為在管新長輩、按下刪除刪掉的卻是舊長輩那筆（deleteRoutine 走
+    // routine_id，後端不會攔）。過期就整包丟掉。
+    if (AppSession.instance.selectedElderId != elderId) return list;
     _routines
       ..clear()
       ..addAll(list);
@@ -83,13 +111,23 @@ class _EldersScreenState extends State<EldersScreen> {
     );
     if (draft == null || !mounted) return;
 
+    // 這裡原本是 `selectedElderId!`。它寫在 try 裡所以不會紅屏，但照護者填完整張
+    // 表單之後看到的是「新增行程失敗：Null check operator used on a null value」。
+    // 剛註冊、還沒被任何長輩綁定的人必然走到這裡（那是這一頁的正常狀態，不是錯誤）。
+    // 現在入口本身就不畫了（見 build 的 `elder != null`），這道只是最後一層。
+    final elderId = AppSession.instance.selectedElderId;
+    if (elderId == null) {
+      _showError('還沒有綁定的長輩，無法新增行程');
+      return;
+    }
+
     // 冪等鍵：這一次新增從頭到尾用同一個值，重送不會建出第二筆。
     final clientRequestId = _uuid.v4();
     final Routine created;
     try {
       created = await CareRepo.instance.createRoutine(
         clientRequestId: clientRequestId,
-        elderId: AppSession.instance.selectedElderId!,
+        elderId: elderId,
         fields: draft.toJson(),
       );
     } catch (e) {
@@ -497,24 +535,34 @@ class _EldersScreenState extends State<EldersScreen> {
                                   _removeFamilyMember(elder, i),
                             ),
                           const SizedBox(height: AppSpacing.lg),
+                          // 新增的入口只在有長輩時給。沒綁定的時候行程建不出來
+                          // （`POST /routines` 要 elder_id），畫一顆按得下去卻
+                          // 一定失敗的鈕，等於讓剛註冊的照護者填完整張表單才拿到
+                          // 一句錯誤——而「還沒有長輩」正是他第一次打開的樣子。
                           SectionHeader(
                             '例行公事',
-                            trailing: TextButton.icon(
-                              onPressed: _addRoutine,
-                              style: TextButton.styleFrom(
-                                minimumSize: const Size(48, 48),
-                                foregroundColor: AppColors.accentText,
-                              ),
-                              icon: const Icon(Icons.add, size: 18),
-                              label: Text('新增',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelSmall
-                                      ?.copyWith(color: AppColors.accentText)),
-                            ),
+                            trailing: elder == null
+                                ? null
+                                : TextButton.icon(
+                                    onPressed: _addRoutine,
+                                    style: TextButton.styleFrom(
+                                      minimumSize: const Size(48, 48),
+                                      foregroundColor: AppColors.accentText,
+                                    ),
+                                    icon: const Icon(Icons.add, size: 18),
+                                    label: Text('新增',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                                color: AppColors.accentText)),
+                                  ),
                           ),
                           const SizedBox(height: AppSpacing.sm),
-                          if (visible.isEmpty)
+                          if (elder == null)
+                            // 該做的事是請長輩用上面那組 ID 綁定，不是新增行程。
+                            const _NoElderYet()
+                          else if (visible.isEmpty)
                             _EmptyRoutines(onAdd: _addRoutine)
                           else
                             for (final r in visible) ...[
@@ -1525,10 +1573,15 @@ class _RoutineCard extends StatelessWidget {
                                 ?.copyWith(color: AppColors.chevron)),
                       ],
                     ),
-                    if (routine.createdBy == 'conversation')
-                      Text('· 對話中建立',
-                          style: text.bodySmall
-                              ?.copyWith(color: AppColors.chevron)),
+                    // 兩種來源都標。原本只標「對話中建立」，自己排的那幾筆是
+                    // 空白——但空白讀起來像「還沒載到」而不是「我排的」，
+                    // 一整頁混在一起時照護者還是得逐筆回想哪筆是誰弄的。
+                    Text(
+                      routine.createdBy == 'conversation'
+                          ? '· 長者在對話中建立'
+                          : '· 照護者建立',
+                      style: text.bodySmall?.copyWith(color: AppColors.chevron),
+                    ),
                   ],
                 ),
               ],
@@ -1562,6 +1615,37 @@ class _RoutineCard extends StatelessWidget {
         'safety' => Icons.shield_outlined,
         _ => Icons.event_note_outlined,
       };
+}
+
+/// 還沒有任何長輩綁定過來時的例行公事區塊。
+///
+/// 跟 [_EmptyRoutines] 分開而不是共用一個空狀態：那個是「有長輩、還沒排行程」，
+/// 該做的事是新增；這個是「連長輩都還沒有」，該做的事是把上面那組 ID 給長輩，
+/// 行程根本建不出來（`POST /routines` 要 elder_id）。給錯的行動指示比不給更糟。
+class _NoElderYet extends StatelessWidget {
+  const _NoElderYet();
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return AppCard(
+      color: AppColors.cardAlt,
+      border: Border.all(color: AppColors.borderDashed),
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      child: Column(
+        children: [
+          const Icon(Icons.link_outlined, size: 36, color: AppColors.chevron),
+          const SizedBox(height: AppSpacing.md),
+          Text('還沒有綁定的長輩',
+              style: text.bodyLarge?.copyWith(color: AppColors.inkSecondary)),
+          const SizedBox(height: AppSpacing.xs),
+          Text('請長輩在他的手機上輸入右上角那組 ID\n綁定之後就能在這裡排行程',
+              textAlign: TextAlign.center,
+              style: text.bodySmall?.copyWith(color: AppColors.chevron)),
+        ],
+      ),
+    );
+  }
 }
 
 class _EmptyRoutines extends StatelessWidget {

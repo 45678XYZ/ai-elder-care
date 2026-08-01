@@ -219,15 +219,16 @@ class AuthService {
     await p.setString(
         _pendingRoleKey(email), role == UserRole.elder ? 'elder' : 'caregiver');
 
-    // ---- demo 專用接線（正式版由後端負責，見下方 TODO）----
+    // ---- demo 專用接線（正式版由後端負責）----
     //
     // 讓 demo 的長者登入後 token 真的帶 elder_id claim，走的是與正式版**完全相同**的
     // 判定路徑（[effectiveRole] 先看 claim），而不是靠本機宣告假裝成長者——否則
     // demo 走得通、接上 Cognito 反而壞掉。
     //
-    // TODO(backend): 正式版這一步是「`POST /elders` 建立長者資料 ＋ 寫入 elder_accounts
-    //   (sub→elder_id)」，或改由 post-confirmation trigger 代勞；寫進去之後
-    //   pre-token-generation trigger 才注得出 elder_id claim。這塊後端目前還缺。
+    // 正式版對應的是首次設定那一步：`POST /elders` 帶 `self_register=true`，後端同時
+    // 寫入 elder_accounts (sub→elder_id)，之後 pre-token-generation trigger 才注得出
+    // elder_id claim（見 backend/src/handlers/elders.py）。因為 claim 是登入當下發的，
+    // 自註冊的長輩要重新登入一次才會拿到。
     final b = backend;
     if (role == UserRole.elder && b is DemoAuthBackend) {
       b.markAsElder(email: email, elderId: _newDemoElderId());
@@ -337,13 +338,15 @@ class AuthService {
     }
   }
 
-  // ---- 角色來源的後端缺口 ----
+  // ---- 角色來源 ----
 
-  // TODO(backend): 目前沒有任何程式碼寫入 elder_accounts 表（sub→elder_id），所以接上真
-  //   Cognito 後，註冊時選「長輩」的帳號拿到的 token 不會有 elder_id claim，後端一律視為
-  //   照護者。畫面仍會進長者模式（[effectiveRole] 退回本機宣告），資料也存取得到——
-  //   首次設定的 `POST /elders` 會把建立者自己綁進 `caregiver_ids`，等於「自己是自己的
-  //   照護者」。正解是那一步同時寫入 elder_accounts，之後 pre-token trigger 才注得進 claim。
+  // elder_id claim 的來源已經接起來了：首次設定的 `POST /elders` 帶
+  // `self_register=true`，後端寫入 elder_accounts (sub→elder_id)，pre-token-generation
+  // trigger 下次發 token 時才注得進 claim。**下次**是關鍵——自註冊當下手上那張 token
+  // 還沒有 claim，這段期間靠 [effectiveRole] 退回本機宣告撐著，畫面仍進長者模式，
+  // 資料也存取得到（`POST /elders` 會把建立者自己綁進 `caregiver_ids`，等於自己是
+  // 自己的照護者）。
+  //
   // TODO(backend): 照護者身分只存在本機（[_kChosenRole]），換裝置或清除 App 資料就會再被問
   //   一次「請問你是？」。正解是後端記錄使用者的 role，App 端只讀不猜。
 }

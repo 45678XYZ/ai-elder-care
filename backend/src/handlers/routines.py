@@ -271,8 +271,6 @@ def _update_routine(event, routine_id: str):
 
 def _delete_routine(event, routine_id: str):
     caller = auth.get_caller(event)
-    if caller.role != auth.ROLE_CAREGIVER:
-        return responses.error(403, "FORBIDDEN", "只有照護者可刪除例行公事")
 
     params = event.get("queryStringParameters") or {}
     client_request_id = params.get("client_request_id", "")
@@ -291,6 +289,14 @@ def _delete_routine(event, routine_id: str):
         return responses.error(404, "ROUTINE_NOT_FOUND", "找不到指定的例行公事")
     current = versions[-1]
     auth.assert_can_access_elder(event, current["elder_id"])
+
+    # 長者只能刪自己在對話裡建的；照護者建的行程對長輩唯讀。與對話工具 delete_routine
+    # 同一條政策（handlers/tools.py），差別只在這裡是 App 上的按鈕、那裡是用講的。
+    # 角色判斷要等讀到 current 才做得了，所以放在 versions 之後而不是函式開頭。
+    if caller.role != auth.ROLE_CAREGIVER and current.get("created_by") != "conversation":
+        return responses.error(
+            403, "FORBIDDEN", "這個行程是照護者建立的，無法自行刪除，請聯繫照護者處理"
+        )
 
     db.delete_routine(routine_id, deleted_by=caller.user_id, client_request_id=client_request_id)
     return responses.json_response(200, {"deleted": True, "routine_id": routine_id})
