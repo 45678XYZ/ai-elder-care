@@ -7,6 +7,10 @@
 
 locals {
   kb_embedding_model_arn = "arn:aws:bedrock:${var.aws_region}::foundation-model/${var.kb_embedding_model_id}"
+
+  # Titan v2 是目前唯一支援自選維度的 embedding 模型；其餘（Cohere、Titan v1）維度固定，
+  # 帶了維度設定會被 CreateKnowledgeBase 拒絕。
+  kb_embedding_dimension_configurable = startswith(var.kb_embedding_model_id, "amazon.titan-embed-text-v2")
 }
 
 # --- 向量儲存：S3 Vectors ---
@@ -128,9 +132,18 @@ resource "aws_bedrockagent_knowledge_base" "kb" {
     vector_knowledge_base_configuration {
       embedding_model_arn = local.kb_embedding_model_arn
 
-      embedding_model_configuration {
-        bedrock_embedding_model_configuration {
-          dimensions = var.kb_embedding_dimension
+      # 只有 Titan v2 能自選輸出維度（256／512／1024）。對 Cohere 這種固定維度的模型送出
+      # 這個區塊，CreateKnowledgeBase 會回 400：
+      #   The specified model ... does not support configurable dimensions.
+      # 因此依模型決定要不要帶；固定維度的模型改由 kb_embedding_dimension 對齊索引維度即可
+      # （見本檔上方 aws_s3vectors_index.kb，Cohere multilingual v3 原生就是 1024）。
+      dynamic "embedding_model_configuration" {
+        for_each = local.kb_embedding_dimension_configurable ? [1] : []
+
+        content {
+          bedrock_embedding_model_configuration {
+            dimensions = var.kb_embedding_dimension
+          }
         }
       }
     }
