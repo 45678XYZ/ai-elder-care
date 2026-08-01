@@ -1,4 +1,4 @@
-# 智慧長照陪伴系統 — 本地開發與測試沙盒指南 (Local Sandbox Guide)
+# 客照e點通系統 — 本地開發與測試沙盒指南 (Local Sandbox Guide)
 
 本指南說明如何在**不依賴 AWS 雲端環境、不消耗 AWS 額度**的情況下，在您的個人電腦本機（本地）搭建完整的 Agent 測試沙盒，並可接入目前最強的模型（如 Anthropic Claude 3.5 Sonnet）或 100% 免費的本地開源模型（如 Qwen 2.5 / Llama 3.1）。
 
