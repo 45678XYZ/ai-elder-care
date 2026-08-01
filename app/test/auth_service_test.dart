@@ -1,7 +1,7 @@
 import 'dart:convert';
 
-import 'package:ai_elder_care/shared/services/auth_service.dart';
-import 'package:ai_elder_care/shared/services/demo_auth_backend.dart';
+import 'package:e_hakka_care/shared/services/auth_service.dart';
+import 'package:e_hakka_care/shared/services/demo_auth_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

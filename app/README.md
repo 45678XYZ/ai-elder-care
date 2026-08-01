@@ -182,7 +182,7 @@ app/
 
 ```bash
 cd app
-flutter create --platforms android --project-name ai_elder_care .
+flutter create --platforms android --project-name e_hakka_care .
 flutter pub get
 flutter run
 ```

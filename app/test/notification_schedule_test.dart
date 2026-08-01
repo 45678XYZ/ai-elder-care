@@ -1,5 +1,5 @@
-import 'package:ai_elder_care/shared/models/routine.dart';
-import 'package:ai_elder_care/shared/services/notification_service.dart';
+import 'package:e_hakka_care/shared/models/routine.dart';
+import 'package:e_hakka_care/shared/services/notification_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;

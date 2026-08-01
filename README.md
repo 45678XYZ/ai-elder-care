@@ -1,4 +1,4 @@
-# 智慧長照陪伴 App (AI Elder Care)
+# 客照e點通 App
 
 這是一套專為高齡長者與其家屬設計的**智慧長照解決方案**。系統結合生成式 AI 技術，打造具備情感陪伴、行程提醒與異常偵測的智慧助理，並為家屬提供清晰、即時的照護儀表板。
 
@@ -40,23 +40,16 @@ API Gateway + Cognito JWT 認證
 
 ## 專案目錄結構
 
-```
-ai-elder-care/
-├── app/                    # Flutter 跨平台應用程式
-├── backend/                # Python 雲端後端服務
-│   ├── src/handlers/       # AWS Lambda Handlers（API 進入點）
-│   ├── src/agentcore_runtime/  # 對話大腦（LangGraph 狀態機）
-│   ├── src/extraction/     # 生活記錄萃取 Pipeline
-│   ├── src/shared/         # 共用模組（DB / Auth / Models / Bedrock）
-│   ├── scripts/            # 開發輔助腳本
-│   ├── training/           # 分塊模型離線訓練
-│   └── tests/              # Pytest 測試
-├── terraform/              # 基礎設施即程式碼 (IaC)
-├── data/                   # 模擬 Persona、知識庫文件、測試情境
-├── docs/                   # 系統設計文件與 API 規格
-├── experiments/            # 實驗性 PoC（RAG 檢索驗證）
-├── scripts/                # 全域工具腳本（知識庫上傳等）
-└── skills/                 # Agent 開發輔助 Skills
+```text
+├── app/            # Flutter（elder/ caregiver/ 兩組頁面 + shared services）
+├── asr-lambda/     # CE/Formo SageMaker container 開發與 staging 相容性預檢
+├── backend/        # Python Lambda handlers＋agentcore_runtime/ 對話大腦＋ASR/TTS 領域模組＋extraction/ 生活記錄萃取 pipeline
+├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, AgentCore Runtime, Transcribe, SageMaker ASR/TTS
+├── data/           # 模擬長者 persona、合成情境腳本、seed 腳本、knowledge/ 衛教文件
+├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、交付文件、PII、開發流程與功能移植計畫
+├── experiments/    # 實驗性 PoC（RAG 檢索驗證）
+├── scripts/        # 全域工具腳本（知識庫上傳等）
+└── skills/         # 供各 AI 工具開發使用的 skill（開發者需自行加入自己的工具）
 ```
 
 各目錄皆有獨立 README 說明其內部檔案職責，請見：
@@ -74,12 +67,29 @@ ai-elder-care/
 | [docs/api.md](docs/api.md) | API 規格書：所有 REST 端點定義（App 與後端唯一契約） |
 | [docs/llm_tools.md](docs/llm_tools.md) | 對話大腦工具規格：13 個工具的觸發條件與 I/O |
 
+### 語音子系統
+| 文件 | 說明 |
+|------|------|
+| [docs/asr/framework.md](docs/asr/framework.md) | ASR 子系統架構 |
+| [docs/asr/model-catalog.md](docs/asr/model-catalog.md) | ASR 模型目錄 |
+| [docs/adr/asr-managed-transcribe-routing.md](docs/adr/asr-managed-transcribe-routing.md) | ASR 主備援決策 |
+| [docs/tts/framework.md](docs/tts/framework.md) | TTS 子系統架構 |
+| [docs/tts/implementation-plan.md](docs/tts/implementation-plan.md) | TTS 實作計畫 |
+
 ### 功能設計
 | 文件 | 說明 |
 |------|------|
 | [docs/feature_events-extraction.md](docs/feature_events-extraction.md) | 生活事件萃取：從對話到結構化資料的完整流程 |
 | [docs/feature_segmenter-pairwise-v2.md](docs/feature_segmenter-pairwise-v2.md) | 對話分塊演算法 V2：embedding 相似度主題切割 |
 | [docs/feature_daily-summarization.md](docs/feature_daily-summarization.md) | 每日摘要機制：排程生成、partial/complete 狀態、backfill |
+| [docs/asr-agentcore-frontend-integration-plan.md](docs/asr-agentcore-frontend-integration-plan.md) | ASR／Bedrock Agent／Frontend 相容性整併計畫 |
+
+### 交付文件
+| 文件 | 說明 |
+|------|------|
+| [docs/user-journey.md](docs/user-journey.md) | 使用者旅程 |
+| [docs/deliverables/user-journey.md](docs/deliverables/user-journey.md) | 交付版使用者旅程 |
+| [docs/deliverables/data-usage.md](docs/deliverables/data-usage.md) | 數據及資料應用說明 |
 
 ### 開發指南
 | 文件 | 說明 |
@@ -94,7 +104,7 @@ ai-elder-care/
 
 ```bash
 cd app
-flutter create --platforms android --project-name ai_elder_care .
+flutter create --platforms android --project-name e_hakka_care .
 flutter pub get
 flutter run
 ```

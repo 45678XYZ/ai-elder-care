@@ -1,4 +1,4 @@
-# ai-elder-care — Flutter App
+# 客照e點通（e-Hakka Care）— Flutter App
 
 單一 App，登入後依 Cognito 角色切換：**長者模式**（`lib/elder/`，語音為主）／**照護者模式**（`lib/caregiver/`，資料管理）。共用服務在 `lib/shared/`。
 

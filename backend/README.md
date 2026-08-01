@@ -2,6 +2,8 @@
 
 本模組為系統的核心大腦與資料處理中樞，採用 **Python** 實作，以無伺服器 (Serverless) 架構部署至 AWS Lambda 與 Bedrock AgentCore Runtime。
 
+每個 handler 對應一組 API 資源，由 API Gateway（Cognito JWT authorizer）觸發；`summary_generator` 由 EventBridge Scheduler 每晚觸發。API 規格見 [docs/api.md](../docs/api.md)，語音子系統架構見 [ASR](../docs/asr/framework.md) 與 [TTS](../docs/tts/framework.md)。
+
 ## 模組功能
 
 1. **對話大腦 (AgentCore Runtime)** — 基於 LangGraph 狀態機的對話 AI，取代 Bedrock Classic Agent，提供長期記憶、tool calling 與高可控性推理
@@ -13,14 +15,19 @@
 
 ```
 backend/
-├── src/                          # 核心原始碼（詳見 src/README.md）
+├── src/
 │   ├── handlers/                 # AWS Lambda Handlers（14 個 API/背景工作進入點）
-│   ├── agentcore_runtime/        # 對話大腦（LangGraph + LangChain 工具鏈）
-│   ├── extraction/               # 端到端事件萃取 Pipeline（9 個處理階段）
-│   │   └── assets/               # 分類體系 / 分塊模型 / 概念索引靜態資料
-│   └── shared/                   # 共用模組（DB / Auth / Models / Bedrock / TTS）
-├── scripts/                      # 開發輔助與離線執行腳本
-├── training/                     # 分塊模型離線訓練（不進部署包）
+│   ├── agentcore_runtime/        # 對話大腦：LangGraph 狀態機、工具包裝、人設；部署到 AgentCore Runtime 而非 Lambda
+│   ├── extraction/               # 生活記錄（Module B）萃取 pipeline：分類體系、分塊、分類、萃取、canonical identity、去重
+│   │   └── assets/               # 隨部署包發佈的資產：taxonomy/ 分類體系、retrieval/ 概念檢索 sub-chunks
+│   └── shared/                   # auth（token 授權）、db（DynamoDB 六表）、models（Pydantic schema）、
+│                                 # responses（統一回應格式）、routines（例行公事版本與 occurrence 推導）、
+│                                 # bedrock（模型呼叫）、sessions（session 生命週期）、
+│                                 # turns（turn 請求狀態機與冪等）、metrics（觀測指標）、
+│                                 # asr（Transcribe/SageMaker remote-only 語音辨識）、
+│                                 # tts（可切換中文／客語遠端語音合成）
+├── scripts/                      # 離線工具（資產檢視、索引建置、模型導出、分塊模型工作流）
+├── training/                     # 分塊模型 pairwise_v2 的離線訓練與評測（語料、特徵、指標）
 ├── tests/                        # Pytest 單元測試與整合測試
 ├── pyproject.toml                # Python 專案配置（含 [dev] / [training] extras）
 ├── requirements.txt              # Lambda 執行期依賴（Terraform 打包用）

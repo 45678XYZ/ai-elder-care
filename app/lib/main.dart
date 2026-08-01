@@ -57,7 +57,7 @@ class AiElderCareApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: '智慧長照陪伴',
+      title: '客照e點通',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       routerConfig: _router,
