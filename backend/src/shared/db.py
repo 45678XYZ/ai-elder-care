@@ -462,7 +462,8 @@ def get_caregiver_by_sub(sub: str) -> dict[str, Any] | None:
     try:
         resp = table.query(
             IndexName="by-sub",
-            KeyConditionExpression="sub = :s",
+            KeyConditionExpression="#s = :s",
+            ExpressionAttributeNames={"#s": "sub"},
             ExpressionAttributeValues={":s": sub},
         )
         items = resp.get("Items", [])
@@ -481,7 +482,8 @@ def batch_get_caregivers_by_subs(subs: list[str]) -> dict[str, dict[str, Any]]:
         for sub in subs:
             resp = table.query(
                 IndexName="by-sub",
-                KeyConditionExpression="sub = :s",
+                KeyConditionExpression="#s = :s",
+                ExpressionAttributeNames={"#s": "sub"},
                 ExpressionAttributeValues={":s": sub},
             )
             items = resp.get("Items", [])
