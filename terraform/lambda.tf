@@ -237,12 +237,20 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
           "dynamodb:BatchGetItem",
           "dynamodb:BatchWriteItem"
         ]
+        # 每張表都要連 index ARN 一起放行：查 GSI 的權限不會由 base table ARN 涵蓋，
+        # 少了就會在 Query 當下被拒（tools 的 get_today_routines 走
+        # routine-versions-by-elder，正是踩到這個）。表本身沒有 GSI 時多這條也無害。
         Resource = [
           aws_dynamodb_table.elders.arn,
+          "${aws_dynamodb_table.elders.arn}/index/*",
           aws_dynamodb_table.conversations.arn,
+          "${aws_dynamodb_table.conversations.arn}/index/*",
           aws_dynamodb_table.events.arn,
+          "${aws_dynamodb_table.events.arn}/index/*",
           aws_dynamodb_table.daily_summaries.arn,
-          aws_dynamodb_table.routines.arn
+          "${aws_dynamodb_table.daily_summaries.arn}/index/*",
+          aws_dynamodb_table.routines.arn,
+          "${aws_dynamodb_table.routines.arn}/index/*",
         ]
       }
     ]
