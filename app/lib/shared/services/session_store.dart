@@ -145,8 +145,12 @@ class AppSession {
   /// 設的值仍在後端，長者這一份蓋在它上面——見 [isHakka] 的優先序，實際在說話的
   /// 人贏，這是刻意的。
   ///
+  /// 長輩**用講的**改語言是另一條路：對話大腦的 `update_elder_profile` 直接改後端那份，
+  /// 回話之後 [refreshSelectedElder] 會把新值拉回來套用。所以「換裝置會退回舊值」只發生
+  /// 在按鈕這一條路上。
+  ///
   /// TODO(backend): 若後端開放長者本人 PATCH 自己的 `lang_preference`，這裡要一併
-  ///   送上去。在那之前換裝置或重裝會退回照護者設的值。
+  ///   送上去，兩條路才會一致。
   Future<void> setLang(String lang) async {
     if (_langChosen && this.lang == lang) return;
     this.lang = lang;
