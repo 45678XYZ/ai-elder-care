@@ -832,7 +832,7 @@ def list_routine_versions(routine_id: str) -> list[dict[str, Any]]:
     except ClientError as e:
         raise DBError(f"查詢例行公事版本失敗: {e.response['Error']['Message']}")
 
-    return convert_decimals(items)
+    return [i for i in convert_decimals(items) if int(i.get("version", -1)) != TOMBSTONE_VERSION]
 
 
 def get_routine_version(routine_id: str, version: int) -> dict[str, Any] | None:
@@ -913,20 +913,53 @@ def replace_current_routine_version(
         raise DBError(f"更新例行公事失敗: {e.response['Error']['Message']}")
 
 
-def delete_routine(routine_id: str) -> None:
-    """刪除 routine 的所有版本（真刪除，非 soft-delete）。
+TOMBSTONE_VERSION = 0
+TOMBSTONE_TTL_DAYS = 7
+
+
+def delete_routine(routine_id: str, *, deleted_by: str, client_request_id: str) -> dict[str, Any]:
+    """刪除 routine 的所有正式版本並寫入 tombstone。
 
     事件表中的 routine_completion 記錄不受影響：那些是歷史事實。
-    若 routine 不存在則靜默返回（冪等）。
+    tombstone 保留 7 天供冪等重播，之後由 DynamoDB TTL 自動清除。
+    回傳 tombstone item。
     """
+    import time
+
     versions = list_routine_versions(routine_id)
-    if not versions:
-        return
 
     table = get_dynamodb_resource().Table(TABLE_ROUTINES)
     with table.batch_writer() as batch:
         for v in versions:
+            if int(v["version"]) == TOMBSTONE_VERSION:
+                continue
             batch.delete_item(Key={"routine_id": routine_id, "version": int(v["version"])})
+
+    tombstone = {
+        "routine_id": routine_id,
+        "version": TOMBSTONE_VERSION,
+        "deleted": True,
+        "deleted_by": deleted_by,
+        "client_request_id": client_request_id,
+        "deleted_at": int(time.time()),
+        "ttl": int(time.time()) + TOMBSTONE_TTL_DAYS * 86400,
+    }
+    table.put_item(Item=tombstone)
+    return tombstone
+
+
+def get_routine_tombstone(routine_id: str) -> dict[str, Any] | None:
+    """取得 routine 的 tombstone（version=0），不存在則回 None。"""
+    table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+    try:
+        resp = table.get_item(
+            Key={"routine_id": routine_id, "version": TOMBSTONE_VERSION},
+            ConsistentRead=True,
+        )
+        item = resp.get("Item")
+        return convert_decimals(item) if item else None
+    except ClientError as e:
+        raise DBError(f"讀取 routine tombstone 失敗: {e.response['Error']['Message']}")
 
 
 def list_current_routines(

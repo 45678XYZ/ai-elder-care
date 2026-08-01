@@ -274,13 +274,25 @@ def _delete_routine(event, routine_id: str):
     if caller.role != auth.ROLE_CAREGIVER:
         return responses.error(403, "FORBIDDEN", "只有照護者可刪除例行公事")
 
+    params = event.get("queryStringParameters") or {}
+    client_request_id = params.get("client_request_id", "")
+    if not client_request_id:
+        return responses.error(400, "MISSING_REQUEST_ID", "DELETE 須提供 client_request_id query parameter")
+
+    # 冪等重播：tombstone 已存在且 client_request_id 一致 → 直接回成功
+    tombstone = db.get_routine_tombstone(routine_id)
+    if tombstone:
+        if tombstone.get("client_request_id") == client_request_id:
+            return responses.json_response(200, {"deleted": True, "routine_id": routine_id})
+        return responses.error(409, "IDEMPOTENCY_CONFLICT", "此 routine 已被另一個 request 刪除")
+
     versions = db.list_routine_versions(routine_id)
     if not versions:
         return responses.error(404, "ROUTINE_NOT_FOUND", "找不到指定的例行公事")
     current = versions[-1]
     auth.assert_can_access_elder(event, current["elder_id"])
 
-    db.delete_routine(routine_id)
+    db.delete_routine(routine_id, deleted_by=caller.user_id, client_request_id=client_request_id)
     return responses.json_response(200, {"deleted": True, "routine_id": routine_id})
 
 
