@@ -56,8 +56,14 @@ void main() {
   /// 足夠讓假後端的 Future 完成、redirect 重算並重畫。寫法同 auth_screens_test.dart，
   /// 只是 frame 數放寬——這裡是整個 App，換頁的轉場動畫（約 300ms）也要推完，
   /// 否則新頁還在滑入、舊頁還沒退場，點按會落在轉場中的圖層上而打不到按鈕。
+  ///
+  /// 幀數從 20 加到 40（1 秒 → 2 秒）是因為第一次登入時 `consumePendingSetup` 會
+  /// `await` 一次 `POST /elders`（長者自註冊綁定 sub→elder_id），demo 那條是兩段
+  /// 各 400ms 的 `Future.delayed` 串起來。推不完的話測試結束時計時器還掛著，
+  /// 會炸「A Timer is still pending even after the widget tree was disposed」——
+  /// 而那個訊息完全看不出來是這條路造成的。
   Future<void> settle(WidgetTester tester) async {
-    for (var i = 0; i < 20; i++) {
+    for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
   }

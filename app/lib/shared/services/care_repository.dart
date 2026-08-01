@@ -125,11 +125,13 @@ abstract interface class CareRepository {
 
   /// 刪除一筆例行公事。刪掉之後照護者在 App 裡看不到它，也不會再收到提醒。
   ///
-  /// 底下走 `DELETE /routines/{id}`。後端的作法是建一個 `active=false` 的終態版本
-  /// 並移出排程，所以**資料其實還在、刪除在後端是可逆的**，但 App 不提供還原入口。
-  /// UI 說「刪除」就要真的看起來像刪除，留一個復原按鈕反而讓人以為只是暫停。
+  /// 底下走 `DELETE /routines/{id}`，後端是**真的硬刪**（刪掉所有版本），
+  /// 回 `{"deleted": true}` 而不是終態物件——所以這裡沒有回傳值可用。
   ///
-  /// [clientRequestId] 由呼叫端產生並持有：帶了才有冪等重播，重送不會誤刪別筆。
+  /// [clientRequestId] **必填**：後端沒收到會回 400 `MISSING_REQUEST_ID`。刪除時
+  /// 會留一個 7 天 TTL 的 tombstone，同一個 id 重送回 200，**換一個 id 打已刪除的
+  /// 則回 409 `IDEMPOTENCY_CONFLICT`**。所以重試務必沿用同一個值，現產一個新的
+  /// 反而會失敗。
   Future<void> deleteRoutine(String routineId,
       {required String clientRequestId});
 
