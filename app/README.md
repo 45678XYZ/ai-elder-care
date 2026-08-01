@@ -79,7 +79,7 @@ app/
 
 | 檔案 | 功能 |
 |------|------|
-| `api_config.dart` | API 端點設定：baseUrl（可透過 `--dart-define=API_BASE_URL` 覆寫）、各 endpoint 路徑 |
+| `api_config.dart` | 後端連線設定：`API_BASE_URL`／`USE_BACKEND`／`COGNITO_USER_POOL_ID`／`COGNITO_APP_CLIENT_ID`，全部由 `--dart-define` 覆寫 |
 
 #### shared/models/
 
@@ -106,6 +106,7 @@ app/
 | `api_error_codes.dart` | 錯誤碼常數定義（對應 docs/api.md 的 error codes） |
 | `auth_service.dart` | 認證服務：Cognito 登入/註冊/登出/還原、管理 JWT token 與使用者身分 |
 | `auth_backend.dart` | 認證後端介面抽象（可切換 Cognito 與 Demo 實作） |
+| `cognito_auth_backend.dart` | 真實 Cognito User Pool 實作（SRP 登入、驗證碼、ID token 自動換新） |
 | `demo_auth_backend.dart` | Demo 模式認證實作（離線展示用） |
 | `demo_repository.dart` | Demo 模式資料倉庫（提供假資料供離線展示） |
 | `demo_data.dart` | Demo 模式假資料定義 |
@@ -213,15 +214,29 @@ cd build/web && python -m http.server 8080
 
 ### 接真後端
 
-資料來源收斂在 `CareRepository` 一個介面後面，切換是一個 `--dart-define`：
+登入與資料各自收斂在一個介面後面（`AuthBackend`／`CareRepository`），切換都只是 `--dart-define`：
 
 ```bash
 flutter run \
-  --dart-define=API_BASE_URL=https://xxx.execute-api.ap-northeast-1.amazonaws.com \
-  --dart-define=USE_BACKEND=true
+  --dart-define=API_BASE_URL=https://xxxxxxxxxx.execute-api.us-west-2.amazonaws.com/v1 \
+  --dart-define=USE_BACKEND=true \
+  --dart-define=COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx \
+  --dart-define=COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-不帶 `USE_BACKEND` 就是 demo（`DemoRepository`），帶了走 `ApiRepository`；畫面兩邊共用，不需要改任何一行。本機 RAG PoC 則是模擬器連 `10.0.2.2:8000`、桌面／網頁用 `--dart-define=API_BASE_URL=http://localhost:8000`。
+四個值分別來自 `terraform output` 的 `api_base_url`、`cognito_user_pool_id`、`cognito_user_pool_client_id`（`USE_BACKEND` 自己填 true）。App Client 沒有 secret，這些值本來就會被打包進 App，不是機密。
+
+兩個開關獨立：
+
+| 帶了什麼 | 登入 | 畫面資料 |
+|---|---|---|
+| 什麼都不帶 | demo 假帳號（驗證碼固定 `123456`） | demo 假資料 |
+| 只有 `COGNITO_*` | 真 Cognito | demo 假資料 |
+| 全部四個 | 真 Cognito | 真後端 |
+
+中間那格是排查用的：登入過了但畫面壞掉，就知道問題不在認證。**`USE_BACKEND=true` 一定要配 `COGNITO_*`**——真 API 每條路由都掛 Cognito authorizer，沒有 token 全部 401。
+
+本機 RAG PoC 則是模擬器連 `10.0.2.2:8000`、桌面／網頁用 `--dart-define=API_BASE_URL=http://localhost:8000`。
 
 提交前請確保：
 ```bash
@@ -240,12 +255,11 @@ flutter test       # 所有測試通過
 - 照護者模式：長輩管理（健康狀況／生活習慣／家人／例行公事增刪改）、每日摘要、統計、事件時間軸
 - 長者端可自行切換**說話語言**（華語／客語）與**畫面文字**（一般漢字／客語漢字），兩者獨立
 - demo 資料完整，不接後端可跑完整個流程
+- **Cognito 登入**：`CognitoAuthBackend` 走 SRP 真連 User Pool，含註冊、信箱驗證碼、ID token 過期自動換新
+- **正式 `/chat`**：`USE_BACKEND=true` 時走 `POST /chat`（含 session 與 Polly 語音回覆）。RAG PoC 的 `/ask` 只剩 demo 模式在用
 
 **未完成**
 
-- **Cognito 登入**：目前是本機 demo 帳號（`DemoAuthBackend`），換裝置就沒有身分記錄
-- **正式 `/chat`**：目前接的是 RAG PoC 的 `/ask`，沒有語音回覆與 session
+- **`elder_accounts` 對應表沒有人寫**：註冊時選「長輩」的帳號拿到的 token 不會有 `elder_id` claim，後端一律視為照護者。畫面仍會進長者模式，資料也存取得到（首次設定的 `POST /elders` 會把建立者綁進 `caregiver_ids`，等於自己是自己的照護者），但這不是設計上的正解
 - **客語語音**：`lang_preference` 已能切，但 `chat_screen` 仍走華語辨識迴圈，錄音送後端那條未接
 - `POST /elders`：首次設定只寫本機，尚未建到後端
-
-後端上線的切換順序：**Cognito 先於一切**，沒有 token 其餘端點都會 401。
