@@ -81,8 +81,9 @@ void main() {
     // 補譯完把這裡改回 isEmpty。
     // 分頁「主頁」客語漢字與華語同形，已收進對照表，不算缺譯。
     expect(t('主頁'), '主頁');
-    expect(missingFromHakka, ['現在聽不太到，請按一下麥克風再說一次，或用下方打字。'],
-        reason: '新增缺譯要一起補進這個清單，否則畫面上會冒出沒人知道的華語');
+    // 迴圈停掉時的收手提示（與上面那句「還在聽」的不同，見 strings.dart 的說明）。
+    expect(t('現在聽不太到，請按一下麥克風再說一次，或用下方打字。'), '這下聽毋著，請撳一下麥克風再過講一到，或者係用下背打字。');
+    expect(missingFromHakka, isEmpty, reason: '長者端介面應已全數譯完');
   });
 
   testWidgets('帶變數的句子換語言後變數還在', (tester) async {
