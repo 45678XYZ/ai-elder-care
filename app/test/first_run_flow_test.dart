@@ -133,9 +133,15 @@ void main() {
   }
 
   /// 在初次設定頁填完必填欄位並送出。
+  ///
+  /// 三個必填：姓名、出生年、居住地區（稱呼是選填）。欄位順序即畫面順序，
+  /// 靠索引取用——加欄位時這裡要跟著改，那是刻意的：新增必填欄位卻沒有任何
+  /// 測試察覺，等於流程被擋住也沒人知道。
   Future<void> completeSetup(WidgetTester tester, String name) async {
-    await tester.enterText(
-        inScreen(SetupScreen, find.byType(TextField)).first, name);
+    final fields = inScreen(SetupScreen, find.byType(TextField));
+    await tester.enterText(fields.at(0), name); // 姓名
+    await tester.enterText(fields.at(2), '1948'); // 出生年
+    await tester.enterText(fields.at(3), '台北市大安區'); // 居住地區
     await tester.pump();
     await tester.tap(find.text('完成設定'));
     await settle(tester);

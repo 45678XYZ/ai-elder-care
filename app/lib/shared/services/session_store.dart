@@ -60,12 +60,30 @@ class AppSession {
   // 資料還在。登出因此不需要刪任何持久化資料，只要把記憶體欄位歸零。
   static String _nameKey(String a) => 'elder_name_$a';
   static String _nicknameKey(String a) => 'elder_nickname_$a';
+  static String _birthYearKey(String a) => 'elder_birth_year_$a';
+  static String _addressRegionKey(String a) => 'elder_address_region_$a';
+  static String _dialectKey(String a) => 'elder_hakka_dialect_$a';
   static String _langKey(String a) => 'elder_lang_$a';
   static String _textLangKey(String a) => 'elder_text_lang_$a';
   static String _selectedElderKey(String a) => 'selected_elder_id_$a';
 
   String elderName = '';
   String elderNickname = '';
+
+  /// 出生年（西元）。對齊 api.md 的 `birth_year`；沒填過為 null。
+  ///
+  /// 存年份而不是年齡：年齡每年會變，存下來隔年就是錯的。畫面要顯示歲數時由
+  /// 當年減出生年算（管理頁就是這樣做）。
+  int? elderBirthYear;
+
+  /// 客語腔調（api.md 的 hakka_dialect）。只在 lang 是 hak 時有意義。
+  ///
+  /// **這個值一定要進得了長者檔案才算數**：後端只讀 elder profile 的腔調，
+  /// /chat 不帶它（api.md）。存在這裡是初次設定到 POST /elders 之間的過渡。
+  String elderHakkaDialect = HakkaDialect.defaultValue;
+
+  /// 居住地區，如「台北市大安區」。對齊 api.md 的 `address_region`。
+  String elderAddressRegion = '';
 
   /// 語言偏好，對齊 api.md：'zh-TW' | 'hak'。決定長者端輸入路徑。
   String lang = 'zh-TW';
@@ -240,6 +258,9 @@ class AppSession {
       setupDone = false;
       elderName = '';
       elderNickname = '';
+      elderBirthYear = null;
+      elderAddressRegion = '';
+      elderHakkaDialect = HakkaDialect.defaultValue;
       lang = 'zh-TW';
       _langChosen = false;
       textLang = 'zh-TW';
@@ -250,6 +271,10 @@ class AppSession {
     setupDone = p.getBool(_setupDoneKey(accountId)) ?? false;
     elderName = p.getString(_nameKey(accountId)) ?? '';
     elderNickname = p.getString(_nicknameKey(accountId)) ?? '';
+    elderBirthYear = p.getInt(_birthYearKey(accountId));
+    elderAddressRegion = p.getString(_addressRegionKey(accountId)) ?? '';
+    elderHakkaDialect =
+        p.getString(_dialectKey(accountId)) ?? HakkaDialect.defaultValue;
     // key 存不存在就是「選過沒有」——寫進去的只可能是 /setup 或語言鈕。
     final savedLang = p.getString(_langKey(accountId));
     _langChosen = savedLang != null;
@@ -350,9 +375,15 @@ class AppSession {
     required String name,
     required String nickname,
     required String lang,
+    int? birthYear,
+    String addressRegion = '',
+    String hakkaDialect = HakkaDialect.defaultValue,
   }) async {
     elderName = name;
     elderNickname = nickname;
+    elderBirthYear = birthYear;
+    elderAddressRegion = addressRegion;
+    elderHakkaDialect = hakkaDialect;
     this.lang = lang;
     _langChosen = true;
     setupDone = true;
@@ -365,6 +396,12 @@ class AppSession {
     await p.setString(_nameKey(account), name);
     await p.setString(_nicknameKey(account), nickname);
     await p.setString(_langKey(account), lang);
+    // 沒填就不寫 key，讓它跟「填了空字串」分得出來（與 _langChosen 同一個道理）。
+    if (birthYear != null) await p.setInt(_birthYearKey(account), birthYear);
+    if (addressRegion.isNotEmpty) {
+      await p.setString(_addressRegionKey(account), addressRegion);
+    }
+    await p.setString(_dialectKey(account), hakkaDialect);
     await p.setBool(_setupDoneKey(account), true);
   }
 
@@ -377,11 +414,21 @@ class AppSession {
     required String name,
     required String nickname,
     required String lang,
+    int? birthYear,
+    String addressRegion = '',
+    String hakkaDialect = HakkaDialect.defaultValue,
   }) async {
     final p = await SharedPreferences.getInstance();
     await p.setString(
       _pendingSetupKey(email),
-      jsonEncode({'name': name, 'nickname': nickname, 'lang': lang}),
+      jsonEncode({
+        'name': name,
+        'nickname': nickname,
+        'lang': lang,
+        'birth_year': birthYear,
+        'address_region': addressRegion,
+        'hakka_dialect': hakkaDialect,
+      }),
     );
   }
 
@@ -419,10 +466,21 @@ class AppSession {
     final name = data['name'];
     final nickname = data['nickname'];
     final lang = data['lang'];
+    final birthYear = data['birth_year'];
+    final region = data['address_region'];
+    final dialect = data['hakka_dialect'];
     await p.setString(_nameKey(accountId), name is String ? name : '');
     await p.setString(
         _nicknameKey(accountId), nickname is String ? nickname : '');
     await p.setString(_langKey(accountId), lang is String ? lang : 'zh-TW');
+    // 舊格式的暫存項沒有這兩個 key，型別不符就當作沒填——不寫比寫一個猜的值好。
+    if (birthYear is int) await p.setInt(_birthYearKey(accountId), birthYear);
+    if (region is String && region.isNotEmpty) {
+      await p.setString(_addressRegionKey(accountId), region);
+    }
+    if (dialect is String && dialect.isNotEmpty) {
+      await p.setString(_dialectKey(accountId), dialect);
+    }
     await p.setBool(_setupDoneKey(accountId), true);
     await p.remove(key);
 
@@ -449,6 +507,9 @@ class AppSession {
     setupDone = false;
     elderName = '';
     elderNickname = '';
+    elderBirthYear = null;
+    elderAddressRegion = '';
+    elderHakkaDialect = HakkaDialect.defaultValue;
     lang = 'zh-TW';
     _langChosen = false;
     textLang = 'zh-TW';

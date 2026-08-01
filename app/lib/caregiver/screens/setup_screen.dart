@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/models/elder.dart';
 import '../../shared/services/notification_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../theme/app_theme.dart';
@@ -32,6 +33,8 @@ class _SetupScreenState extends State<SetupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _nicknameCtrl = TextEditingController();
+  final _birthYearCtrl = TextEditingController();
+  final _regionCtrl = TextEditingController();
 
   /// 驗證失敗時要捲回表單頂端——錯誤訊息在欄位下方，但使用者按的按鈕在畫面最下面，
   /// 不捲回去他只會看到「按了沒反應」。
@@ -39,6 +42,12 @@ class _SetupScreenState extends State<SetupScreen> {
 
   /// 語言偏好，對齊 api.md lang_preference：'zh-TW' | 'hak'。
   String _lang = 'zh-TW';
+
+  /// 客語腔調。只有 [_lang] 是 `hak` 時才問得到，華語的長輩看不到這一區。
+  ///
+  /// 預設四縣與 api.md 一致——不預選任何一個會讓「還沒選」和「選了四縣」長得一樣，
+  /// 而後端沒收到值時本來就是四縣，畫面該反映那個事實。
+  HakkaDialect _dialect = HakkaDialect.sixian;
 
   @override
   void initState() {
@@ -50,10 +59,27 @@ class _SetupScreenState extends State<SetupScreen> {
 
   void _onNameChanged() => setState(() {});
 
+  /// 出生年只擋「一定不對」的輸入，不猜使用者的意圖。
+  ///
+  /// 上限用今年而不是固定值：長輩不可能還沒出生。下限 1900 是一個不會誤擋任何
+  /// 真實長輩、又能攔下明顯打錯（民國年、手滑多打一位）的界線——填 114 或 19488
+  /// 都會被擋下來，而不是安靜地存成一個荒謬的年齡。
+  String? _validateBirthYear(String? v) {
+    final s = v?.trim() ?? '';
+    if (s.isEmpty) return '請填出生年';
+    final year = int.tryParse(s);
+    if (year == null) return '請填西元年份，例如 1948';
+    final thisYear = DateTime.now().year;
+    if (year < 1900 || year > thisYear) return '請填 1900～$thisYear 之間的西元年';
+    return null;
+  }
+
   @override
   void dispose() {
     _nameCtrl.dispose();
     _nicknameCtrl.dispose();
+    _birthYearCtrl.dispose();
+    _regionCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
   }
@@ -80,7 +106,9 @@ class _SetupScreenState extends State<SetupScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: AppColors.barDark,
-          content: Text('請先填長輩姓名',
+          // 不再指名「姓名」：必填欄位現在有三個，講錯一個比不講更容易讓人
+          // 往錯的地方看。真正的錯誤訊息在各欄位下方，這裡只負責說「還沒過」。
+          content: Text('還有欄位沒填，請往上看紅字',
               style: Theme.of(context)
                   .textTheme
                   .bodyLarge
@@ -89,11 +117,15 @@ class _SetupScreenState extends State<SetupScreen> {
       );
       return;
     }
-    // TODO: 串接後 POST /elders 建立長者資料（name / nickname / lang_preference）。
+    // TODO: 串接後 POST /elders 建立長者資料
+    //   （name / nickname / birth_year / address_region / lang_preference）。
     // 目前先持久化到本機：標記已完成首次設定並存長者資料，之後啟動不再進此畫面。
     final email = widget.email;
     final name = _nameCtrl.text.trim();
     final nickname = _nicknameCtrl.text.trim();
+    // validator 已經擋掉非數字與範圍外，這裡 parse 不會是 null。
+    final birthYear = int.tryParse(_birthYearCtrl.text.trim());
+    final region = _regionCtrl.text.trim();
     if (email != null) {
       // 註冊流程：還沒登入，資料先寄放在這個信箱底下，第一次登入時才兌現到帳號。
       await AppSession.instance.savePendingSetup(
@@ -101,12 +133,18 @@ class _SetupScreenState extends State<SetupScreen> {
         name: name,
         nickname: nickname,
         lang: _lang,
+        birthYear: birthYear,
+        addressRegion: region,
+        hakkaDialect: _dialect.value,
       );
     } else {
       await AppSession.instance.saveSetup(
         name: name,
         nickname: nickname,
         lang: _lang,
+        birthYear: birthYear,
+        addressRegion: region,
+        hakkaDialect: _dialect.value,
       );
     }
 
@@ -172,8 +210,58 @@ class _SetupScreenState extends State<SetupScreen> {
                 TextFormField(
                   controller: _nicknameCtrl,
                   style: text.bodyLarge,
-                  textInputAction: TextInputAction.done,
+                  textInputAction: TextInputAction.next,
                   decoration: _fieldDecoration(hint: '例如：阿蘭嬤'),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+
+                // 欄位三：出生年（必填）
+                //
+                // 存年份不存年齡：年齡每年會變，存下來隔年就是錯的（api.md 的欄位
+                // 也是 birth_year）。管理頁顯示歲數時由當年減出生年算。
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: AppSpacing.sm,
+                  children: [
+                    Text('出生年（西元）', style: text.labelLarge),
+                    Text('※ 讓 AI 用合適的方式跟長輩對話',
+                        style: text.bodySmall
+                            ?.copyWith(color: AppColors.inkSecondary)),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _birthYearCtrl,
+                  style: text.bodyLarge,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.next,
+                  decoration: _fieldDecoration(hint: '例如：1948'),
+                  validator: _validateBirthYear,
+                ),
+                const SizedBox(height: AppSpacing.lg),
+
+                // 欄位四：居住地區（必填）
+                //
+                // 不只是基本資料——對話大腦查天氣要靠它（後端的 get_weather_forecast
+                // 工具），沒有地區就答不出「明天會不會下雨」這類長輩最常問的問題。
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: AppSpacing.sm,
+                  children: [
+                    Text('居住地區', style: text.labelLarge),
+                    Text('※ 長輩問天氣時要靠它',
+                        style: text.bodySmall
+                            ?.copyWith(color: AppColors.inkSecondary)),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _regionCtrl,
+                  style: text.bodyLarge,
+                  textInputAction: TextInputAction.done,
+                  decoration: _fieldDecoration(hint: '例如：台北市大安區'),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? '請填居住地區' : null,
                 ),
                 const SizedBox(height: AppSpacing.xl),
 
@@ -208,6 +296,38 @@ class _SetupScreenState extends State<SetupScreen> {
                   selected: _lang == 'hak',
                   onTap: () => setState(() => _lang = 'hak'),
                 ),
+
+                // 腔調只在選了客語時才問。華語家庭佔多數，讓他們滑過一個六選一的
+                // 選單是純噪音；而且這個欄位對 lang_preference='zh-TW' 沒有意義。
+                if (_lang == 'hak') ...[
+                  const SizedBox(height: AppSpacing.xl),
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: AppSpacing.sm,
+                    children: [
+                      Text('客語腔調', style: text.labelLarge),
+                      // 講「聽不懂」而不是「辨識率下降」：六腔各有獨立的 ASR 模型，
+                      // 選錯不是口音不像，是整句話辨識失敗。照護者要知道這件事的
+                      // 嚴重性，才會願意去問長輩而不是隨便選一個。
+                      Text('※ 選錯會聽不懂長輩說的話，不確定就問長輩',
+                          style: text.bodySmall
+                              ?.copyWith(color: AppColors.inkSecondary)),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: [
+                      for (final d in HakkaDialect.values)
+                        _DialectChip(
+                          label: d.label,
+                          selected: _dialect == d,
+                          onTap: () => setState(() => _dialect = d),
+                        ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.xl),
 
                 // CTA
@@ -265,6 +385,67 @@ class _SetupScreenState extends State<SetupScreen> {
 }
 
 /// 語言選擇卡。選中 = 2px accentText 外框 + 實心圓點（§9：不只靠顏色）。
+/// 腔調選項膠囊。六個並排放不下，用 Wrap 自己換行。
+///
+/// 不做成 [_LangCard] 那種附範例句的大卡片：六張大卡會把這一頁撐成兩倍長，而
+/// 語言只有兩個選項才撐得起那個版面。範例句仍然值得加（長輩未必說得出自己講的
+/// 是四縣還是海陸，聽一句就認得出來），但那要有六腔的錄音或例句才做得成。
+///
+/// TODO(客語): 六腔各補一句範例，選項下方顯示，讓照護者念給長輩聽著挑。
+class _DialectChip extends StatelessWidget {
+  const _DialectChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: const BorderRadius.all(AppRadius.pill),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48), // 照護者模式下限
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.accentText : Colors.transparent,
+            borderRadius: const BorderRadius.all(AppRadius.pill),
+            border: Border.all(
+              // 未選取走 borderInteractive 而不是 border：後者是輸入框線，
+              // 壓在紙色底上只有 1.3:1，看不出這裡有一顆可以按的東西。
+              color:
+                  selected ? AppColors.accentText : AppColors.borderInteractive,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 選中同時用實心底與勾表示，不只靠顏色（MASTER.md §6）。
+              if (selected) ...[
+                const Icon(Icons.check, size: 16, color: Colors.white),
+                const SizedBox(width: 4),
+              ],
+              Text(label,
+                  style: text.labelLarge?.copyWith(
+                      color: selected ? Colors.white : AppColors.inkSecondary)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _LangCard extends StatelessWidget {
   const _LangCard({
     required this.title,
