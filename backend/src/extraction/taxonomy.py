@@ -33,6 +33,14 @@ PROPERTY_REGISTRY_FILE = "property_registry.json"
 SYNONYM_DICTIONARY_FILE = "synonym_dictionary.json"
 
 
+PSEUDO_CONCEPT_PREFIX = "UCO.HighLevel."
+
+
+def pseudo_concept_id(type_id: str) -> str:
+    """組出某個 High_Level_Type id 對應的虛擬分類節點 concept_id。"""
+    return f"{PSEUDO_CONCEPT_PREFIX}{type_id}"
+
+
 class TaxonomyError(ValueError):
     """分類體系資產不一致錯誤。
 
@@ -106,8 +114,23 @@ class Taxonomy:
     # -- 節點查詢 ------------------------------------------------------------
 
     def get(self, concept_id: str) -> ConceptNode | None:
-        """依據 concept_id 取得節點實例，若不存在則傳回 None。"""
-        return self.nodes.get(concept_id)
+        """依據 concept_id 取得節點實例，若不存在則傳回 None。
+
+        Pseudo concept（UCO.HighLevel.*）視為合法存在，回傳虛擬節點。
+        """
+        node = self.nodes.get(concept_id)
+        if node is not None:
+            return node
+        if self.is_pseudo_concept(concept_id):
+            type_id = concept_id[len(PSEUDO_CONCEPT_PREFIX):]
+            return ConceptNode(
+                concept_id=concept_id, display_name=type_id,
+                display_name_en=None, level=1, is_leaf=True,
+                definition="", retrieval_description="",
+                parent=None, children=(), synonyms=(),
+                examples=(), own_properties=(),
+            )
+        return None
 
     def ancestors(self, concept_id: str) -> tuple[str, ...]:
         """取得由指定節點之父節點一路向上至根節點的祖先鏈。
@@ -155,9 +178,11 @@ class Taxonomy:
     def high_level_type(self, concept_id: str) -> str:
         """取得寫入 `events.type` 的高階類別字串。
 
-        若發生未涵蓋之 concept_id，僅發出 Warning 告警並退回預設類別，不直接拋出例外丟棄事件，
-        因為抽取出的事件數據本體仍具業務價值，需留下記錄供維護者補充映射表。
+        Pseudo concept 直接回傳其對應的 type_id；一般節點沿映射表解析。
         """
+        if concept_id.startswith(PSEUDO_CONCEPT_PREFIX):
+            type_id = concept_id[len(PSEUDO_CONCEPT_PREFIX):]
+            return type_id if type_id in self.type_ids else self.default_type
         event_type, matched = self.resolve_type(concept_id)
         if matched is None:
             logger.warning(
@@ -174,6 +199,21 @@ class Taxonomy:
         主要用於 `load_taxonomy` 靜態校驗，避免遺漏映射的資產部署至線上環境。
         """
         return tuple(cid for cid in self.leaf_ids() if self.resolve_type(cid)[1] is None)
+
+    # -- Pseudo concept 查詢 --------------------------------------------------
+
+    def is_pseudo_concept(self, concept_id: str) -> bool:
+        """判斷 concept_id 是否為某個 High_Level_Type 的虛擬分類節點。"""
+        if not concept_id.startswith(PSEUDO_CONCEPT_PREFIX):
+            return False
+        type_id = concept_id[len(PSEUDO_CONCEPT_PREFIX):]
+        return type_id in self.type_ids
+
+    def pseudo_concept_for_label(self, label: str) -> tuple[str, bool]:
+        """把模型回傳的標籤字串映射為 (pseudo concept_id, 是否為合法標籤)。"""
+        if label in self.type_ids:
+            return pseudo_concept_id(label), True
+        return pseudo_concept_id(self.default_type), False
 
 
 def _read_json(path: Path) -> Any:

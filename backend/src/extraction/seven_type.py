@@ -10,10 +10,10 @@ import logging
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from src.shared import bedrock
+from src.shared.models import health_note_texts
 
 from .chunker import Turn
 from .config import EXTRACTION_PROMPT_GUIDED, EXTRACTION_STRUCTURED_OUTPUT
-from .extractor import SYSTEM_PROMPT, build_elder_context
 from .models import ExtractedEvent
 from .taxonomy import Taxonomy
 
@@ -21,6 +21,36 @@ logger = logging.getLogger(__name__)
 
 SEVEN_TYPE_EXTRACTOR_VERSION = "seven-type-extractor-1"
 MAX_REPAIR_ATTEMPTS = 1
+
+SYSTEM_PROMPT = (
+    "你是長者照護資訊結構化萃取專家。只萃取長者已發生或正在發生的照護事實，"
+    "保留具體數值與藥名等細節，不推測、不補充對話沒有的內容。"
+    "AI 助理的建議、衛教提醒、風險警告不是事實行為，不要萃取。"
+)
+
+
+def build_elder_context(elder: Mapping[str, Any] | None) -> str:
+    if not elder:
+        return "（無長者背景資料）"
+
+    lines: list[str] = []
+    nickname = elder.get("nickname") or elder.get("name")
+    if nickname:
+        lines.append(f"- 稱謂：{nickname}")
+    gender = elder.get("gender")
+    if gender:
+        gender_label = {"male": "男性", "female": "女性"}.get(gender, gender)
+        lines.append(f"- 性別：{gender_label}")
+    birth_year = elder.get("birth_year")
+    if birth_year:
+        lines.append(f"- 出生年份：{birth_year}")
+    health_notes = health_note_texts(elder.get("health_notes"))
+    if health_notes:
+        lines.append(f"- 健康註記：{'、'.join(health_notes)}")
+    habit_note = elder.get("habit_note")
+    if habit_note:
+        lines.append(f"- 生活習慣：{habit_note}")
+    return "\n".join(lines) if lines else "（無長者背景資料）"
 
 
 def build_seven_type_prompt(
