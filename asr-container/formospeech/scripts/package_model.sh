@@ -36,8 +36,20 @@ done
 python3 -c "import huggingface_hub" 2>/dev/null \
   || { echo "pip install huggingface_hub is required" >&2; exit 2; }
 
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
+# 只在成功時清理：上傳失敗還砍掉暫存，等於把已下載的數 GB 權重一起丟掉，
+# 網路不穩時重跑代價太高。失敗時保留目錄並印出路徑，可用 --resume-from 接續。
+WORKDIR="${RESUME_FROM:-$(mktemp -d)}"
+cleanup() {
+  local rc=$?
+  if [[ $rc -eq 0 ]]; then
+    rm -rf "$WORKDIR"
+  else
+    echo "！失敗，暫存保留於：$WORKDIR" >&2
+    echo "  重試上傳（免重新下載）：" >&2
+    echo "    aws s3 cp \"$WORKDIR/model.tar.gz\" \"s3://${BUCKET}/${KEY}\"" >&2
+  fi
+}
+trap cleanup EXIT
 
 echo "==> 下載模型權重 ${MODEL_ID}@${REVISION}（gated，約 3 GB）"
 python3 - "$MODEL_ID" "$REVISION" "$WORKDIR/formospeech" <<'PY'
