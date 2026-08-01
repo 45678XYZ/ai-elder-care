@@ -96,7 +96,7 @@ module "agent_runtime_package" {
 # 的 AgentCoreMemorySaver 接上，因此 LangGraph 的 checkpoint 能力也一併取得。
 
 resource "aws_bedrockagentcore_memory" "companion" {
-  name        = "ai_elder_care_companion_memory"
+  name        = "e_hakka_care_companion_memory"
   description = "長者對話的長期記憶；由 chat Lambda 以 runtimeSessionId 隔離不同長者"
 
   # 對齊原本 Classic agent 的 storage_days = 30
@@ -253,7 +253,7 @@ resource "aws_iam_role_policy" "agentcore_runtime_logs" {
 
 resource "aws_bedrockagentcore_agent_runtime" "companion" {
   # 名稱只接受 [a-zA-Z][a-zA-Z0-9_]{0,47}，不能沿用其他資源的 ${project_name}- 連字號前綴
-  agent_runtime_name = "ai_elder_care_companion"
+  agent_runtime_name = "e_hakka_care_companion"
   description        = "長照陪伴對話大腦；LangGraph 狀態機 + tools Lambda + 衛教知識庫"
   role_arn           = aws_iam_role.agentcore_runtime.arn
 

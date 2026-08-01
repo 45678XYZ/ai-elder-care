@@ -1,8 +1,8 @@
-# 智慧長照陪伴 App — 系統開發框架
+# 客照e點通 App — 系統開發框架
 
 ## Context
 
-本文件定義智慧長照陪伴系統的架構、資料模型與寫入規則。系統分三大模組：**A 語音互動陪伴、B 生活記錄與智慧摘要、C 照護者資訊介面**。
+本文件定義客照e點通系統的架構、資料模型與寫入規則。系統分三大模組：**A 語音互動陪伴、B 生活記錄與智慧摘要、C 照護者資訊介面**。
 
 已確認的決策：
 
@@ -493,7 +493,7 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 ## Repo 結構
 
 ```text
-ai-elder-care/
+e-hakka-care/
 ├── .kiro/          # Kiro 設定與 specs
 ├── app/            # Flutter
 ├── asr-lambda/     # SageMaker inference container 開發文件與本機 conda 環境

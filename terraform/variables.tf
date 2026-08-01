@@ -1,7 +1,7 @@
 variable "project_name" {
   description = "資源命名前綴"
   type        = string
-  default     = "ai-elder-care"
+  default     = "e-hakka-care"
 }
 
 variable "aws_region" {
@@ -227,7 +227,7 @@ variable "embedding_dim" {
 variable "concept_vector_bucket" {
   description = "S3 Vectors vector bucket 名稱（由 build_concept_vector_index.py 建立）"
   type        = string
-  default     = "ai-elder-care-vectors"
+  default     = "e-hakka-care-vectors"
 }
 
 variable "concept_vector_index" {

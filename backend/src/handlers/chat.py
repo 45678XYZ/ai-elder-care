@@ -79,7 +79,7 @@ DEFAULT_HAKKA_DIALECT = HakkaDialect.SIXIAN
 
 
 # 環境變數自訂名稱
-S3_BUCKET_NAME = os.environ.get("S3_AUDIO_BUCKET", "ai-elder-care-audio")
+S3_BUCKET_NAME = os.environ.get("S3_AUDIO_BUCKET", "e-hakka-care-audio")
 AGENTCORE_RUNTIME_ARN = os.environ.get("AGENTCORE_RUNTIME_ARN", "")
 AGENTCORE_ENDPOINT_NAME = os.environ.get("AGENTCORE_ENDPOINT_NAME", "live")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
