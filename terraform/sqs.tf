@@ -12,6 +12,11 @@ resource "aws_sqs_queue" "batch_dlq" {
   # DLQ 保留久一點，人工 replay 前要有時間排查
   message_retention_seconds = 1209600 # 14 天
   sqs_managed_sse_enabled   = true
+
+  # 這條佇列也掛了 consumer（dlq_reconciler），因此同樣受「visibility timeout 不得小於
+  # Lambda timeout」的限制——預設 30 秒會讓 CreateEventSourceMapping 直接被拒。
+  # 取 6 倍是 AWS 對 SQS 觸發的建議值，與上面 batch 佇列一致。
+  visibility_timeout_seconds = var.dlq_reconciler_timeout * 6
 }
 
 resource "aws_sqs_queue" "batch" {

@@ -138,9 +138,18 @@ variable "tts_breezyvoice_approved" {
 # --- RAG（Bedrock Knowledge Base）---
 
 variable "kb_embedding_model_id" {
-  description = "Knowledge Base embedding 模型 ID（需先在 Bedrock console 開通 model access）"
+  description = <<-EOT
+    Knowledge Base embedding 模型 ID（需先在 Bedrock console 開通 model access）。
+
+    預設用 Amazon 自家的 Titan v2 而非 Cohere：Cohere 屬於第三方模型，要先完成
+    AWS Marketplace 訂閱，而受管帳號常常訂不了，StartIngestionJob 會在部署後才以
+    「role is not authorized to perform aws-marketplace:Subscribe」失敗。
+    Amazon 自家模型沒有這層依賴。換模型前先用
+    `aws bedrock get-foundation-model-availability` 確認 agreementAvailability
+    是 AVAILABLE——authorizationStatus 為 AUTHORIZED 不代表真的能呼叫。
+  EOT
   type        = string
-  default     = "cohere.embed-multilingual-v3"
+  default     = "amazon.titan-embed-text-v2:0"
 }
 
 variable "kb_embedding_dimension" {
@@ -189,9 +198,13 @@ variable "bedrock_model_id" {
     預設走 Anthropic 在 Bedrock 的旗艦模型 + global cross-Region inference profile：
     台灣沒有 Bedrock 區域，global CRIS 的可用性與吞吐優於綁單一區域。
     要固定區域改成 us./apac. 前綴；要省成本改 Sonnet／Haiku。
+
+    版本要挑帳號實際開通的那一個：模型是否可呼叫看 agreementAvailability，
+    authorizationStatus 顯示 AUTHORIZED 仍可能在 Converse 當場被拒
+    （"... is not available for this account"）。改版前先實際呼叫一次確認。
   EOT
   type        = string
-  default     = "global.anthropic.claude-opus-5"
+  default     = "global.anthropic.claude-opus-4-6-v1"
 }
 
 variable "bedrock_extractor_model_id" {
@@ -228,6 +241,12 @@ variable "batch_lambda_timeout" {
   description = "batch extractor 的 timeout（秒）；SQS visibility timeout 由此推導"
   type        = number
   default     = 300
+}
+
+variable "dlq_reconciler_timeout" {
+  description = "dlq reconciler 的 timeout（秒）；DLQ 的 visibility timeout 由此推導"
+  type        = number
+  default     = 60
 }
 
 variable "session_idle_minutes" {
@@ -362,4 +381,13 @@ variable "summary_partial_alarm_threshold" {
   description = "每小時 partial 摘要數超過此值且連續三小時即告警（batch 可能卡住）"
   type        = number
   default     = 10
+}
+
+# --- 中央氣象署 Open Data ---
+
+variable "cwa_api_key" {
+  description = "中央氣象署開放資料 API 授權碼（https://opendata.cwa.gov.tw/）"
+  type        = string
+  sensitive   = true
+  default     = ""
 }

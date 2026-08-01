@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../i18n/strings.dart';
 import '../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 
@@ -27,7 +28,7 @@ class SignOutButton extends StatelessWidget {
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: AppColors.cardAlt,
-        title: Text('要登出嗎？',
+        title: Text(elderMode ? t('要登出嗎？') : '要登出嗎？',
             style: elderMode ? text.headlineLarge : text.titleLarge),
         content: Text(
           // 照護者這句刻意不提「清掉長輩資料」：長輩名冊、行程與事件都在後端，
@@ -36,7 +37,7 @@ class SignOutButton extends StatelessWidget {
           // 照護者不寫「要重新登入」——那是他自己按的動作，講了等於廢話。這裡只
           // 回答他真正會遲疑的那件事：資料會不會不見。長者端相反，「要再輸入一次
           // 帳密」正是他該被提醒的，因為長輩未必記得密碼。
-          elderMode ? '登出之後要再輸入一次信箱和密碼才能進來。' : '長者數據不會因登出而消失。',
+          elderMode ? t('登出之後要再輸入一次信箱和密碼才能進來。') : '長者數據不會因登出而消失。',
           style: bodyStyle,
         ),
         actionsPadding: const EdgeInsets.fromLTRB(
@@ -49,7 +50,7 @@ class SignOutButton extends StatelessWidget {
               minimumSize: Size(elderMode ? 120 : 88, elderMode ? 60 : 48),
               foregroundColor: AppColors.inkSecondary,
             ),
-            child: Text('不要', style: bodyStyle),
+            child: Text(elderMode ? t('不要') : '不要', style: bodyStyle),
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
@@ -58,7 +59,8 @@ class SignOutButton extends StatelessWidget {
               backgroundColor: AppColors.accentText,
               foregroundColor: Colors.white,
             ),
-            child: Text('登出', style: bodyStyle?.copyWith(color: Colors.white)),
+            child: Text(elderMode ? t('登出') : '登出',
+                style: bodyStyle?.copyWith(color: Colors.white)),
           ),
         ],
       ),
@@ -84,7 +86,7 @@ class SignOutButton extends StatelessWidget {
         ),
         icon: Icon(Icons.logout, size: elderMode ? 24 : 18),
         label: Text(
-          '登出',
+          elderMode ? t('登出') : '登出',
           style: (elderMode ? text.headlineSmall : text.labelSmall)
               ?.copyWith(color: AppColors.inkSecondary),
         ),

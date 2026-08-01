@@ -240,6 +240,63 @@ def test_handle_update_elder_profile_skips_duplicate_health_note(monkeypatch):
     assert len(stored["health_notes"]) == 1
 
 
+def test_handle_update_elder_profile_lang_preference(monkeypatch):
+    """測試透過工具切換語言偏好。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "lang_preference": "hak",
+    })
+
+    assert res["status"] == "success"
+    assert "lang_preference" in res["updated_fields"]
+    assert stored["lang_preference"] == "hak"
+    assert res["data"]["lang_preference"] == "hak"
+
+
+def test_handle_update_elder_profile_hakka_dialect(monkeypatch):
+    """測試透過工具切換客語腔調。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "hakka_dialect": "htia_hailu",
+    })
+
+    assert res["status"] == "success"
+    assert "hakka_dialect" in res["updated_fields"]
+    assert stored["hakka_dialect"] == "htia_hailu"
+    assert res["data"]["hakka_dialect"] == "htia_hailu"
+
+
+def test_handle_update_elder_profile_invalid_lang_ignored(monkeypatch):
+    """無效的語言值不報錯但不寫入。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "lang_preference": "invalid-lang",
+    })
+
+    # 沒有任何有效欄位可更新
+    assert res["status"] == "error"
+    assert "lang_preference" not in stored
+
+
+def test_handle_update_elder_profile_invalid_dialect_ignored(monkeypatch):
+    """無效的腔調值不報錯但不寫入。"""
+    stored = _fake_elder_store(monkeypatch)
+
+    res = tools.handle_update_elder_profile({
+        "elder_id": "eld_001",
+        "hakka_dialect": "htia_unknown",
+    })
+
+    assert res["status"] == "error"
+    assert "hakka_dialect" not in stored
+
+
 def test_handle_get_elder_profile_flattens_health_notes(monkeypatch):
     """給模型的檔案只帶文字，note_id 這種內部識別碼不進 prompt。"""
     _fake_elder_store(monkeypatch)
@@ -505,3 +562,290 @@ def test_tools_lambda_handler_unknown_function():
     resp = tools.handler(event, None)
     assert resp["status"] == "error"
     assert "nonexistent_function" in resp["message"]
+
+
+# =============================================================================
+# 工具十三：get_weather_forecast
+# =============================================================================
+
+def test_handle_get_weather_forecast_missing_elder_id():
+    """缺少 elder_id 回傳 error。"""
+    res = tools.handle_get_weather_forecast({})
+    assert res["status"] == "error"
+    assert "elder_id" in res["message"]
+
+
+def test_handle_get_weather_forecast_missing_api_key(monkeypatch):
+    """CWA_API_KEY 未配置時回傳 error。"""
+    monkeypatch.setattr(tools, "_CWA_API_KEY", "")
+    res = tools.handle_get_weather_forecast({"elder_id": "eld_001"})
+    assert res["status"] == "error"
+    assert "CWA_API_KEY" in res["message"]
+
+
+def test_handle_get_weather_forecast_success(monkeypatch):
+    """正常取得天氣預報。"""
+    import io
+    import json as json_mod
+
+    monkeypatch.setattr(tools, "_CWA_API_KEY", "TEST-KEY-123")
+
+    mock_response_data = {
+        "records": {
+            "location": [
+                {
+                    "locationName": "臺北市",
+                    "weatherElement": [
+                        {
+                            "elementName": "Wx",
+                            "time": [
+                                {
+                                    "startTime": "2026-08-01 06:00:00",
+                                    "endTime": "2026-08-01 18:00:00",
+                                    "parameter": {"parameterName": "多雲短暫雨"}
+                                }
+                            ]
+                        },
+                        {
+                            "elementName": "MinT",
+                            "time": [
+                                {"parameter": {"parameterName": "25"}}
+                            ]
+                        },
+                        {
+                            "elementName": "MaxT",
+                            "time": [
+                                {"parameter": {"parameterName": "33"}}
+                            ]
+                        },
+                        {
+                            "elementName": "PoP",
+                            "time": [
+                                {"parameter": {"parameterName": "60"}}
+                            ]
+                        },
+                    ]
+                }
+            ]
+        }
+    }
+
+    class MockResponse:
+        def read(self):
+            return json_mod.dumps(mock_response_data).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, timeout=None: MockResponse()
+    )
+    monkeypatch.setattr(
+        db, "get_elder",
+        lambda eid: {"elder_id": eid, "address_region": "台北市大安區"}
+    )
+
+    res = tools.handle_get_weather_forecast({"elder_id": "eld_001"})
+    assert res["status"] == "success"
+    assert res["location"] == "臺北市"
+    assert len(res["forecast"]) == 1
+    assert res["forecast"][0]["weather"] == "多雲短暫雨"
+    assert res["forecast"][0]["temp_low"] == 25
+    assert res["forecast"][0]["temp_high"] == 33
+    assert res["forecast"][0]["rain_prob"] == 60
+
+
+def test_handle_get_weather_forecast_with_explicit_location(monkeypatch):
+    """傳入 location 時不查 elder profile。"""
+    import json as json_mod
+
+    monkeypatch.setattr(tools, "_CWA_API_KEY", "TEST-KEY-123")
+
+    mock_response_data = {
+        "records": {
+            "location": [
+                {
+                    "locationName": "高雄市",
+                    "weatherElement": [
+                        {
+                            "elementName": "Wx",
+                            "time": [
+                                {
+                                    "startTime": "2026-08-01 06:00:00",
+                                    "endTime": "2026-08-01 18:00:00",
+                                    "parameter": {"parameterName": "晴時多雲"}
+                                }
+                            ]
+                        },
+                        {"elementName": "MinT", "time": [{"parameter": {"parameterName": "27"}}]},
+                        {"elementName": "MaxT", "time": [{"parameter": {"parameterName": "35"}}]},
+                        {"elementName": "PoP", "time": [{"parameter": {"parameterName": "10"}}]},
+                    ]
+                }
+            ]
+        }
+    }
+
+    class MockResponse:
+        def read(self):
+            return json_mod.dumps(mock_response_data).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, timeout=None: MockResponse()
+    )
+
+    res = tools.handle_get_weather_forecast({
+        "elder_id": "eld_001",
+        "location": "高雄市"
+    })
+    assert res["status"] == "success"
+    assert res["location"] == "高雄市"
+    assert res["forecast"][0]["weather"] == "晴時多雲"
+
+
+def test_handle_get_weather_forecast_api_failure(monkeypatch):
+    """氣象署 API 連線失敗時回傳 error。"""
+    monkeypatch.setattr(tools, "_CWA_API_KEY", "TEST-KEY-123")
+    monkeypatch.setattr(
+        db, "get_elder",
+        lambda eid: {"elder_id": eid, "address_region": "台北市"}
+    )
+
+    def mock_urlopen_fail(req, timeout=None):
+        raise ConnectionError("Network unreachable")
+
+    monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_fail)
+
+    res = tools.handle_get_weather_forecast({"elder_id": "eld_001"})
+    assert res["status"] == "error"
+    assert "暫時無法取得" in res["message"]
+
+
+def test_resolve_cwa_location():
+    """測試 address_region 到氣象署地區名稱的對應。"""
+    assert tools._resolve_cwa_location("台北市大安區") == "臺北市"
+    assert tools._resolve_cwa_location("高雄市鳳山區") == "高雄市"
+    assert tools._resolve_cwa_location("花蓮縣壽豐鄉") == "花蓮縣"
+    assert tools._resolve_cwa_location(None) == "臺北市"
+    assert tools._resolve_cwa_location("未知地區") == "臺北市"
+
+
+# =============================================================================
+# 工具十四：get_events_by_time
+# =============================================================================
+
+def test_handle_get_events_by_time_missing_elder_id():
+    """缺少 elder_id 回傳 error。"""
+    res = tools.handle_get_events_by_time({
+        "start_date": "2026-07-25",
+        "end_date": "2026-07-28"
+    })
+    assert res["status"] == "error"
+    assert "elder_id" in res["message"]
+
+
+def test_handle_get_events_by_time_missing_dates():
+    """缺少日期參數回傳 error。"""
+    res = tools.handle_get_events_by_time({"elder_id": "eld_001"})
+    assert res["status"] == "error"
+    assert "start_date" in res["message"] or "end_date" in res["message"]
+
+
+def test_handle_get_events_by_time_success(monkeypatch):
+    """正常依日期範圍查詢事件。"""
+    monkeypatch.setattr(
+        db,
+        "list_events",
+        lambda elder_id, from_date=None, to_date=None, event_type=None, limit=50, next_token=None: (
+            [
+                {"event_id": "evt_001", "type": "diet", "description": "早餐吃了稀飯"},
+                {"event_id": "evt_002", "type": "activity", "description": "在公園散步30分鐘"},
+            ],
+            None
+        )
+    )
+
+    res = tools.handle_get_events_by_time({
+        "elder_id": "eld_001",
+        "start_date": "2026-07-25",
+        "end_date": "2026-07-28"
+    })
+    assert res["status"] == "success"
+    assert res["count"] == 2
+    assert res["period"]["start"] == "2026-07-25"
+    assert res["period"]["end"] == "2026-07-28"
+    assert len(res["data"]) == 2
+
+
+def test_handle_get_events_by_time_with_type_filter(monkeypatch):
+    """帶 event_type 過濾的查詢。"""
+    captured = {}
+
+    def mock_list(elder_id, from_date=None, to_date=None, event_type=None, limit=50, next_token=None):
+        captured["event_type"] = event_type
+        return [{"event_id": "evt_003", "type": "diet", "description": "午餐"}], None
+
+    monkeypatch.setattr(db, "list_events", mock_list)
+
+    res = tools.handle_get_events_by_time({
+        "elder_id": "eld_001",
+        "start_date": "2026-07-25",
+        "end_date": "2026-07-28",
+        "event_type": "diet"
+    })
+    assert res["status"] == "success"
+    assert captured["event_type"] == "diet"
+
+
+def test_handle_get_events_by_time_db_failure(monkeypatch):
+    """DB 查詢失敗回傳 error。"""
+    def mock_list_fail(**kwargs):
+        raise Exception("DynamoDB timeout")
+
+    monkeypatch.setattr(db, "list_events", mock_list_fail)
+
+    res = tools.handle_get_events_by_time({
+        "elder_id": "eld_001",
+        "start_date": "2026-07-25",
+        "end_date": "2026-07-28"
+    })
+    assert res["status"] == "error"
+    assert "查詢事件失敗" in res["message"]
+
+
+# =============================================================================
+# Lambda handler 轉發新工具
+# =============================================================================
+
+def test_tools_lambda_handler_weather(monkeypatch):
+    """測試 Lambda handler 可分派到 get_weather_forecast。"""
+    monkeypatch.setattr(tools, "_CWA_API_KEY", "")  # 故意缺 key 觸發 error 路徑
+    event = {
+        "tool": "get_weather_forecast",
+        "params": {"elder_id": "eld_001"},
+    }
+    resp = tools.handler(event, None)
+    assert resp["status"] == "error"
+    assert "CWA_API_KEY" in resp["message"]
+
+
+def test_tools_lambda_handler_events_by_time(monkeypatch):
+    """測試 Lambda handler 可分派到 get_events_by_time。"""
+    monkeypatch.setattr(
+        db, "list_events",
+        lambda elder_id, from_date=None, to_date=None, event_type=None, limit=50, next_token=None: ([], None)
+    )
+    event = {
+        "tool": "get_events_by_time",
+        "params": {"elder_id": "eld_001", "start_date": "2026-07-25", "end_date": "2026-07-28"},
+    }
+    resp = tools.handler(event, None)
+    assert resp["status"] == "success"
+    assert resp["count"] == 0

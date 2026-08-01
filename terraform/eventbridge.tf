@@ -78,7 +78,7 @@ module "daily_digest" {
   function_name = "${var.project_name}-daily-digest"
   description   = "每晚照護者晚報彙整與推播"
   handler       = "src.handlers.daily_digest.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 120 # 晚報需掃描所有長者，給足夠時間
   memory_size   = 256
 
@@ -87,6 +87,10 @@ module "daily_digest" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true

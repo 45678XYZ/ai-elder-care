@@ -25,6 +25,10 @@ class DemoAuthBackend implements AuthBackend {
 
   final Map<String, _DemoAccount> _accounts = {};
 
+  /// 最近一次 [signIn] 發出的 token，給 [currentIdToken] 用。
+  /// demo 的 token 不會過期，所以「換新」就是原樣回傳同一份。
+  String? _lastToken;
+
   /// 人為延遲。零延遲時直接回一個已完成的 Future，**不排 timer**——
   /// widget test 的假時鐘要靠 pump 才會前進，若在 pumpWidget 之前 await 一個
   /// 排了 timer 的 Future，它永遠不會完成，測試會一路卡到逾時。
@@ -106,13 +110,19 @@ class DemoAuthBackend implements AuthBackend {
       // 畫面要靠這個錯誤把人導回驗證碼頁，而不是叫他重新註冊。
       throw AuthException.of(AuthErrorCode.userNotConfirmed);
     }
-    return _fakeIdToken(sub: account.sub, elderId: account.elderId);
+    return _lastToken =
+        _fakeIdToken(sub: account.sub, elderId: account.elderId);
   }
 
   @override
   Future<void> signOut() async {
     await _wait();
+    _lastToken = null;
   }
+
+  /// demo 的 token 沒有效期，直接回上次登入那一份（沒登入為 null）。
+  @override
+  Future<String?> currentIdToken() async => _lastToken;
 
   /// 密碼規則，對齊 terraform/cognito.tf 的 password_policy：
   /// 至少 8 碼、要有小寫字母與數字（不要求大寫與符號）。

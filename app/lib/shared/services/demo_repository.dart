@@ -259,6 +259,9 @@ class DemoRepository implements CareRepository {
       name: fields['name'] as String?,
       nickname: fields['nickname'] as String?,
       langPreference: fields['lang_preference'] as String?,
+      // 後端已開放長者本人改這兩個欄位（欄位層級白名單），demo 要跟著支援，
+      // 否則長者端的腔調鈕按了完全沒反應——值被靜默丟掉，回來的還是舊腔。
+      hakkaDialect: fields['hakka_dialect'] as String?,
       addressRegion: fields['address_region'] as String?,
       habitNote: fields['habit_note'] as String?,
       family: rawFamily == null
@@ -475,8 +478,8 @@ class DemoRepository implements CareRepository {
       schedule: schedule is Map<String, dynamic>
           ? RoutineSchedule.fromJson(schedule)
           : null,
+      // 不吃 active：後端 PATCH 白名單沒有它（api.md），停用一律走 deleteRoutine。
       remind: fields['remind'] as bool?,
-      active: fields['active'] as bool?,
     );
     list[i] = updated;
     return Future.delayed(DemoData.latency, () => updated);
@@ -485,8 +488,8 @@ class DemoRepository implements CareRepository {
   @override
   Future<void> deleteRoutine(String routineId,
       {required String clientRequestId}) async {
-    // demo 直接從清單移除。後端那條目前是 active=false（資料還在），兩邊對畫面
-    // 而言一樣：都看不到了。等後端定案再對齊。
+    // demo 直接從清單移除。後端那條是留下 active=false 的終態版本（資料還在），
+    // 兩邊對畫面而言一樣：都看不到了。
     final list = await _mutableRoutines(null);
     list.removeWhere((r) => r.routineId == routineId);
     return Future.delayed(DemoData.latency, () {});

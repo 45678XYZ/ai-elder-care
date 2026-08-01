@@ -23,6 +23,7 @@ Lambda。本 Handler 負責分派到對應的 handle_* 函式，呼叫 shared/db
 import json
 import os
 import time
+import urllib.request
 import uuid
 from typing import Any, Dict, Optional
 
@@ -406,6 +407,18 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
         patch_data = {}
         updated_fields = []
 
+        # 處理語言偏好
+        if "lang_preference" in params and params["lang_preference"] in ("zh-TW", "hak"):
+            patch_data["lang_preference"] = params["lang_preference"]
+
+        # 處理客語腔調
+        _VALID_DIALECTS = {
+            "htia_sixian", "htia_hailu", "htia_dapu",
+            "htia_raoping", "htia_zhaoan", "htia_nansixian",
+        }
+        if "hakka_dialect" in params and params["hakka_dialect"] in _VALID_DIALECTS:
+            patch_data["hakka_dialect"] = params["hakka_dialect"]
+
         # 處理暱稱更新
         if "nickname" in params and params["nickname"]:
             patch_data["nickname"] = params["nickname"]
@@ -454,6 +467,8 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             "data": {
                 "elder_id": updated_profile.get("elder_id"),
                 "nickname": updated_profile.get("nickname"),
+                "lang_preference": updated_profile.get("lang_preference", "zh-TW"),
+                "hakka_dialect": updated_profile.get("hakka_dialect", "htia_sixian"),
                 "health_notes": health_note_texts(updated_profile.get("health_notes")),
                 "habit_note": updated_profile.get("habit_note", "")
             }
@@ -789,6 +804,143 @@ def handle_get_recent_conversations(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"查詢對話紀錄失敗: {str(e)}"}
 
 
+# -----------------------------------------------------------------------------
+# 工具十三：取得天氣預報（中央氣象署 Open Data）
+# -----------------------------------------------------------------------------
+
+_CWA_API_KEY = os.environ.get("CWA_API_KEY", "")
+_CWA_FORECAST_URL = (
+    "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001"
+)
+
+_REGION_TO_CWA_LOCATION = {
+    "基隆": "基隆市", "台北": "臺北市", "臺北": "臺北市",
+    "新北": "新北市", "桃園": "桃園市", "新竹": "新竹縣",
+    "苗栗": "苗栗縣", "台中": "臺中市", "臺中": "臺中市",
+    "彰化": "彰化縣", "南投": "南投縣", "雲林": "雲林縣",
+    "嘉義": "嘉義縣", "台南": "臺南市", "臺南": "臺南市",
+    "高雄": "高雄市", "屏東": "屏東縣", "宜蘭": "宜蘭縣",
+    "花蓮": "花蓮縣", "台東": "臺東縣", "臺東": "臺東縣",
+    "澎湖": "澎湖縣", "金門": "金門縣", "連江": "連江縣",
+}
+
+
+def _resolve_cwa_location(address_region: str | None) -> str:
+    """從 elder profile 的 address_region 解析出氣象署使用的地區名稱。"""
+    if not address_region:
+        return "臺北市"
+    for keyword, cwa_name in _REGION_TO_CWA_LOCATION.items():
+        if keyword in address_region:
+            return cwa_name
+    return "臺北市"
+
+
+def handle_get_weather_forecast(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具十三：取得長者所在地區的天氣預報。"""
+    elder_id = params.get("elder_id")
+    location = params.get("location")
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+
+    if not _CWA_API_KEY:
+        return {"status": "error", "message": "天氣服務未配置（缺少 CWA_API_KEY）"}
+
+    if not location:
+        try:
+            elder = db.get_elder(elder_id)
+            location = _resolve_cwa_location(
+                elder.get("address_region") if elder else None
+            )
+        except Exception:
+            location = "臺北市"
+
+    url = (
+        f"{_CWA_FORECAST_URL}"
+        f"?Authorization={_CWA_API_KEY}"
+        f"&locationName={urllib.request.quote(location)}"
+    )
+
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[Error] handle_get_weather_forecast 呼叫氣象署失敗: {e}")
+        return {"status": "error", "message": "天氣資料暫時無法取得"}
+
+    records = data.get("records", {})
+    locations = records.get("location", [])
+    if not locations:
+        return {"status": "error", "message": f"找不到 {location} 的天氣資料"}
+
+    loc_data = locations[0]
+    weather_elements = {
+        elem["elementName"]: elem for elem in loc_data.get("weatherElement", [])
+    }
+
+    forecast_list = []
+    wx = weather_elements.get("Wx", {}).get("time", [])
+    min_t = weather_elements.get("MinT", {}).get("time", [])
+    max_t = weather_elements.get("MaxT", {}).get("time", [])
+    pop = weather_elements.get("PoP", {}).get("time", [])
+
+    for i, period in enumerate(wx):
+        entry = {
+            "start_time": period.get("startTime", ""),
+            "end_time": period.get("endTime", ""),
+            "weather": period["parameter"]["parameterName"],
+        }
+        if i < len(min_t):
+            entry["temp_low"] = int(min_t[i]["parameter"]["parameterName"])
+        if i < len(max_t):
+            entry["temp_high"] = int(max_t[i]["parameter"]["parameterName"])
+        if i < len(pop):
+            entry["rain_prob"] = int(pop[i]["parameter"]["parameterName"])
+        forecast_list.append(entry)
+
+    return {
+        "status": "success",
+        "location": location,
+        "forecast": forecast_list,
+    }
+
+
+# -----------------------------------------------------------------------------
+# 工具十四：根據時間範圍查詢生活事件
+# -----------------------------------------------------------------------------
+
+def handle_get_events_by_time(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具十四：根據指定時間範圍查詢長者的生活事件。"""
+    elder_id = params.get("elder_id")
+    start_date = params.get("start_date")
+    end_date = params.get("end_date")
+    event_type = params.get("event_type")
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+    if not start_date or not end_date:
+        return {"status": "error", "message": "缺少必要參數 start_date 或 end_date"}
+
+    try:
+        items, _ = db.list_events(
+            elder_id=elder_id,
+            from_date=start_date,
+            to_date=end_date,
+            event_type=event_type,
+            limit=50,
+        )
+        return {
+            "status": "success",
+            "count": len(items),
+            "period": {"start": start_date, "end": end_date},
+            "data": items,
+        }
+    except Exception as e:
+        print(f"[Error] handle_get_events_by_time 失敗: {e}")
+        return {"status": "error", "message": f"查詢事件失敗: {str(e)}"}
+
+
 # 工具分流映射字典 (Function Name -> Handler Function)
 # -----------------------------------------------------------------------------
 
@@ -805,6 +957,8 @@ TOOL_HANDLERS = {
     "notify_caregiver": handle_notify_caregiver,
     "get_daily_summaries": handle_get_daily_summaries,
     "get_recent_conversations": handle_get_recent_conversations,
+    "get_weather_forecast": handle_get_weather_forecast,
+    "get_events_by_time": handle_get_events_by_time,
 }
 
 

@@ -46,7 +46,7 @@ module "pre_token" {
   function_name = "${var.project_name}-pre-token-trigger"
   description   = "Cognito pre-token-generation trigger"
   handler       = "pre_token_generation.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
 
   create_role = false
   lambda_role = aws_iam_role.pre_token.arn
@@ -96,6 +96,18 @@ resource "aws_iam_role" "lambda_backend_role" {
 #
 # 多支 Lambda 共用同一個部署包來源（backend/src + backend/requirements.txt），
 # 差別只在 handler 與環境變數。
+#
+# ⚠️ 首次部署（或 backend/ 有異動）請用 `terraform apply -parallelism=1`。
+#
+# 共用來源代表這 13 支算出來的 zip 檔名完全相同，而 package.py 只有「檔案已存在就重用」
+# 這一層保護，沒有鎖。預設 parallelism=10 會讓十幾個容器同時發現檔案不存在、同時跑 pip：
+#   - 每個容器各下載約 74 MB，網路被自己塞爆，pip 開始 Connection refused / 解析不到網域
+#   - pip 連不上就回頭試舊版本，請求量再翻倍，最後以 ResolutionImpossible 收場
+#   - 僥倖裝完的那個會死在 os.utime → FileNotFoundError，因為別的 process 正在寫同一個檔
+# 序列化之後第一個建好，其餘 12 個直接 Reused，反而更快。
+#
+# 根治的做法是拆一個只打包的模組（create_function = false），13 支改用
+# create_package = false + s3_existing_package 指向同一個物件，就沒有競爭可言。
 
 locals {
   # 部署包來源：自動將 backend/src 配至 zip 內的 src/，並由 pip_requirements 自動安裝依賴套件
@@ -117,9 +129,17 @@ locals {
 
   # 依賴一律在容器內安裝。社群模組的 package.py 是直接在本機跑 pip 且不帶 --platform，
   # 在 macOS 上會裝成 macosx wheel（requirements.txt 的 pydantic 帶編譯出來的 pydantic-core），
-  # zip 上去後 Lambda 冷啟就 ImportModuleError。映像檔沿用模組預設的
-  # public.ecr.aws/sam/build-python3.11，這裡只指定平台，讓誰打包結果都一樣。
+  # zip 上去後 Lambda 冷啟就 ImportModuleError。映像檔由模組依 runtime 推導
+  # （public.ecr.aws/sam/build-<runtime>），這裡只指定平台，讓誰打包結果都一樣。
   docker_build_options = ["--platform", "linux/arm64"]
+
+  # runtime 必須是 python3.12 以上，不能退回 3.11。
+  #
+  # python3.11 的執行環境是 Amazon Linux 2（glibc 2.26），但 requirements.txt 的
+  # av 只出 manylinux_2_28、numpy 只出 manylinux_2_27 的 arm64 wheel，兩個都裝不上去。
+  # pip 裝不了 wheel 會退回編譯原始碼，而 PyAV 需要 FFmpeg 的開發標頭檔，SAM 映像檔裡
+  # 沒有，打包會直接失敗（pkg-config could not find libraries ['avformat', ...]）。
+  # python3.13 的環境是 Amazon Linux 2023（glibc 2.34），三個套件都裝得起來。
 
   # 萃取行為一律由環境變數驅動，程式不寫死（見 docs/framework.md 後端環境變數）
   extraction_env = {
@@ -209,12 +229,20 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
           "dynamodb:BatchGetItem",
           "dynamodb:BatchWriteItem"
         ]
+        # 每張表都要連 index ARN 一起放行：查 GSI 的權限不會由 base table ARN 涵蓋，
+        # 少了就會在 Query 當下被拒（tools 的 get_today_routines 走
+        # routine-versions-by-elder，正是踩到這個）。表本身沒有 GSI 時多這條也無害。
         Resource = [
           aws_dynamodb_table.elders.arn,
+          "${aws_dynamodb_table.elders.arn}/index/*",
           aws_dynamodb_table.conversations.arn,
+          "${aws_dynamodb_table.conversations.arn}/index/*",
           aws_dynamodb_table.events.arn,
+          "${aws_dynamodb_table.events.arn}/index/*",
           aws_dynamodb_table.daily_summaries.arn,
-          aws_dynamodb_table.routines.arn
+          "${aws_dynamodb_table.daily_summaries.arn}/index/*",
+          aws_dynamodb_table.routines.arn,
+          "${aws_dynamodb_table.routines.arn}/index/*",
         ]
       }
     ]
@@ -237,7 +265,7 @@ module "chat" {
   function_name = "${var.project_name}-chat"
   description   = "POST /chat 對話進入點"
   handler       = "src.handlers.chat.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 28
   memory_size   = 512
 
@@ -246,6 +274,10 @@ module "chat" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -288,7 +320,7 @@ module "tools" {
   function_name = "${var.project_name}-tools"
   description   = "對話大腦的工具箱"
   handler       = "src.handlers.tools.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 15
   memory_size   = 256
 
@@ -297,6 +329,10 @@ module "tools" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -311,6 +347,7 @@ module "tools" {
     TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
     TABLE_ROUTINES             = aws_dynamodb_table.routines.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    CWA_API_KEY                = var.cwa_api_key
   }
 }
 
@@ -322,7 +359,7 @@ module "elders" {
   function_name = "${var.project_name}-elders"
   description   = "長者個人檔案與偏好 API"
   handler       = "src.handlers.elders.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 10
   memory_size   = 512
 
@@ -331,6 +368,10 @@ module "elders" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -356,7 +397,7 @@ module "post_confirmation" {
   function_name = "${var.project_name}-post-confirmation"
   description   = "Cognito post-confirmation trigger：註冊完成後綁定 SNS"
   handler       = "src.handlers.post_confirmation.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 10
 
   create_role = false
@@ -364,6 +405,10 @@ module "post_confirmation" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -510,7 +555,7 @@ module "batch_extractor" {
   function_name = "${var.project_name}-batch-extractor"
   description   = "Module B 生活記錄批次萃取器"
   handler       = "src.handlers.batch_extractor.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = var.batch_lambda_timeout
   memory_size   = 1024
 
@@ -519,6 +564,10 @@ module "batch_extractor" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -546,7 +595,7 @@ module "session_closer" {
   function_name = "${var.project_name}-session-closer"
   description   = "Session 關閉與離線 materialization 觸發器"
   handler       = "src.handlers.session_closer.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 60
   memory_size   = 512
 
@@ -555,6 +604,10 @@ module "session_closer" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -574,15 +627,21 @@ module "dlq_reconciler" {
   function_name = "${var.project_name}-dlq-reconciler"
   description   = "DLQ 訊息對賬與告警器"
   handler       = "src.handlers.dlq_reconciler.handler"
-  runtime       = "python3.11"
-  timeout       = 60
-  memory_size   = 512
+  runtime       = "python3.13"
+  # 與 aws_sqs_queue.batch_dlq 的 visibility timeout 綁在同一個變數：兩者一旦脫鉤，
+  # CreateEventSourceMapping 會因為 visibility < timeout 被拒
+  timeout     = var.dlq_reconciler_timeout
+  memory_size = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -609,7 +668,7 @@ module "api_events" {
   function_name = "${var.project_name}-api-events"
   description   = "照護者端事件時間軸 API"
   handler       = "src.handlers.events.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 15
   memory_size   = 512
 
@@ -618,6 +677,10 @@ module "api_events" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -654,7 +717,7 @@ module "api_summaries" {
   function_name = "${var.project_name}-api-summaries"
   description   = "照護者端每日摘要 API"
   handler       = "src.handlers.summaries.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = var.summary_lambda_timeout
   memory_size   = 512
 
@@ -663,6 +726,10 @@ module "api_summaries" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -681,7 +748,7 @@ module "summary_generator" {
   function_name = "${var.project_name}-summary-generator"
   description   = "排程每日摘要生成器（nightly + backfill）"
   handler       = "src.handlers.summary_generator.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = var.summary_generator_timeout
   memory_size   = 1024
 
@@ -690,6 +757,10 @@ module "summary_generator" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -708,7 +779,7 @@ module "api_stats" {
   function_name = "${var.project_name}-api-stats"
   description   = "照護者端互動與行程統計 API"
   handler       = "src.handlers.stats.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   # 統計即時彙總最多一個月的 occurrence 與 completion event，比單頁列表查詢多幾次讀取
   timeout     = 30
   memory_size = 512
@@ -718,6 +789,10 @@ module "api_stats" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -815,7 +890,7 @@ module "api_routines" {
   function_name = "${var.project_name}-api-routines"
   description   = "例行公事定義與當日行程 API"
   handler       = "src.handlers.routines.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 15
   memory_size   = 512
 
@@ -824,6 +899,10 @@ module "api_routines" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true

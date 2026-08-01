@@ -17,12 +17,13 @@ import 'chat_session.dart';
 /// 後端本身，不該來自這裡多做了什麼——否則 demo 資料跑得動、真後端跑不動時，
 /// 會分不清是誰的問題。
 ///
-/// token 從 [AuthService] 拿（尚未接上 Cognito 前是 null，[ApiClient] 會不帶
-/// Authorization header）；接上之後這裡不用改。
+/// token 從 [AuthService] 拿；未登入時是 null，[ApiClient] 會不帶 Authorization header。
 class ApiRepository implements CareRepository {
   ApiRepository({ApiClient? client})
       : _api = client ??
-            ApiClient(tokenProvider: () async => AuthService.instance.idToken);
+            // 用 freshIdToken 而不是 idToken：ID token 一小時就過期，而 App 會一直開著
+            // （長者模式尤其），沿用登入當下那一份會在一小時後每支 API 都 401。
+            ApiClient(tokenProvider: AuthService.instance.freshIdToken);
 
   final ApiClient _api;
 

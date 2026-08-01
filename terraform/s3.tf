@@ -1,6 +1,7 @@
 # S3
 #   - TTS 音檔 bucket（/chat 回覆，presigned URL 15 分鐘；生命週期 1 天後自動清除）
 #   - 衛教文件 bucket（Bedrock Knowledge Base 資料來源，部署時上傳 data/knowledge/）
+#   - Lambda 部署包 bucket（zip 超過直接上傳上限，改走 S3）
 #
 # data.aws_caller_identity.current 見 providers.tf
 
@@ -77,4 +78,26 @@ resource "aws_s3_bucket_versioning" "kb_documents" {
   versioning_configuration {
     status = "Enabled"
   }
+}
+
+# =============================================================================
+# 3. Lambda 部署包 Bucket（見 lambda.tf 的 backend_source_path）
+# =============================================================================
+# 直接上傳的 zip 上限是 50 MB，但 requirements.txt 帶了 av（內含 FFmpeg）、numpy 與
+# soundfile，打包後約 75 MB，CreateFunction 會回 RequestEntityTooLargeException。
+# 改由 S3 上傳就沒有這個上限；解壓後 250 MB 的限制仍在，目前約 215 MB。
+#
+# force_destroy：裡面只有建置產物，砍掉環境時不該為了清 zip 而卡住 destroy。
+resource "aws_s3_bucket" "lambda_artifacts" {
+  bucket        = "${var.project_name}-lambda-artifacts-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket_public_access_block" "lambda_artifacts" {
+  bucket = aws_s3_bucket.lambda_artifacts.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }

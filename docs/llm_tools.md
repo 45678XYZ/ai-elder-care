@@ -41,6 +41,12 @@
 |---|---|---|
 | **`search_health_knowledge`** | 檢索衛教與長照知識庫，取得疾病照護、用藥觀念、長照資源的說明。 | 詢問衛教或長照資源：「血壓高平常要注意什麼？」「有沒有人可以幫忙照顧？」 |
 
+### 1.5 環境資訊類 (Environment Info)
+| 工具名稱 | 功能描述 (供 LLM 判斷) | 調用契機 (Triggering Intent) |
+|---|---|---|
+| **`get_weather_forecast`** | 取得長者所在地區的天氣預報（氣溫、天氣狀況、降雨機率）。 | 詢問天氣：「今天天氣怎樣？」「要帶傘嗎？」「今天冷不冷？」，或主動關懷天氣變化提醒 |
+| **`get_events_by_time`** | 根據指定日期範圍查詢長者的生活事件歷史。 | 詢問特定時間紀錄：「我上週有按時吃藥嗎？」「前天做了什麼運動？」「這禮拜有跌倒過嗎？」 |
+
 ---
 
 ## 2. 各工具規格與系統影響 (Tool Specifications & Impacts)
@@ -96,9 +102,10 @@
 *   **系統影響**：無副作用 (唯讀)。提供 Agent 學習長輩喜好並用於自然對話。
 
 #### `update_elder_profile` (更新長者個人檔案)
-*   **LLM 描述**：`Update the elder's profile, including adding new health notes, appending to lifestyle habits, or changing their nickname based on conversation.`
-*   **輸入參數**：`elder_id` (字串), `health_note_to_add` (字串，欲新增的健康注意事項), `habit_note_to_append` (字串，欲補充的生活習慣與喜好), `nickname` (字串，新暱稱)
+*   **LLM 描述**：`Update the elder's profile, including adding new health notes, appending to lifestyle habits, changing their nickname, or switching language preference based on conversation. Only set lang_preference/hakka_dialect when the elder EXPLICITLY asks to switch.`
+*   **輸入參數**：`elder_id` (字串), `health_note_to_add` (字串，欲新增的健康注意事項), `habit_note_to_append` (字串，欲補充的生活習慣與喜好), `nickname` (字串，新暱稱), `lang_preference` (字串，選填：zh-TW 或 hak), `hakka_dialect` (字串，選填：htia_sixian / htia_hailu / htia_dapu / htia_raoping / htia_zhaoan / htia_nansixian)
 *   **回傳資料**：`{"status": "success", "message": "已成功更新長者個人檔案", "updated_fields": [...], "data": {...}}`
+*   **語言切換**：`lang_preference` 與 `hakka_dialect` 僅在長者**明確要求**切換語言時才填入。無效值會被靜默忽略，不中斷對話。此路徑與 `PATCH /elders` 的 REST API 路徑並行：前者供對話中切換，後者供前端 UI 操作。
 *   **健康註記的寫入方式**：`health_note_to_add` 會以 `source: "agent"` 原子 append 進 `health_notes`（`db.append_health_note`），**不做讀出再整份寫回**。同一個欄位照護者也會在 App 上增刪，整份覆寫會讓其中一邊的結果無聲消失。已存在的相同內容不重複加入。
 *   **來源標示**：由此工具寫入的註記在 API 上帶 `source: "agent"`，與照護者手填的 `caregiver` 分開，讓照護者看得出哪幾筆是 AI 從談話裡聽來的（契約見 `docs/api.md` 的 health_notes 物件）。
 *   **回傳的 `health_notes`**：攤平成純文字陣列，不含 `note_id` 等內部識別碼。
@@ -154,6 +161,22 @@
 
 ---
 
+### 2.5 環境資訊類 (Environment Info)
+
+#### `get_weather_forecast` (取得天氣預報)
+*   **LLM 描述**：`Get the current weather forecast for the elder's area. Use when the elder asks about weather, temperature, rain, or whether to bring an umbrella/wear warm clothes. Also useful for proactive care reminders related to weather (e.g., cold snap warning, heat stroke prevention).`
+*   **輸入參數**：`elder_id` (字串), `location` (字串，選填，氣象署地區名稱如「臺北市」「高雄市」，不填則從長者居住地自動取得)
+*   **回傳資料**：`{"status": "success", "location": "臺北市", "forecast": [{"start_time": "...", "end_time": "...", "weather": "多雲短暫雨", "temp_low": 24, "temp_high": 28, "rain_prob": 70}]}`
+*   **系統影響**：無副作用 (唯讀)。呼叫中央氣象署 Open Data API（F-C0032-001 一般天氣預報），回傳未來 36 小時分三時段的天氣、氣溫與降雨機率。
+
+#### `get_events_by_time` (依時間範圍查詢事件)
+*   **LLM 描述**：`Query the elder's life events within a specific date range. Use when the elder asks about what happened on particular days. Unlike get_recent_events which returns the latest 20, this tool filters by exact dates.`
+*   **輸入參數**：`elder_id` (字串), `start_date` (字串，YYYY-MM-DD), `end_date` (字串，YYYY-MM-DD), `event_type` (字串，選填：routine_completion / wellbeing / activity / family / diet / safety / other)
+*   **回傳資料**：`{"status": "success", "count": 5, "period": {"start": "2026-07-25", "end": "2026-07-28"}, "data": [...]}`
+*   **系統影響**：無副作用 (唯讀)。直接查詢 DynamoDB events 表的 `events-by-time` GSI，以 `event_time_key` 做範圍查詢。最多回傳 50 筆。
+
+---
+
 ## 3. 對話引導與工具調用實例
 
 以下展示 Agent 如何在對話中判斷意圖並流暢調用對應的工具：
@@ -177,3 +200,13 @@
 *   **長者**：「小助手，我剛剛在浴室不小心摔倒了，腳好痛站不起來...」
 *   **Agent 內部邏輯**：判斷意圖為緊急醫療與安全狀況。呼叫 `notify_caregiver(elder_id="eld_001", category="emergency", message="長者反映在浴室跌倒，腳部劇痛站立困難。")`，系統發送 SNS 並寫入安全事件。
 *   **Agent 回覆**：「阿蘭嬤！請您先坐在原地千萬不要急著站起來。我已經立刻發送緊急警報通知志明了，他很快就會關心您！」
+
+### 實例 E：長者詢問天氣 ➔ 調用 `get_weather_forecast`
+*   **長者**：「今天要不要帶雨傘出門？」
+*   **Agent 內部邏輯**：判斷意圖為詢問天氣。呼叫 `get_weather_forecast(elder_id="eld_001")`，系統回傳降雨機率 70%、多雲短暫雨。
+*   **Agent 回覆**：「阿蘭嬤，今天有七成的機會會下雨喔，天氣預報說會有短暫陣雨。出門記得帶把傘比較安心！」
+
+### 實例 F：長者詢問過去紀錄 ➔ 調用 `get_events_by_time`
+*   **長者**：「我上禮拜有吃藥嗎？」
+*   **Agent 內部邏輯**：判斷意圖為查詢過去一週用藥紀錄。呼叫 `get_events_by_time(elder_id="eld_001", start_date="2026-07-21", end_date="2026-07-27", event_type="routine_completion")`，系統回傳 5 筆完成紀錄。
+*   **Agent 回覆**：「阿蘭嬤，上禮拜七天裡面你有五天都有按時吃藥，很棒喔！只有禮拜三跟禮拜六沒有紀錄，下次要記得喔。」
