@@ -453,7 +453,47 @@ class _ChatScreenState extends State<ChatScreen>
     String? audioBase64,
     required bool continueLoop,
   }) async {
+    // 同一時間只准有一輪在飛。
+    //
+    // 語音迴圈本來就是嚴格輪流的——下一輪由這個函式的最後一行開啟——所以「上一輪
+    // 還在飛就又進來一輪」一定是 bug，不管是哪一條路造成的。擋在這裡而不是在各條
+    // 路上各放一個旗標：那種旗標會被下一輪的 [_listenTurn] 重設，時序一錯就漏，
+    // 而且每多一條送出的路就要記得多加一次。這裡是所有路的共同出口，擋一次就夠。
+    //
+    // 沒擋的後果實機看得到：同一句話兩顆一模一樣的泡泡，後端也收到兩次 `/chat`，
+    // 第二次撞上同一輪回錯誤，錯誤處理補一句「沒聽清楚」——看起來像沒聽到，
+    // 其實是自己撞掉的。而且那條錯誤路徑會跳過長者檔案重讀，於是長輩用講的改了
+    // 語言，主頁那顆鈕還停在舊的。
+    //
+    // 比對的是**序號**而不是單純一個布林值：[_stopConversation] 會把 [_turnSeq]
+    // 往前推、作廢在飛的那一輪，那種情況一定要放行。用布林值的話，長輩按了停止、
+    // 再按麥克風重講，那句話會卡在還沒回來的舊請求後面被默默丟掉——比重複更糟。
+    if (_inFlightTurn != null && _inFlightTurn == _turnSeq) return;
+
     final seq = ++_turnSeq;
+    _inFlightTurn = seq;
+    try {
+      await _runTurn(
+        seq: seq,
+        text: text,
+        audioBase64: audioBase64,
+        continueLoop: continueLoop,
+      );
+    } finally {
+      // 只清自己那一輪：中途被作廢時 [_inFlightTurn] 已經屬於別人了。
+      if (_inFlightTurn == seq) _inFlightTurn = null;
+    }
+  }
+
+  /// 還在飛的那一輪的序號；null = 沒有。見 [_handleQuestion] 的說明。
+  int? _inFlightTurn;
+
+  Future<void> _runTurn({
+    required int seq,
+    String? text,
+    String? audioBase64,
+    required bool continueLoop,
+  }) async {
     await _speech.stop();
     // 問題定案，移進歷史；暫存的辨識文字清掉，避免同一句出現兩次。
     //
