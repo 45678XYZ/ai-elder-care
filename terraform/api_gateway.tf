@@ -9,7 +9,7 @@
 #   DELETE /elders/{elder_id}/health_notes/{note_id}        → elders ✅
 #   GET   /summaries、POST /summaries/generate              → summaries ✅
 #   GET   /events                                           → events ✅
-#   GET/POST /routines、PATCH /routines/{routine_id}、
+#   GET/POST /routines、PATCH|DELETE /routines/{routine_id}、
 #   POST  /routines/{routine_id}/complete                   → routines ✅
 #   GET   /stats                                            → stats ✅
 #
@@ -316,6 +316,8 @@ resource "aws_api_gateway_integration" "patch_routine" {
   uri                     = module.api_routines.lambda_function_invoke_arn
 }
 
+# 刪除是把當前版本的 active 改成 false（見 backend/src/handlers/routines.py 的
+# _delete_routine），不是真的移除項目，因此不需要額外的 dynamodb:DeleteItem 權限。
 resource "aws_api_gateway_method" "delete_routine" {
   rest_api_id          = aws_api_gateway_rest_api.api.id
   resource_id          = aws_api_gateway_resource.routine_id.id
