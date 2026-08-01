@@ -325,11 +325,11 @@ class ApiClient {
     return Routine.fromJson(json);
   }
 
-  /// `PATCH /routines/{id}` — 修改／停用例行公事（照護者）。
+  /// `PATCH /routines/{id}` — 修改例行公事（照護者）。
   ///
   /// [clientRequestId] 必填且**每次修改都要新的一個**（同一個值代表同一次修改，
-  /// 重送不會建出第二個版本）。[fields] 只可含 `title`、`type`、`schedule`、`remind`、
-  /// `active`——其他欄位後端回 400 `INVALID_PARAMETER`。
+  /// 重送不會建出第二個版本）。[fields] 只可含 `title`、`type`、`schedule`、`remind`
+  /// ——其他欄位（含 `active`）後端回 400 `INVALID_PARAMETER`，停用請走 [deleteRoutine]。
   Future<Routine> updateRoutine(
     String routineId, {
     required String clientRequestId,
@@ -339,6 +339,28 @@ class ApiClient {
       'client_request_id': clientRequestId,
       ...fields,
     });
+    return Routine.fromJson(json);
+  }
+
+  /// `DELETE /routines/{id}` — 刪除例行公事（照護者）。
+  ///
+  /// 後端建一個 `active=false` 的終態版本並把它移出排程，所以回傳的是那筆
+  /// `active: false` 的 Routine，不是空 body。
+  ///
+  /// [clientRequestId] 可省略（後端會自行衍生），但**要能安全重試就得帶**：
+  /// 帶了才會冪等重播，同一個值重送拿到同一結果。走 query 而非 body——api.md
+  /// 這個端點的冪等鍵定在 query 參數。
+  Future<Routine> deleteRoutine(
+    String routineId, {
+    String? clientRequestId,
+  }) async {
+    final json = await _request(
+      'DELETE',
+      '/routines/$routineId',
+      query: {
+        if (clientRequestId != null) 'client_request_id': clientRequestId,
+      },
+    );
     return Routine.fromJson(json);
   }
 

@@ -125,13 +125,11 @@ abstract interface class CareRepository {
 
   /// 刪除一筆例行公事。刪掉之後照護者在 App 裡看不到它，也不會再收到提醒。
   ///
-  /// **目前底下走的仍是 `PATCH {active:false}`**——api.md 還沒有刪除端點，後端之後
-  /// 會改成什麼樣還不知道。之所以另外開一個方法而不是讓畫面直接送 `active:false`，
-  /// 就是為了把那個未定的部分關在這一層：後端定案時只改實作，畫面不用動。
+  /// 底下走 `DELETE /routines/{id}`。後端的作法是建一個 `active=false` 的終態版本
+  /// 並移出排程，所以**資料其實還在、刪除在後端是可逆的**，但 App 不提供還原入口。
+  /// UI 說「刪除」就要真的看起來像刪除，留一個復原按鈕反而讓人以為只是暫停。
   ///
-  /// 這也表示現在**刪除在後端仍是可逆的**（資料還在，只是 active=false），但 App
-  /// 不再提供還原的入口。UI 說「刪除」就要真的看起來像刪除，留一個復原按鈕反而
-  /// 讓人以為只是暫停。
+  /// [clientRequestId] 由呼叫端產生並持有：帶了才有冪等重播，重送不會誤刪別筆。
   Future<void> deleteRoutine(String routineId,
       {required String clientRequestId});
 
