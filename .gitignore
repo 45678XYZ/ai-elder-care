@@ -56,6 +56,8 @@ docs/deliverables/
 # --- misc ---
 .DS_Store
 .env
+cookies.txt
+CLAUDE.md
 
 # --- 本地端測試與 Runner 產出 (Local Runner & Offline Pipeline) ---
 backend/local_runner/data/
