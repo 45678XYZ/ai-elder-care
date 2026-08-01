@@ -125,7 +125,8 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
     (
         "update_elder_profile",
         "Update the elder's profile, including adding new health notes, appending to lifestyle habits, "
-        "or changing their nickname based on conversation.",
+        "changing their nickname, or switching language preference based on conversation. "
+        "Only set lang_preference/hakka_dialect when the elder EXPLICITLY asks to switch.",
         {
             "health_note_to_add": (
                 str,
@@ -138,6 +139,18 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
                 "欲補充的生活習慣與喜好（如：喜歡喝溫開水、不吃牛肉）。將附加至既有字串。",
             ),
             "nickname": (str, False, "長者希望被稱呼的新暱稱。"),
+            "lang_preference": (
+                str,
+                False,
+                "語言偏好：zh-TW（華語）或 hak（客語）。僅在長者明確表示想切換語言時才填。",
+            ),
+            "hakka_dialect": (
+                str,
+                False,
+                "客語腔調：htia_sixian（四縣）、htia_hailu（海陸）、htia_dapu（大埔）、"
+                "htia_raoping（饒平）、htia_zhaoan（詔安）、htia_nansixian（南四縣）。"
+                "僅在長者明確指定腔調時才填。",
+            ),
         },
     ),
     (

@@ -11,6 +11,17 @@
 resource "aws_cognito_user_pool" "accounts" {
   name = "${var.project_name}-users"
 
+  # 以 email 當帳號，而不是另外取一個 username。App 的註冊／登入畫面只問 email 與密碼
+  # （見 app/lib/shared/services/auth_backend.dart 的介面簽章），沒有輸入 username 的欄位。
+  #
+  # ⚠️ 這個屬性建立後不可變更，改它會讓整個 user pool 被重建，既有帳號全部消失。
+  # 要調整只能趁還沒有人註冊的時候。
+  username_attributes = ["email"]
+
+  # 註冊後由 Cognito 寄驗證碼到信箱，App 才會走到驗證碼畫面
+  # （SignUpOutcome.needsConfirmation）；沒設的話帳號建了卻永遠是未驗證狀態，登不進去。
+  auto_verified_attributes = ["email"]
+
   # 長者多為長輩自行登入，密碼規則從寬但仍要求最低長度與基本複雜度
   password_policy {
     minimum_length    = 8

@@ -142,10 +142,13 @@ def handle_patch_elder(event: Dict[str, Any]) -> Dict[str, Any]:
     except auth.AuthError as auth_err:
         return auth_err.response
 
-    if caller.role != auth.ROLE_CAREGIVER:
-        return responses.error(403, "FORBIDDEN", "只有照護者帳號可修改長者資料")
-
     body = parse_body(event)
+
+    # 長者本人只能修改語言相關欄位
+    _ELDER_ALLOWED_FIELDS = {"lang_preference", "hakka_dialect"}
+    if caller.role != auth.ROLE_CAREGIVER:
+        if not set(body.keys()).issubset(_ELDER_ALLOWED_FIELDS):
+            return responses.error(403, "FORBIDDEN", "長者只能修改語言偏好與腔調")
 
     # 防護：禁止傳入唯讀欄位
     server_owned_fields = ("elder_id", "caregiver_ids", "created_at", "updated_at")

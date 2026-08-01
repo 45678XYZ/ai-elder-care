@@ -396,6 +396,18 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
         patch_data = {}
         updated_fields = []
 
+        # 處理語言偏好
+        if "lang_preference" in params and params["lang_preference"] in ("zh-TW", "hak"):
+            patch_data["lang_preference"] = params["lang_preference"]
+
+        # 處理客語腔調
+        _VALID_DIALECTS = {
+            "htia_sixian", "htia_hailu", "htia_dapu",
+            "htia_raoping", "htia_zhaoan", "htia_nansixian",
+        }
+        if "hakka_dialect" in params and params["hakka_dialect"] in _VALID_DIALECTS:
+            patch_data["hakka_dialect"] = params["hakka_dialect"]
+
         # 處理暱稱更新
         if "nickname" in params and params["nickname"]:
             patch_data["nickname"] = params["nickname"]
@@ -444,6 +456,8 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             "data": {
                 "elder_id": updated_profile.get("elder_id"),
                 "nickname": updated_profile.get("nickname"),
+                "lang_preference": updated_profile.get("lang_preference", "zh-TW"),
+                "hakka_dialect": updated_profile.get("hakka_dialect", "htia_sixian"),
                 "health_notes": health_note_texts(updated_profile.get("health_notes")),
                 "habit_note": updated_profile.get("habit_note", "")
             }
