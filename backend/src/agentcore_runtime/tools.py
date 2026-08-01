@@ -209,9 +209,6 @@ ROUTINE_MUTATING_TOOLS = frozenset(
     {"complete_routine", "create_routine", "update_routine", "deactivate_routine"}
 )
 
-# 呼叫後代表已對照護者發出安全通知
-SAFETY_TOOLS = frozenset({"notify_caregiver"})
-
 
 def _args_model(tool_name: str, params: ParamSpec):
     """把工具規格轉成 pydantic model，供 LangChain 產生工具 schema。"""

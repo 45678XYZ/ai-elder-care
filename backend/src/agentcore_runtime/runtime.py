@@ -3,7 +3,7 @@
 請求與回應的契約（呼叫端是 backend/src/handlers/chat.py 的 invoke_agent_brain）：
 
     request  {"elder_id", "text", "lang", "local_time", "session_key"}
-    response {"reply_text", "routines_updated", "safety_alert_triggered"}
+    response {"reply_text", "routines_updated"}
 
 回一般 JSON 不做 SSE：chat Lambda 會等整段回覆收完才進 TTS，中間沒有逐字的消費者，
 串流只是徒增兩邊的解析複雜度。
@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage
 from src.agentcore_runtime import config
 from src.agentcore_runtime.graph import build_graph, final_text
 from src.agentcore_runtime.prompts import build_turn_prefix
-from src.agentcore_runtime.tools import ROUTINE_MUTATING_TOOLS, SAFETY_TOOLS
+from src.agentcore_runtime.tools import ROUTINE_MUTATING_TOOLS
 
 
 logging.basicConfig(level=logging.INFO)
@@ -43,7 +43,6 @@ def invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "reply_text": FALLBACK_REPLY,
             "routines_updated": False,
-            "safety_alert_triggered": False,
             "error": "MISSING_INPUT",
         }
 
@@ -68,9 +67,7 @@ def invoke(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "reply_text": reply_text,
-        # 明確回報而非讓呼叫端猜：這兩個旗標會直接變成 API 的 routines_updated 與安全警報標記
         "routines_updated": bool(tools_called & ROUTINE_MUTATING_TOOLS),
-        "safety_alert_triggered": bool(tools_called & SAFETY_TOOLS),
     }
 
 

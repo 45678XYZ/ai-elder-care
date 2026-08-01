@@ -3,9 +3,9 @@
 兩個節點：`agent` 負責思考與決定要不要呼叫工具，`tools` 負責執行。條件邊在兩者之間循環，
 直到模型不再要求工具為止。
 
-`tools_called` 會累積本輪用過的工具名稱，最後由 runtime 換算成 `routines_updated` 與
-`safety_alert_triggered` 回給 chat Lambda。舊版是掃 Bedrock trace 的字串來猜，模型改個
-措辭就會失準；由圖自己記錄才是可靠的來源。
+`tools_called` 會累積本輪用過的工具名稱，最後由 runtime 換算成 `routines_updated`
+回給 chat Lambda。舊版是掃 Bedrock trace 的字串來猜，模型改個措辭就會失準；
+由圖自己記錄才是可靠的來源。
 
 長期記憶走 AgentCore Memory：`AgentCoreMemorySaver` 是 LangGraph 的 checkpointer，因此
 docs/framework.md 的「長期記憶由 AWS AgentCore 服務管理，不自建 DynamoDB memories 表」
