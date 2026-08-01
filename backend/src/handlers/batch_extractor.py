@@ -28,9 +28,9 @@ import time
 import uuid
 
 from src.extraction.canonical import load_predicate_lexicon
-from src.extraction.chunker import Turn
+from src.extraction.models import Turn
 from src.extraction.config import ExtractionConfig
-from src.extraction.direct_seven import DirectSevenPipeline
+from src.extraction.seven_type import DirectSevenPipeline
 from src.extraction.taxonomy import load_taxonomy
 from src.shared import bedrock, db, metrics, sessions
 

@@ -7,54 +7,20 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class LabelHit(BaseModel):
-    """分類器命中的單一細分類節點。
-
-    刻意不保留原文片段（決策 D：PII 最小化，不複製逐字稿）；
-    需要追溯原文時由 `evidence_conversation_ids` 回 conversations 讀取。
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    concept_id: str = Field(description="細分類節點 concept_id")
-    display_name: str = Field(default="", description="節點中文顯示名稱")
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="分類信心值")
-
 
 @dataclass(frozen=True)
-class CandidateConcept:
-    """檢索出的候選細分類節點，供分類器組 prompt 與收斂 enum。"""
+class Turn:
+    """單一對話輪次資料容器。"""
 
-    concept_id: str
-    display_name: str
-    definition: str
-    retrieval_description: str
-    synonyms: tuple[str, ...] = ()
-    similarity: float = 0.0
-
-
-@dataclass(frozen=True)
-class ClassificationResult:
-    """分類器輸出。
-
-    `rationale` 只用於觀測與除錯，不落地到 events（決策 D：不複製逐字稿、PII 最小化）。
-    """
-
-    chunk_id: str
-    hits: tuple[LabelHit, ...]
-    rationale: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
+    conversation_id: str
+    speaker: str
+    text: str
+    created_at: str
 
 
 @dataclass(frozen=True)
 class ExtractedEvent:
-    """萃取出的單一事件（尚未算 canonical key、尚未去重）。
-
-    `attributes` 是通過驗證並剔除跨分類滲透後的結構化屬性，之後落到 `events.structured_detail`。
-    """
+    """萃取出的單一事件（尚未算 canonical key、尚未去重）。"""
 
     concept_id: str
     subject: str
@@ -65,20 +31,6 @@ class ExtractedEvent:
     observed_at: str | None = None
     confidence: float | None = None
     event_index: int = 0
-
-
-@dataclass(frozen=True)
-class ExtractionResult:
-    """單一 chunk 的萃取輸出。
-
-    `dropped_events` 是驗證失敗後被丟棄的事件數（決策 I）；它是告警與品質觀測的訊號，
-    不是錯誤——單一事件壞掉不該讓整個 chunk 變 failed。
-    """
-
-    chunk_id: str
-    events: tuple[ExtractedEvent, ...]
-    dropped_events: int = 0
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -140,31 +92,3 @@ class DedupStats:
         if self.input_count == 0:
             return 0.0
         return (self.input_count - self.output_count) / self.input_count
-
-
-@dataclass(frozen=True)
-class ComposedSchema:
-    """動態 schema 組裝結果。
-
-    同一份組裝結果同時提供兩種表示，確保 prompt 與驗證器不會走鐘：
-    - `container_model`／`event_model`：後端驗證用的 Pydantic 模型
-    - `schema_json` 與 `properties_by_concept`：組進 prompt 的規則描述
-    """
-
-    container_model: type[BaseModel]
-    event_model: type[BaseModel]
-    schema_json: dict[str, Any]
-    concept_ids: tuple[str, ...]
-    base_field_names: tuple[str, ...]
-    global_property_names: tuple[str, ...]
-    properties_by_concept: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    property_descriptions: dict[str, str] = field(default_factory=dict)
-    fingerprint: str = ""
-
-    def allowed_properties(self, concept_id: str) -> tuple[str, ...]:
-        """該 concept 允許填寫的欄位全集（基底 + 全域 + 自身繼承鏈屬性）。"""
-        return (
-            self.base_field_names
-            + self.global_property_names
-            + self.properties_by_concept.get(concept_id, ())
-        )
