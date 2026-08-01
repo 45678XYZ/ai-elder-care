@@ -100,7 +100,12 @@ def handle_get_elders(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def handle_post_elder(event: Dict[str, Any]) -> Dict[str, Any]:
-    """POST /elders — 建立長者資料 (僅限照護者)"""
+    """POST /elders — 建立長者資料 (照護者或長者自註冊)
+
+    長者首次設定時 token 尚無 elder_id claim（elder_accounts 表為空），後端視為照護者，
+    因此 role check 通過。帶 self_register=true 時同時寫入 elder_accounts 表，下次
+    登入 pre-token-generation trigger 即可注入 elder_id claim。
+    """
     try:
         caller = auth.get_caller(event)
     except auth.AuthError as auth_err:
@@ -110,6 +115,8 @@ def handle_post_elder(event: Dict[str, Any]) -> Dict[str, Any]:
         return responses.error(403, "FORBIDDEN", "只有照護者帳號可建立長者資料")
 
     body = parse_body(event)
+
+    self_register = body.pop("self_register", False)
 
     # 防護：禁止帶入由 Server 託管的唯讀欄位
     server_owned_fields = ("elder_id", "caregiver_ids", "created_at", "updated_at")
@@ -125,6 +132,10 @@ def handle_post_elder(event: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         created_elder = db.create_elder(elder_data)
+
+        if self_register:
+            db.bind_elder_account(caller.user_id, created_elder["elder_id"])
+
         return responses.json_response(201, _serialize_elder(created_elder))
     except Exception as e:
         return responses.error(500, "INTERNAL_ERROR", f"建立長者資料失敗: {str(e)}")

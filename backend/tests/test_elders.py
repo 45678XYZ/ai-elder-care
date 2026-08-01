@@ -112,6 +112,60 @@ def test_post_elder_success(monkeypatch):
     assert body["caregiver_ids"] == ["usr_c1"]
 
 
+def test_post_elder_self_register_binds_account(monkeypatch):
+    """長者自註冊時 self_register=true 應呼叫 bind_elder_account。"""
+    bound = {}
+    monkeypatch.setattr(
+        db,
+        "create_elder",
+        lambda data: {
+            "elder_id": "eld_aabbccddeeff",
+            "name": data["name"],
+            "caregiver_ids": data["caregiver_ids"],
+            "lang_preference": "zh-TW",
+            "created_at": "2026-07-28T12:00:00+08:00",
+            "updated_at": "2026-07-28T12:00:00+08:00"
+        }
+    )
+    monkeypatch.setattr(
+        db,
+        "bind_elder_account",
+        lambda sub, eid: bound.update({"sub": sub, "elder_id": eid})
+    )
+
+    event = _make_event("POST", body={"name": "陳阿蘭", "self_register": True}, sub="usr_e1")
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 201
+    assert bound == {"sub": "usr_e1", "elder_id": "eld_aabbccddeeff"}
+
+
+def test_post_elder_without_self_register_no_bind(monkeypatch):
+    """照護者建立長者時不帶 self_register，不寫 elder_accounts。"""
+    bound = {}
+    monkeypatch.setattr(
+        db,
+        "create_elder",
+        lambda data: {
+            "elder_id": "eld_1234567890ab",
+            "name": data["name"],
+            "caregiver_ids": data["caregiver_ids"],
+            "lang_preference": "zh-TW",
+            "created_at": "2026-07-28T12:00:00+08:00",
+            "updated_at": "2026-07-28T12:00:00+08:00"
+        }
+    )
+    monkeypatch.setattr(
+        db,
+        "bind_elder_account",
+        lambda sub, eid: bound.update({"sub": sub, "elder_id": eid})
+    )
+
+    event = _make_event("POST", body={"name": "陳阿蘭"}, sub="usr_c1")
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 201
+    assert bound == {}
+
+
 def test_patch_elder_success(monkeypatch):
     """測試部分更新長者資料 (200 OK)。"""
     monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)

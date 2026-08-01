@@ -54,6 +54,7 @@ TABLE_CONVERSATIONS = os.environ.get("TABLE_CONVERSATIONS", "conversations")
 TABLE_EVENTS = os.environ.get("TABLE_EVENTS", "events")
 TABLE_DAILY_SUMMARIES = os.environ.get("TABLE_DAILY_SUMMARIES", "daily_summaries")
 TABLE_ROUTINES = os.environ.get("TABLE_ROUTINES", "routines")
+TABLE_ELDER_ACCOUNTS = os.environ.get("ELDER_ACCOUNTS_TABLE", "elder_accounts")
 
 # 事件時間軸索引；events 的 Base table SK 是 event_id，時間範圍查詢一律走此 GSI
 EVENTS_BY_TIME_INDEX = "events-by-time"
@@ -355,6 +356,15 @@ def create_elder(elder_data: dict[str, Any]) -> dict[str, Any]:
         return convert_decimals(data)
     except ClientError as e:
         raise DBError(f"建立長者資料失敗: {e.response['Error']['Message']}")
+
+
+def bind_elder_account(sub: str, elder_id: str) -> None:
+    """寫入 elder_accounts 表（sub → elder_id），讓 pre-token-generation trigger 能注入 claim。"""
+    table = get_dynamodb_resource().Table(TABLE_ELDER_ACCOUNTS)
+    try:
+        table.put_item(Item={"sub": sub, "elder_id": elder_id})
+    except ClientError as e:
+        raise DBError(f"綁定長者帳號失敗: {e.response['Error']['Message']}")
 
 
 def update_elder(elder_id: str, patch_data: dict[str, Any]) -> dict[str, Any]:
