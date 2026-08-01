@@ -451,6 +451,7 @@ def resolve_profile_dialect(elder: Dict[str, Any]) -> HakkaDialect:
         )
 
 
+
 def request_hash(req: ChatRequest, audio_bytes: bytes) -> str:
     """本次請求內容的正規化 hash，用來分辨「重送」與「同一個 ID 換了內容」。
 
@@ -626,12 +627,20 @@ def run_turn(
     except Exception:
         raise TurnFailure(500, "INTERNAL_ERROR", "對話服務目前無法使用")
 
+    # 工具可能已切換語言，re-read profile 確保 TTS 使用最新偏好
+    elder_fresh = db.get_elder(req.elder_id)
+    if elder_fresh:
+        tts_lang = elder_fresh.get("lang_preference") or req.lang
+        tts_dialect = resolve_profile_dialect(elder_fresh) if tts_lang == "hak" else hakka_dialect
+    else:
+        tts_lang, tts_dialect = req.lang, hakka_dialect
+
     tts_correlation_id = str(uuid.uuid4())
     try:
         tts_result = get_tts_facade().synthesize(
             text=reply_text,
-            language=TtsLanguage.from_str(req.lang),
-            dialect=hakka_dialect,
+            language=TtsLanguage.from_str(tts_lang),
+            dialect=tts_dialect,
             deadline=TtsDeadline.after(
                 resolve_tts_budget_seconds(context), time.monotonic
             ),
