@@ -59,7 +59,7 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
   }
 
   Future<void> _submit() async {
-    final id = _ctrl.text.trim();
+    final id = _normalizeCaregiverId(_ctrl.text);
     if (id.isEmpty) {
       setState(() => _feedback = _Feedback.error(t('請先輸入 ID')));
       return;
@@ -79,11 +79,15 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
           ? _Feedback.success(t1('已經連結 {}', link.caregiver.name))
           : _Feedback.error(t1('{} 已經連結過了', link.caregiver.name));
     } on ApiException catch (e) {
+      // 兩種錯都是「這組 ID 有問題」，長輩自己修得好，所以要講得具體。
+      //
+      // 400 INVALID_PARAMETER 也算進來：後端要求 `cg_` 前綴，長輩若只抄了後半段
+      // 而 [_normalizeCaregiverId] 又補不出來（例如抄成 7 碼），拿到的就是 400。
+      // 那時說「請稍後再試」等於叫他重試一個永遠不會成功的動作。
+      final wrongId = e.code == ApiErrorCodes.caregiverNotFound ||
+          e.code == ApiErrorCodes.invalidParameter;
       result = _Feedback.error(
-        e.code == ApiErrorCodes.caregiverNotFound
-            // 這是最可能發生的錯，而且長輩自己修得好，所以要講得具體。
-            ? t('找不到這個 ID，請再確認一次')
-            : t('連結沒有成功，請稍後再試一次'),
+        wrongId ? t('找不到這個 ID，請再確認一次') : t('連結沒有成功，請稍後再試一次'),
       );
     }
 
@@ -130,11 +134,21 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
                 enabled: !_busy,
                 letterSpacing: 2,
                 inputFormatters: [
-                  // 只留英數與底線，避免長輩誤觸空白或標點。
+                  // 只留英數與連接符號，避免長輩誤觸空白或標點。
                   //
                   // 底線非留不可：ID 的格式是 `cg_` 後接 8 個十六進位字元（api.md），
                   // 過濾掉底線的話長輩照著抄也會被吃成 `cg7f3a91c2`，怎麼打都連不上。
-                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_]')),
+                  //
+                  // 破折號一起收，再於下一個 formatter 轉成底線：手機中文鍵盤上
+                  // 「－」按得到、「＿」往往要切到符號頁再翻一層，長輩打不出來就卡死在
+                  // 這一頁——而這一頁是他連上家人的唯一入口。ID 本身不含破折號，
+                  // 收下來只可能是想打底線，直接視為同一個字比讓他打不出來好。
+                  // 這裡放行的橫線集合必須與 [_DashToUnderscoreFormatter] 完全一致
+                  // ——formatter 是**依序**執行的，這一關先擋掉的字元，下一關就沒有
+                  // 機會轉成底線了。
+                  FilteringTextInputFormatter.allow(
+                      RegExp('[A-Za-z0-9_$_dashChars]')),
+                  _DashToUnderscoreFormatter(),
                 ],
                 onSubmitted: (_) => _submit(),
               ),
@@ -205,6 +219,53 @@ class _LinkedRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// 把長輩打進去的內容整理成後端認得的 `caregiver_id`。
+///
+/// 兩件事：
+///
+/// 1. **統一小寫、去頭尾空白**。後端自己也會做（`.strip().lower()`），這裡先做是為了
+///    讓補前綴的判斷拿到乾淨的輸入。
+/// 2. **缺 `cg_` 前綴時補上**。後端要求前綴，沒有就回 400 `INVALID_PARAMETER`
+///    ——而長輩看著照護者手機上的 `cg_7f3a91c2` 抄，很容易只抄後半段。
+///
+/// 補前綴的條件很嚴：剩下的部分必須**正好是 8 個十六進位字元**，也就是 ID 的實際
+/// 格式（api.md）。條件成立才代表他抄的是後半段；否則一律原樣送出，讓後端照常回
+/// 404 `CAREGIVER_NOT_FOUND`。**猜錯而自動補出一個看似合法的 ID，會把「打錯字」
+/// 變成「查無此人」，反而更難查。**
+String _normalizeCaregiverId(String raw) {
+  final id = raw.trim().toLowerCase();
+  if (id.isEmpty || id.startsWith('cg_')) return id;
+  return RegExp(r'^[0-9a-f]{8}$').hasMatch(id) ? 'cg_$id' : id;
+}
+
+/// 會被當成底線處理的字元：半形連字號、Unicode 的各種破折號、全形連字號、全形底線。
+///
+/// 一個個列出來而不是用範圍：範圍寫在字元類別裡容易連帶收進不相干的符號，
+/// 而這個欄位的內容會直接拿去跟後端的 ID 比對，多收一個字元就是一次連不上。
+const _dashChars = r'\-‐‑‒–—―－＿';
+
+/// 把使用者打出來的各種「橫線」一律當成底線。
+///
+/// ID 的格式是 `cg_` 後接 8 個十六進位字元，本身不含破折號——所以在這個欄位裡
+/// 打出橫線只可能是想打底線卻找不到。手機中文鍵盤上半形底線常要切到符號頁再翻一層，
+/// 長輩打不出來就會卡死在這一頁，而這是他連上家人的唯一入口。
+///
+/// 全形底線（＿）一併正規化：注音鍵盤的符號頁給的是全形，直接送出去後端比對不到。
+class _DashToUnderscoreFormatter extends TextInputFormatter {
+  static final _dashes = RegExp('[$_dashChars]');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text.replaceAll(_dashes, '_');
+    if (text == newValue.text) return newValue;
+    // 長度不變（一律一對一替換），游標位置照原樣帶著走。
+    return TextEditingValue(text: text, selection: newValue.selection);
   }
 }
 

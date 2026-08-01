@@ -258,8 +258,13 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["sns:Publish", "sns:Subscribe"]
+        Action   = ["sns:Publish", "sns:Subscribe", "sns:CreateTopic"]
         Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cognito-idp:AdminGetUser"]
+        Resource = aws_cognito_user_pool.accounts.arn
       },
       {
         Effect = "Allow"
@@ -288,6 +293,8 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
           "${aws_dynamodb_table.daily_summaries.arn}/index/*",
           aws_dynamodb_table.routines.arn,
           "${aws_dynamodb_table.routines.arn}/index/*",
+          aws_dynamodb_table.caregiver_lookup.arn,
+          "${aws_dynamodb_table.caregiver_lookup.arn}/index/*",
         ]
       }
     ]
@@ -383,6 +390,8 @@ module "tools" {
     TABLE_ROUTINES             = aws_dynamodb_table.routines.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
     CWA_API_KEY                = var.cwa_api_key
+    USER_POOL_ID               = aws_cognito_user_pool.accounts.id
+    SNS_TOPIC_PREFIX           = "${var.project_name}-elder-notify"
   }
 }
 
@@ -410,7 +419,8 @@ module "elders" {
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = {
-    TABLE_ELDERS               = aws_dynamodb_table.elders.name
+    TABLE_ELDERS            = aws_dynamodb_table.elders.name
+    TABLE_CAREGIVER_LOOKUP  = aws_dynamodb_table.caregiver_lookup.name
     ELDER_ACCOUNTS_TABLE       = aws_dynamodb_table.elder_accounts.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
   }
