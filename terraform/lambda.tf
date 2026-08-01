@@ -94,20 +94,28 @@ resource "aws_iam_role" "lambda_backend_role" {
 
 # --- 生活記錄（Module B）批次萃取 ---
 #
-# 多支 Lambda 共用同一個部署包來源（backend/src + backend/requirements.txt），
+# 多支 Lambda 共用同一個部署包（backend/src + backend/requirements.txt），
 # 差別只在 handler 與環境變數。
 #
-# ⚠️ 首次部署（或 backend/ 有異動）請用 `terraform apply -parallelism=1`。
+# 打包集中在 module.backend_package 一支（create_function = false），13 支函數改用
+# create_package = false + s3_existing_package 指向它產出的同一個 S3 物件。
 #
-# 共用來源代表這 13 支算出來的 zip 檔名完全相同，而 package.py 只有「檔案已存在就重用」
-# 這一層保護，沒有鎖。預設 parallelism=10 會讓十幾個容器同時發現檔案不存在、同時跑 pip：
-#   - 每個容器各下載約 74 MB，網路被自己塞爆，pip 開始 Connection refused / 解析不到網域
-#   - pip 連不上就回頭試舊版本，請求量再翻倍，最後以 ResolutionImpossible 收場
-#   - 僥倖裝完的那個會死在 os.utime → FileNotFoundError，因為別的 process 正在寫同一個檔
-# 序列化之後第一個建好，其餘 12 個直接 Reused，反而更快。
+# 這樣寫的兩個理由：
 #
-# 根治的做法是拆一個只打包的模組（create_function = false），13 支改用
-# create_package = false + s3_existing_package 指向同一個物件，就沒有競爭可言。
+# 1. 沒有競爭。共用來源代表 13 支算出來的 zip 檔名完全相同，而 package.py 只有「檔案已
+#    存在就重用」這一層保護，沒有鎖。各自打包時，預設 parallelism=10 會讓十幾個容器同時
+#    發現檔案不存在、同時跑 pip：每個各下載約 74 MB 把網路塞爆 → pip 開始
+#    Connection refused → 回頭試舊版本讓請求量再翻倍 → ResolutionImpossible；僥倖裝完的
+#    那個還會死在 os.utime → FileNotFoundError，因為別的 process 正在寫同一個檔。
+#    只有一支在打包就無從競爭，`-parallelism=1` 不再是必要的。
+#
+# 2. 只上傳一次。各自打包時 13 個模組各有自己的 aws_s3_object，而 key 是內容雜湊，
+#    於是同一份 74 MB 被上傳 13 次去覆蓋同一個物件——每次 apply 白傳約 890 MB。
+#
+# 包本身仍然是「全部依賴給全部函數」：av + numpy + soundfile 約 147 MB 只有
+# canonical_audio.py 與 extraction/dedup.py 會 import，其餘 10 支扛著它們卻從不使用。
+# 要再快就得依函數拆 requirements，或把重依賴移進 Lambda Layer；拆錯的代價是某支上線
+# 才 ImportError，因此沒有一併做。
 
 locals {
   # 部署包來源：自動將 backend/src 配至 zip 內的 src/，並由 pip_requirements 自動安裝依賴套件
@@ -162,6 +170,42 @@ locals {
     METRICS_NAMESPACE = var.metrics_namespace
     METRICS_ENABLED   = "true"
   }
+
+  # 13 支函數共用的部署包位置。只傳 bucket 與 key：artifacts bucket 沒開 versioning，
+  # version_id 會是 null，而 s3_existing_package 宣告成 map(string)。模組取值走
+  # try(...version_id, null)，少這個鍵就是 null，行為一致且不必把 null 塞進 map。
+  #
+  # key 是內容雜湊，backend/ 一有異動就換一個值，函數因此看得到 s3_key 變更而更新程式碼——
+  # 不需要另外算 source_code_hash。
+  backend_package = {
+    bucket = module.backend_package.s3_object.bucket
+    key    = module.backend_package.s3_object.key
+  }
+}
+
+# 唯一實際執行 pip 與打包的地方；不建函數，只產出 zip 並上傳。
+module "backend_package" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
+  create_function = false
+  create_package  = true
+
+  # create_function = false 時模組不要求 runtime，但 package.py 是靠它決定用哪個 pip；
+  # 留空會讓 pip_requirements 默默降級成「把 requirements.txt 原樣塞進 zip」，依賴一個都
+  # 沒裝，部署照樣成功、等到函數冷啟才 ImportModuleError（agentcore.tf 踩過同一個坑）。
+  # 值必須與下面各函數的 runtime 一致：這裡決定 wheel 的 cp 標籤，那裡決定實際直譯器。
+  runtime = "python3.13"
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
 }
 
 resource "aws_iam_role" "extraction" {
@@ -273,16 +317,11 @@ module "chat" {
   create_role = false
   lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -328,16 +367,11 @@ module "tools" {
   create_role = false
   lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -367,16 +401,11 @@ module "elders" {
   create_role = false
   lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -405,16 +434,11 @@ module "post_confirmation" {
   create_role = false
   lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -564,16 +588,11 @@ module "batch_extractor" {
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -604,16 +623,11 @@ module "session_closer" {
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -638,16 +652,11 @@ module "dlq_reconciler" {
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -677,16 +686,11 @@ module "api_events" {
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -726,16 +730,11 @@ module "api_summaries" {
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -757,16 +756,11 @@ module "summary_generator" {
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -789,16 +783,11 @@ module "api_stats" {
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -899,16 +888,11 @@ module "api_routines" {
   create_role = false
   lambda_role = aws_iam_role.api_routines.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
