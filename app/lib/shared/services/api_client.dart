@@ -325,11 +325,11 @@ class ApiClient {
     return Routine.fromJson(json);
   }
 
-  /// `PATCH /routines/{id}` — 修改／停用例行公事（照護者）。
+  /// `PATCH /routines/{id}` — 修改例行公事（照護者）。
   ///
   /// [clientRequestId] 必填且**每次修改都要新的一個**（同一個值代表同一次修改，
-  /// 重送不會建出第二個版本）。[fields] 只可含 `title`、`type`、`schedule`、`remind`、
-  /// `active`——其他欄位後端回 400 `INVALID_PARAMETER`。
+  /// 重送不會建出第二個版本）。[fields] 只可含 `title`、`type`、`schedule`、`remind`
+  /// ——其他欄位（含 `active`）後端回 400 `INVALID_PARAMETER`，停用請走 [deleteRoutine]。
   Future<Routine> updateRoutine(
     String routineId, {
     required String clientRequestId,
@@ -340,6 +340,22 @@ class ApiClient {
       ...fields,
     });
     return Routine.fromJson(json);
+  }
+
+  /// `DELETE /routines/{id}` — 永久刪除例行公事（照護者端）。
+  ///
+  /// [clientRequestId] **必填，且放 query 不放 body**（api.md）。沒帶的話後端回
+  /// 400 `MISSING_REQUEST_ID`。後端刪除時留一個 7 天 TTL 的 tombstone：同一個 id
+  /// 重送讀 tombstone 回 200，換一個 id 打已刪除的則回 409 `IDEMPOTENCY_CONFLICT`
+  /// ——所以**重試一定要沿用同一個值**，不能每次現產一個新的。
+  ///
+  /// 回應是 `{"deleted": true, "routine_id": ...}`，不是 routine 物件，所以沒有回傳值。
+  Future<void> deleteRoutine(
+    String routineId, {
+    required String clientRequestId,
+  }) async {
+    await _request('DELETE', '/routines/$routineId',
+        query: {'client_request_id': clientRequestId});
   }
 
   /// `POST /routines/{id}/complete` — 手動確認完成（兩端）。

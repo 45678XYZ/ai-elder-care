@@ -1,4 +1,4 @@
-import 'package:ai_elder_care/shared/services/lunar_date.dart';
+import 'package:e_hakka_care/shared/services/lunar_date.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// `lunar` 套件輸出的是簡體（生肖「马」、節日「春节」、節氣「惊蛰」），

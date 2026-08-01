@@ -28,12 +28,9 @@ import time
 import uuid
 
 from src.extraction.canonical import load_predicate_lexicon
-from src.extraction.chunk_planner import ChunkManifest, manifest_from_entries
-from src.extraction.chunker import Turn
-from src.extraction.config import ExtractionConfig
-from src.extraction.pipeline import ExtractionPipeline
-from src.extraction.retriever import ConceptRetriever
-from src.extraction.segmenter import load_segmenter
+from src.extraction.models import Turn
+from src.extraction.pipeline import ExtractionConfig
+from src.extraction.pipeline import DirectSevenPipeline
 from src.extraction.taxonomy import load_taxonomy
 from src.shared import bedrock, db, metrics, sessions
 
@@ -88,43 +85,21 @@ def parse_message(record: dict[str, Any]) -> tuple[str, str, str]:
     return elder_id, session_id, snapshot_hash
 
 
-def build_pipeline(config: ExtractionConfig) -> ExtractionPipeline:
-    """組裝 ExtractionPipeline 編排器物件。
+def build_pipeline(config: ExtractionConfig) -> DirectSevenPipeline:
+    """組裝 DirectSevenPipeline。
 
-    相關 Taxonomy 與 Lexicon 資產載入設有內部快取，在 Lambda 熱啟動 (Warm Start) 下不會重複讀取磁碟。
+    Taxonomy 與 Lexicon 資產載入設有內部快取，在 Lambda 熱啟動下不會重複讀取磁碟。
     """
     taxonomy = load_taxonomy(config.taxonomy_assets_dir)
     lexicon = load_predicate_lexicon(config.taxonomy_assets_dir)
     embedder = bedrock.BedrockEmbeddingProvider(config.embedding_model_id, config.embedding_dim)
-    retriever = ConceptRetriever(
-        taxonomy,
-        embedder,
-        top_k=config.rac_top_k,
-        vector_bucket=config.concept_vector_bucket,
-        index_name=config.concept_vector_index,
-        s3vectors_client=_s3vectors_client() if config.concept_vector_bucket else None,
-    )
-    return ExtractionPipeline(
+    return DirectSevenPipeline(
         config=config,
         taxonomy=taxonomy,
         lexicon=lexicon,
-        retriever=retriever,
+        client=bedrock.get_runtime_client(),
         embedder=embedder,
-        segmenter=load_segmenter(config.segmenter_assets_dir),
     )
-
-
-_s3vectors = None
-
-
-def _s3vectors_client():
-    """惰性初始化 S3 Vectors boto3 client。"""
-    global _s3vectors
-    if _s3vectors is None:
-        import boto3
-
-        _s3vectors = boto3.client("s3vectors")
-    return _s3vectors
 
 
 def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> str:
@@ -202,7 +177,6 @@ def process_record(record: dict[str, Any], *, context=None, pipeline=None) -> st
         result.metrics,
         elder_id=elder_id,
         session_id=session_id,
-        chunker_type=config.chunker_type,
     )
     metrics.emit_batch_outcome(
         sessions.CLAIM_ACQUIRED,
@@ -220,7 +194,7 @@ def _lease_owner(context: Any) -> str:
 
 
 def _run_extraction(
-    pipeline: ExtractionPipeline,
+    pipeline: DirectSevenPipeline,
     config: ExtractionConfig,
     elder_id: str,
     session_id: str,
@@ -234,34 +208,12 @@ def _run_extraction(
     turns = tuple(_to_turn(raw) for raw in raw_turns)
     snapshot_hash = session["session_snapshot_hash"]
 
-    existing_manifest = session.get("chunk_manifest")
-    if existing_manifest:
-        manifest: ChunkManifest | None = manifest_from_entries(
-            session_id,
-            snapshot_hash,
-            session.get("chunk_planner_version") or config.chunk_planner_version,
-            existing_manifest,
-        )
-    else:
-        planned = pipeline.plan(session_id, snapshot_hash, turns)
-        stored = sessions.persist_chunk_manifest(
-            elder_id,
-            session_id,
-            planned.to_manifest(),
-            planner_version=config.chunk_planner_version,
-        )
-        # 條件式寫入競爭下若其他 Worker 先寫入，以既存版本為準，確保 Chunk ID 全局一致
-        manifest = manifest_from_entries(
-            session_id, snapshot_hash, config.chunk_planner_version, stored
-        )
-
     elder = db.get_elder(elder_id)
     return pipeline.run(
         elder_id,
         session_id,
         snapshot_hash,
         turns,
-        manifest=manifest,
         elder=elder,
     )
 

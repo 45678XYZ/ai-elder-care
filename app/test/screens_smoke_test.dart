@@ -1,17 +1,17 @@
-import 'package:ai_elder_care/caregiver/screens/elders_screen.dart';
-import 'package:ai_elder_care/caregiver/screens/stats_screen.dart';
-import 'package:ai_elder_care/caregiver/screens/summaries_screen.dart';
-import 'package:ai_elder_care/caregiver/screens/timeline_screen.dart'
+import 'package:e_hakka_care/caregiver/screens/elders_screen.dart';
+import 'package:e_hakka_care/caregiver/screens/stats_screen.dart';
+import 'package:e_hakka_care/caregiver/screens/summaries_screen.dart';
+import 'package:e_hakka_care/caregiver/screens/timeline_screen.dart'
     show TimelineScreen, filterBarKey;
-import 'package:ai_elder_care/elder/screens/chat_screen.dart';
-import 'package:ai_elder_care/elder/screens/today_screen.dart';
-import 'package:ai_elder_care/elder/widgets/greeting_slot.dart';
-import 'package:ai_elder_care/shared/screens/role_select_screen.dart';
-import 'package:ai_elder_care/shared/services/calendar_tear_store.dart';
-import 'package:ai_elder_care/shared/services/care_repository.dart';
-import 'package:ai_elder_care/shared/services/lunar_date.dart';
-import 'package:ai_elder_care/shared/services/session_store.dart';
-import 'package:ai_elder_care/theme/app_theme.dart';
+import 'package:e_hakka_care/elder/screens/chat_screen.dart';
+import 'package:e_hakka_care/elder/screens/today_screen.dart';
+import 'package:e_hakka_care/elder/widgets/greeting_slot.dart';
+import 'package:e_hakka_care/shared/screens/role_select_screen.dart';
+import 'package:e_hakka_care/shared/services/calendar_tear_store.dart';
+import 'package:e_hakka_care/shared/services/care_repository.dart';
+import 'package:e_hakka_care/shared/services/lunar_date.dart';
+import 'package:e_hakka_care/shared/services/session_store.dart';
+import 'package:e_hakka_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -384,25 +384,26 @@ void main() {
   });
 
   group('語音語言', () {
-    // 介面單一語言（華語），lang_preference 只決定語音走哪條路，
-    // 而且只有照護者的管理頁能改——這兩條測試把「只在這裡可改」釘住。
-    testWidgets('管理頁可以切換', (tester) async {
-      await pumpTall(tester, const EldersScreen());
-
-      expect(find.text('說話語言'), findsOneWidget);
-      expect(find.text('華語'), findsOneWidget);
-      expect(find.text('客語'), findsOneWidget);
-
-      await tester.tap(find.text('客語'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('已改為客語'), findsOneWidget);
-    });
-
-    testWidgets('長者端沒有語言切換', (tester) async {
+    // 語言只有一個能改的地方，而且是**長者端**。兩邊都能改的話，長者那一份寫本機、
+    // 照護者那一份寫後端，同時存在就會互相覆蓋——而長輩那份必須贏（實際在說話的是他），
+    // 照護者那顆按下去等於按不動。這兩條測試把「只在長者端可改」釘住。
+    testWidgets('長者端可以切換', (tester) async {
       await pumpTall(tester, const TodayScreen());
 
-      expect(find.text('客語'), findsNothing);
+      // 說話與畫面文字是兩顆獨立的鈕，各有一個「中文」選項。
+      expect(find.text('我說的話'), findsOneWidget);
+      expect(find.text('畫面的字'), findsOneWidget);
+      expect(find.text('中文'), findsNWidgets(2));
+      expect(find.text('客語'), findsOneWidget);
+      expect(find.text('客語漢字'), findsOneWidget);
+    });
+
+    testWidgets('照護者管理頁沒有語言切換', (tester) async {
+      await pumpTall(tester, const EldersScreen());
+
+      expect(find.text('說話語言'), findsNothing);
       expect(find.text('華語'), findsNothing);
+      expect(find.text('客語'), findsNothing);
     });
   });
 

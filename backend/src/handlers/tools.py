@@ -22,13 +22,53 @@ Lambda。本 Handler 負責分派到對應的 handle_* 函式，呼叫 shared/db
 
 import json
 import os
+import ssl
 import time
+import urllib.request
 import uuid
 from typing import Any, Dict, Optional
 
 from src.shared import db, sessions, routines
 from src.shared.models import health_note_texts
 from src.extraction.canonical import safety_alert_key, event_id_for
+
+import boto3
+
+_USER_POOL_ID = os.environ.get("USER_POOL_ID", "")
+_cognito_client = None
+
+
+def _get_cognito_client():
+    global _cognito_client
+    if _cognito_client is None:
+        _cognito_client = boto3.client("cognito-idp")
+    return _cognito_client
+
+
+def _get_caregiver_emails(elder_id: str) -> list[str]:
+    """從 elder 的 caregiver_ids 查 Cognito 取得每位照護者的 email。"""
+    elder = db.get_elder(elder_id)
+    if not elder:
+        return []
+    caregiver_ids = elder.get("caregiver_ids", [])
+    if not caregiver_ids or not _USER_POOL_ID:
+        return []
+
+    emails = []
+    client = _get_cognito_client()
+    for sub in caregiver_ids:
+        try:
+            resp = client.admin_get_user(
+                UserPoolId=_USER_POOL_ID,
+                Username=sub,
+            )
+            for attr in resp.get("UserAttributes", []):
+                if attr["Name"] == "email":
+                    emails.append(attr["Value"])
+                    break
+        except Exception as e:
+            print(f"[Warn] 查詢照護者 {sub} email 失敗: {e}")
+    return emails
 
 
 # -----------------------------------------------------------------------------
@@ -152,14 +192,14 @@ def handle_complete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
     if not elder_id or not routine_id:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
 
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now = routines.now_iso()
 
     try:
         result = db.complete_routine_with_event(
             elder_id=elder_id,
             routine_id=routine_id,
             routine_date=date_str,
-            ts=now_iso,
+            ts=now,
             completed_by=completed_by,
             detail=f"對話中確認完成行程 (ID: {routine_id})",
             event_type="routine_completion",
@@ -188,7 +228,7 @@ def handle_create_routine(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 title"}
 
     routine_id = f"rtn_{uuid.uuid4().hex[:12]}"
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now_iso = routines.now_iso()
 
     schedule_data: Dict[str, Any] = {"freq": freq, "time": time_str}
     if freq == "once" and specific_date:
@@ -303,18 +343,29 @@ def handle_update_routine(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
-# 工具 3.2：停用/刪除例行公事
+# 工具 3.2：刪除例行公事
 # -----------------------------------------------------------------------------
 
-def handle_deactivate_routine(params: Dict[str, Any]) -> Dict[str, Any]:
-    """工具 3.2：停用/刪除長者的例行公事。"""
+def handle_delete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具 3.2：刪除長者的例行公事（真刪除，若要恢復則重新建立）。"""
     elder_id = params.get("elder_id")
     routine_id = params.get("routine_id")
-    
+
     if not elder_id or not routine_id:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
-        
-    return _apply_routine_update(elder_id, routine_id, {"active": False})
+
+    try:
+        versions = db.list_routine_versions(routine_id)
+        if not versions:
+            return {"status": "error", "message": "找不到指定的例行公事"}
+        if versions[-1].get("elder_id") != elder_id:
+            return {"status": "error", "message": "資料不符，無法刪除此行程"}
+
+        db.delete_routine(routine_id)
+        return {"status": "success", "message": f"已刪除例行公事 {routine_id}"}
+    except Exception as e:
+        print(f"[Error] handle_delete_routine 失敗: {e}")
+        return {"status": "error", "message": f"刪除行程失敗: {str(e)}"}
 
 
 # -----------------------------------------------------------------------------
@@ -395,6 +446,18 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
         patch_data = {}
         updated_fields = []
 
+        # 處理語言偏好
+        if "lang_preference" in params and params["lang_preference"] in ("zh-TW", "hak"):
+            patch_data["lang_preference"] = params["lang_preference"]
+
+        # 處理客語腔調
+        _VALID_DIALECTS = {
+            "htia_sixian", "htia_hailu", "htia_dapu",
+            "htia_raoping", "htia_zhaoan", "htia_nansixian",
+        }
+        if "hakka_dialect" in params and params["hakka_dialect"] in _VALID_DIALECTS:
+            patch_data["hakka_dialect"] = params["hakka_dialect"]
+
         # 處理暱稱更新
         if "nickname" in params and params["nickname"]:
             patch_data["nickname"] = params["nickname"]
@@ -443,6 +506,8 @@ def handle_update_elder_profile(params: Dict[str, Any]) -> Dict[str, Any]:
             "data": {
                 "elder_id": updated_profile.get("elder_id"),
                 "nickname": updated_profile.get("nickname"),
+                "lang_preference": updated_profile.get("lang_preference", "zh-TW"),
+                "hakka_dialect": updated_profile.get("hakka_dialect", "htia_sixian"),
                 "health_notes": health_note_texts(updated_profile.get("health_notes")),
                 "habit_note": updated_profile.get("habit_note", "")
             }
@@ -505,7 +570,7 @@ def _write_safety_event(elder_id: str, alert_id: str, detail: str) -> dict[str, 
     """以 canonical key 寫入 type=safety event，冪等收斂。"""
     canonical_key = safety_alert_key(alert_id)
     event_id = event_id_for(elder_id, canonical_key)
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    now_iso = routines.now_iso()
     event, is_new = db.put_event_if_absent({
         "elder_id": elder_id,
         "canonical_event_key": canonical_key,
@@ -531,12 +596,9 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": "缺少必要參數 elder_id 或 message"}
 
     now_ts = time.time()
-    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+08:00")
     message_id = None
 
     try:
-        topic_arn = os.environ.get("CAREGIVER_NOTIFY_TOPIC_ARN")
-
         # ------------------------------------------------------------------
         # 分流：依 category 執行不同安全邏輯
         # ------------------------------------------------------------------
@@ -571,7 +633,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
 
             subject = "🚨【智慧長照緊急警報】長者可能需要即時關懷與協助"
             email_body = _build_emergency_email(elder_id, message_content, rag_content)
-            message_id = _publish_sns(topic_arn, subject, email_body)
+            message_id = _publish_to_caregivers(elder_id, subject, email_body)
             print(f"[Emergency] elder={elder_id} alert_id={alert_id} event_id={event['event_id']}")
 
         elif category == "critical_escalation":
@@ -601,7 +663,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
 
             subject = "🚨🚨【智慧長照緊急警報】長者狀況急遽惡化，請立即處置"
             email_body = _build_escalation_email(elder_id, message_content)
-            message_id = _publish_sns(topic_arn, subject, email_body)
+            message_id = _publish_to_caregivers(elder_id, subject, email_body)
             print(f"[Escalation] elder={elder_id} alert_id={alert_id} event_id={active_event_id}")
 
         elif category == "mitigation":
@@ -633,7 +695,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
 
             subject = "⚠️【智慧長照通知】長者自述緩解 - 請家屬仍需親自確認"
             email_body = _build_mitigation_email(elder_id, message_content)
-            message_id = _publish_sns(topic_arn, subject, email_body)
+            message_id = _publish_to_caregivers(elder_id, subject, email_body)
             print(f"[Mitigation] elder={elder_id} alert_id={alert_id} event_id={event['event_id']}")
 
         elif category in ("routine", "summary"):
@@ -648,7 +710,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
                 f"長者編號: {elder_id}\n通知類別: {category}\n"
                 f"時間: {now_str}\n\n{message_content}"
             )
-            message_id = _publish_sns(topic_arn, subject, email_body)
+            message_id = _publish_to_caregivers(elder_id, subject, email_body)
             print(f"[{category.capitalize()}] elder={elder_id} 日常通知發送成功")
 
         else:
@@ -667,21 +729,70 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"發送照護者通知失敗: {str(e)}"}
 
 
-def _publish_sns(topic_arn: Optional[str], subject: str, message: str) -> str:
-    """發送 SNS 通知；若 topic_arn 未設定則使用 Mock 模式（開發環境）。"""
-    if topic_arn:
-        import boto3
-        sns_client = boto3.client("sns")
-        resp = sns_client.publish(
-            TopicArn=topic_arn,
-            Subject=subject,
-            Message=message
-        )
-        return resp.get("MessageId", "")
-    else:
+_SNS_TOPIC_PREFIX = os.environ.get("SNS_TOPIC_PREFIX", "")
+_sns_client = None
+
+
+def _get_sns_client():
+    global _sns_client
+    if _sns_client is None:
+        _sns_client = boto3.client("sns")
+    return _sns_client
+
+
+def _get_or_create_elder_topic(elder_id: str) -> str | None:
+    """取得或建立 per-elder SNS topic，回傳 topic ARN。"""
+    if not _SNS_TOPIC_PREFIX:
+        return None
+    topic_name = f"{_SNS_TOPIC_PREFIX}-{elder_id.replace('_', '-')}"
+    sns = _get_sns_client()
+    try:
+        resp = sns.create_topic(Name=topic_name)
+        return resp["TopicArn"]
+    except Exception as e:
+        print(f"[Error] 建立 elder topic 失敗: {e}")
+        return None
+
+
+def _ensure_caregivers_subscribed(topic_arn: str, elder_id: str) -> None:
+    """確保該長者的所有照護者已訂閱其 SNS topic（冪等）。"""
+    emails = _get_caregiver_emails(elder_id)
+    sns = _get_sns_client()
+    for email in emails:
+        try:
+            sns.subscribe(
+                TopicArn=topic_arn,
+                Protocol="email",
+                Endpoint=email,
+                ReturnSubscriptionArn=True,
+            )
+        except Exception as e:
+            print(f"[Warn] SNS subscribe {email} 失敗: {e}")
+
+
+def _publish_to_caregivers(elder_id: str, subject: str, message: str) -> str:
+    """發送通知到 per-elder SNS topic，只有綁定的照護者會收到。
+
+    流程：
+    1. 取得或建立該長者專屬的 SNS topic
+    2. 確保照護者 email 已訂閱（首次會收確認信，點一次即永久有效）
+    3. Publish 到 per-elder topic
+    """
+    topic_arn = _get_or_create_elder_topic(elder_id)
+    if not topic_arn:
         mock_id = f"mock-msg-{int(time.time())}"
         print(f"[Mock SNS] Subject: {subject}\n{message[:200]}...")
         return mock_id
+
+    _ensure_caregivers_subscribed(topic_arn, elder_id)
+
+    sns = _get_sns_client()
+    resp = sns.publish(
+        TopicArn=topic_arn,
+        Subject=subject,
+        Message=message,
+    )
+    return resp.get("MessageId", "")
 
 
 # -----------------------------------------------------------------------------
@@ -779,6 +890,163 @@ def handle_get_recent_conversations(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"查詢對話紀錄失敗: {str(e)}"}
 
 
+# -----------------------------------------------------------------------------
+# 工具十三：取得天氣預報（中央氣象署 Open Data）
+# -----------------------------------------------------------------------------
+
+_CWA_API_KEY = os.environ.get("CWA_API_KEY", "")
+_CWA_FORECAST_URL = (
+    "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001"
+)
+
+
+def _cwa_ssl_context() -> ssl.SSLContext:
+    """氣象署專用的 TLS context：解除 Python 3.13 新增的 X509 格式嚴格檢查。
+
+    Python 3.13 起 `ssl.create_default_context()` 預設帶上 VERIFY_X509_STRICT，它依
+    RFC 5280 要求鏈上的 CA 憑證必須有 Subject Key Identifier。氣象署的憑證由
+    TWCA Secure SSL CA 簽發，該鏈缺這個欄位，於是握手被拒：
+
+        [SSL: CERTIFICATE_VERIFY_FAILED] Missing Subject Key Identifier
+
+    這在 python3.11 的執行環境不會發生（當時沒有這個 flag），是 runtime 升到 3.13
+    之後才浮現的——升級的理由見 terraform/lambda.tf（av/numpy 的 arm64 wheel）。
+
+    只關掉這一項：主機名稱比對、憑證鏈信任與效期驗證全部維持，因此不等於停用 TLS 驗證。
+    憑證換成有 SKI 的那天，這個函式可以直接刪掉。
+    """
+    ctx = ssl.create_default_context()
+    ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return ctx
+
+_REGION_TO_CWA_LOCATION = {
+    "基隆": "基隆市", "台北": "臺北市", "臺北": "臺北市",
+    "新北": "新北市", "桃園": "桃園市", "新竹": "新竹縣",
+    "苗栗": "苗栗縣", "台中": "臺中市", "臺中": "臺中市",
+    "彰化": "彰化縣", "南投": "南投縣", "雲林": "雲林縣",
+    "嘉義": "嘉義縣", "台南": "臺南市", "臺南": "臺南市",
+    "高雄": "高雄市", "屏東": "屏東縣", "宜蘭": "宜蘭縣",
+    "花蓮": "花蓮縣", "台東": "臺東縣", "臺東": "臺東縣",
+    "澎湖": "澎湖縣", "金門": "金門縣", "連江": "連江縣",
+}
+
+
+def _resolve_cwa_location(address_region: str | None) -> str:
+    """從 elder profile 的 address_region 解析出氣象署使用的地區名稱。"""
+    if not address_region:
+        return "臺北市"
+    for keyword, cwa_name in _REGION_TO_CWA_LOCATION.items():
+        if keyword in address_region:
+            return cwa_name
+    return "臺北市"
+
+
+def handle_get_weather_forecast(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具十三：取得長者所在地區的天氣預報。"""
+    elder_id = params.get("elder_id")
+    location = params.get("location")
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+
+    if not _CWA_API_KEY:
+        return {"status": "error", "message": "天氣服務未配置（缺少 CWA_API_KEY）"}
+
+    if not location:
+        try:
+            elder = db.get_elder(elder_id)
+            location = _resolve_cwa_location(
+                elder.get("address_region") if elder else None
+            )
+        except Exception:
+            location = "臺北市"
+
+    url = (
+        f"{_CWA_FORECAST_URL}"
+        f"?Authorization={_CWA_API_KEY}"
+        f"&locationName={urllib.request.quote(location)}"
+    )
+
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=5, context=_cwa_ssl_context()) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[Error] handle_get_weather_forecast 呼叫氣象署失敗: {e}")
+        return {"status": "error", "message": "天氣資料暫時無法取得"}
+
+    records = data.get("records", {})
+    locations = records.get("location", [])
+    if not locations:
+        return {"status": "error", "message": f"找不到 {location} 的天氣資料"}
+
+    loc_data = locations[0]
+    weather_elements = {
+        elem["elementName"]: elem for elem in loc_data.get("weatherElement", [])
+    }
+
+    forecast_list = []
+    wx = weather_elements.get("Wx", {}).get("time", [])
+    min_t = weather_elements.get("MinT", {}).get("time", [])
+    max_t = weather_elements.get("MaxT", {}).get("time", [])
+    pop = weather_elements.get("PoP", {}).get("time", [])
+
+    for i, period in enumerate(wx):
+        entry = {
+            "start_time": period.get("startTime", ""),
+            "end_time": period.get("endTime", ""),
+            "weather": period["parameter"]["parameterName"],
+        }
+        if i < len(min_t):
+            entry["temp_low"] = int(min_t[i]["parameter"]["parameterName"])
+        if i < len(max_t):
+            entry["temp_high"] = int(max_t[i]["parameter"]["parameterName"])
+        if i < len(pop):
+            entry["rain_prob"] = int(pop[i]["parameter"]["parameterName"])
+        forecast_list.append(entry)
+
+    return {
+        "status": "success",
+        "location": location,
+        "forecast": forecast_list,
+    }
+
+
+# -----------------------------------------------------------------------------
+# 工具十四：根據時間範圍查詢生活事件
+# -----------------------------------------------------------------------------
+
+def handle_get_events_by_time(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具十四：根據指定時間範圍查詢長者的生活事件。"""
+    elder_id = params.get("elder_id")
+    start_date = params.get("start_date")
+    end_date = params.get("end_date")
+    event_type = params.get("event_type")
+
+    if not elder_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id"}
+    if not start_date or not end_date:
+        return {"status": "error", "message": "缺少必要參數 start_date 或 end_date"}
+
+    try:
+        items, _ = db.list_events(
+            elder_id=elder_id,
+            from_date=start_date,
+            to_date=end_date,
+            event_type=event_type,
+            limit=50,
+        )
+        return {
+            "status": "success",
+            "count": len(items),
+            "period": {"start": start_date, "end": end_date},
+            "data": items,
+        }
+    except Exception as e:
+        print(f"[Error] handle_get_events_by_time 失敗: {e}")
+        return {"status": "error", "message": f"查詢事件失敗: {str(e)}"}
+
+
 # 工具分流映射字典 (Function Name -> Handler Function)
 # -----------------------------------------------------------------------------
 
@@ -787,7 +1055,7 @@ TOOL_HANDLERS = {
     "complete_routine": handle_complete_routine,
     "create_routine": handle_create_routine,
     "update_routine": handle_update_routine,
-    "deactivate_routine": handle_deactivate_routine,
+    "delete_routine": handle_delete_routine,
     "get_recent_events": handle_get_recent_events,
     "get_elder_profile": handle_get_elder_profile,
     "update_elder_profile": handle_update_elder_profile,
@@ -795,6 +1063,8 @@ TOOL_HANDLERS = {
     "notify_caregiver": handle_notify_caregiver,
     "get_daily_summaries": handle_get_daily_summaries,
     "get_recent_conversations": handle_get_recent_conversations,
+    "get_weather_forecast": handle_get_weather_forecast,
+    "get_events_by_time": handle_get_events_by_time,
 }
 
 

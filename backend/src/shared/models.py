@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # -----------------------------------------------------------------------------
 
 # 對外的高階事件類別，契約見 docs/api.md 的 EventType。
-# 細分類節點（concept_id）由 extraction 的可抽換分類體系資產決定，不在此列舉。
+# 高階事件類別由 extraction 的可抽換分類體系資產決定。
 EventType = Literal["diet", "activity", "sleep", "medication", "wellbeing", "safety", "other"]
 
 HakkaDialect = Literal[
@@ -267,7 +267,6 @@ class EventCreate(BaseModel):
     elder_id: str = Field(..., description="長者 ID")
     ts: str = Field(..., description="事件發生的 ISO 8601 時間戳記")
     type: EventType = Field(..., description="高階事件分類")
-    concept_id: str | None = Field(default=None, description="分類體系的細分類節點；自動萃取事件必填，API 不暴露")
     taxonomy_version: str | None = Field(default=None, description="寫入當時的分類體系版本；自動萃取事件必填")
     detail: str = Field(..., description="事件自然語言描述")
     structured_detail: dict[str, Any] | None = Field(default=None, description="JSON 結構化細節資訊")
@@ -287,7 +286,7 @@ class EventCreate(BaseModel):
 
 
 class EventResponse(BaseModel):
-    """【API Response】GET /events 回應物件；隱藏萃取內部欄位（concept_id、taxonomy_version 等）。"""
+    """【API Response】GET /events 回應物件；隱藏萃取內部欄位（taxonomy_version 等）。"""
     event_id: str = Field(..., description="事件唯一識別碼 (前綴 evt_)")
     elder_id: str = Field(..., description="長者 ID")
     ts: str = Field(..., description="事件發生時間 (ISO 8601)")

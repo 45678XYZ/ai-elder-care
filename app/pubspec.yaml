@@ -1,5 +1,5 @@
-name: ai_elder_care
-description: 智慧長照陪伴 App——長者模式（語音互動陪伴）＋照護者模式（資訊介面）。
+name: e_hakka_care
+description: 客照e點通 App——長者模式（語音互動陪伴）＋照護者模式（資訊介面）。
 publish_to: "none"
 version: 0.1.0
 
@@ -38,7 +38,11 @@ dependencies:
   timezone: ^0.11.1
   # 取得裝置目前時區名稱，餵給 timezone 初始化
   flutter_timezone: ^5.1.0
-  # TODO: Cognito 登入 SDK（amplify_flutter + amplify_auth_cognito）
+  # Cognito 登入（SRP）。選純 Dart 版而非 amplify_flutter：只需要 user pool 的
+  # 註冊／驗證碼／登入這幾支 API，Amplify 會連帶要求 amplify_outputs.json 與
+  # Android/iOS 原生設定（minSdk、Podfile），為了四個方法動到建置設定不划算。
+  # SRP 對應 terraform/cognito.tf 只開 ALLOW_USER_SRP_AUTH 的設定。
+  amazon_cognito_identity_dart_2: ^4.0.0
 
 dev_dependencies:
   flutter_test:
@@ -74,3 +78,8 @@ flutter:
           weight: 700
         - asset: assets/fonts/NotoSansTC-Black.otf
           weight: 900
+    # 客語缺字遞補（𠊎 U+2028E、吂 U+5402），只有這兩個字，2.4 KB。
+    # 來源與重建指令見 AppTypography.hakkaFallback。
+    - family: TWSungHakka
+      fonts:
+        - asset: assets/fonts/TWSungHakka.ttf

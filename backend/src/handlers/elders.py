@@ -56,6 +56,13 @@ def is_health_notes_path(event: Dict[str, Any]) -> bool:
     return get_path_note_id(event) is not None
 
 
+def is_caregivers_path(event: Dict[str, Any]) -> bool:
+    """判斷是否為 /elders/{elder_id}/caregivers 子資源。"""
+    path = event.get("path") or event.get("rawPath") or ""
+    resource = event.get("resource") or ""
+    return "caregivers" in path or "caregivers" in resource
+
+
 def _serialize_elder(elder_dict: Dict[str, Any]) -> Dict[str, Any]:
     """使用 ElderResponse 過濾洗滌要回傳給前端的長者資料。"""
     return ElderResponse.model_validate(elder_dict).model_dump(exclude_none=True)
@@ -100,7 +107,12 @@ def handle_get_elders(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def handle_post_elder(event: Dict[str, Any]) -> Dict[str, Any]:
-    """POST /elders — 建立長者資料 (僅限照護者)"""
+    """POST /elders — 建立長者資料 (照護者或長者自註冊)
+
+    長者首次設定時 token 尚無 elder_id claim（elder_accounts 表為空），後端視為照護者，
+    因此 role check 通過。帶 self_register=true 時同時寫入 elder_accounts 表，下次
+    登入 pre-token-generation trigger 即可注入 elder_id claim。
+    """
     try:
         caller = auth.get_caller(event)
     except auth.AuthError as auth_err:
@@ -110,6 +122,8 @@ def handle_post_elder(event: Dict[str, Any]) -> Dict[str, Any]:
         return responses.error(403, "FORBIDDEN", "只有照護者帳號可建立長者資料")
 
     body = parse_body(event)
+
+    self_register = body.pop("self_register", False)
 
     # 防護：禁止帶入由 Server 託管的唯讀欄位
     server_owned_fields = ("elder_id", "caregiver_ids", "created_at", "updated_at")
@@ -125,6 +139,10 @@ def handle_post_elder(event: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         created_elder = db.create_elder(elder_data)
+
+        if self_register:
+            db.bind_elder_account(caller.user_id, created_elder["elder_id"])
+
         return responses.json_response(201, _serialize_elder(created_elder))
     except Exception as e:
         return responses.error(500, "INTERNAL_ERROR", f"建立長者資料失敗: {str(e)}")
@@ -142,10 +160,13 @@ def handle_patch_elder(event: Dict[str, Any]) -> Dict[str, Any]:
     except auth.AuthError as auth_err:
         return auth_err.response
 
-    if caller.role != auth.ROLE_CAREGIVER:
-        return responses.error(403, "FORBIDDEN", "只有照護者帳號可修改長者資料")
-
     body = parse_body(event)
+
+    # 長者本人只能修改語言相關欄位
+    _ELDER_ALLOWED_FIELDS = {"lang_preference", "hakka_dialect"}
+    if caller.role != auth.ROLE_CAREGIVER:
+        if not set(body.keys()).issubset(_ELDER_ALLOWED_FIELDS):
+            return responses.error(403, "FORBIDDEN", "長者只能修改語言偏好與腔調")
 
     # 防護：禁止傳入唯讀欄位
     server_owned_fields = ("elder_id", "caregiver_ids", "created_at", "updated_at")
@@ -228,10 +249,142 @@ def handle_delete_health_note(event: Dict[str, Any]) -> Dict[str, Any]:
     return responses.json_response(200, _serialize_elder(updated))
 
 
+def handle_get_me(event: Dict[str, Any]) -> Dict[str, Any]:
+    """GET /me — 照護者取得自己的 cg_ 短 ID。"""
+    try:
+        caller = auth.get_caller(event)
+    except auth.AuthError as auth_err:
+        return auth_err.response
+
+    if caller.role != auth.ROLE_CAREGIVER:
+        return responses.error(403, "FORBIDDEN", "只有照護者帳號可使用此端點")
+
+    short_id = auth.caregiver_short_id(caller.user_id)
+
+    # Lazy 寫入 lookup 表（首次呼叫時建立）
+    existing = db.get_caregiver_by_sub(caller.user_id)
+    claims = event.get("requestContext", {}).get("authorizer", {}).get("claims") or {}
+    name = claims.get("name") or claims.get("email", "").split("@")[0]
+
+    if not existing:
+        db.put_caregiver_lookup(short_id, caller.user_id, name)
+    elif existing.get("name") != name:
+        db.put_caregiver_lookup(short_id, caller.user_id, name)
+
+    return responses.json_response(200, {"caregiver_id": short_id, "name": name})
+
+
+def handle_post_caregiver_link(event: Dict[str, Any]) -> Dict[str, Any]:
+    """POST /elders/{elder_id}/caregivers — 長者綁定照護者。"""
+    target_elder_id = get_path_elder_id(event)
+    if not target_elder_id:
+        return responses.error(400, "INVALID_PARAMETER", "未指定 elder_id")
+
+    try:
+        caller = auth.get_caller(event)
+    except auth.AuthError as auth_err:
+        return auth_err.response
+
+    if caller.role != auth.ROLE_ELDER:
+        return responses.error(403, "FORBIDDEN", "只有長者本人可綁定照護者")
+    if caller.elder_id != target_elder_id:
+        return responses.error(404, "ELDER_NOT_FOUND", "找不到指定的長者")
+
+    body = parse_body(event)
+    caregiver_id = (body.get("caregiver_id") or "").strip().lower()
+    if not caregiver_id or not caregiver_id.startswith("cg_"):
+        return responses.error(400, "INVALID_PARAMETER", "caregiver_id 格式錯誤，需為 cg_ 開頭")
+
+    # 反查 lookup 表取得 sub
+    lookup = db.get_caregiver_by_short_id(caregiver_id)
+    if not lookup:
+        return responses.error(404, "CAREGIVER_NOT_FOUND", "查不到這個照護者 ID")
+
+    caregiver_sub = lookup["sub"]
+    caregiver_name = lookup.get("name", "")
+
+    # 檢查是否已綁定
+    elder = db.get_elder(target_elder_id)
+    already_linked = caregiver_sub in elder.get("caregiver_ids", [])
+
+    if already_linked:
+        return responses.json_response(200, {
+            "caregiver_id": caregiver_id,
+            "name": caregiver_name,
+            "linked_at": elder.get("updated_at", ""),
+        })
+
+    db.link_caregiver_to_elder(target_elder_id, caregiver_sub)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=8))).isoformat()
+
+    return responses.json_response(201, {
+        "caregiver_id": caregiver_id,
+        "name": caregiver_name,
+        "linked_at": now,
+    })
+
+
+def handle_get_caregivers(event: Dict[str, Any]) -> Dict[str, Any]:
+    """GET /elders/{elder_id}/caregivers — 列出已綁定的照護者。"""
+    target_elder_id = get_path_elder_id(event)
+    if not target_elder_id:
+        return responses.error(400, "INVALID_PARAMETER", "未指定 elder_id")
+
+    try:
+        auth.assert_can_access_elder(event, target_elder_id)
+    except auth.AuthError as auth_err:
+        return auth_err.response
+
+    elder = db.get_elder(target_elder_id)
+    if not elder:
+        return responses.error(404, "ELDER_NOT_FOUND", "找不到指定的長者")
+
+    caregiver_subs = elder.get("caregiver_ids", [])
+    lookup_map = db.batch_get_caregivers_by_subs(caregiver_subs)
+
+    items = []
+    for sub in caregiver_subs:
+        info = lookup_map.get(sub)
+        if info:
+            items.append({
+                "caregiver_id": info["short_id"],
+                "name": info.get("name", ""),
+                "linked_at": info.get("created_at", ""),
+            })
+        else:
+            items.append({
+                "caregiver_id": auth.caregiver_short_id(sub),
+                "name": "",
+                "linked_at": "",
+            })
+
+    return responses.json_response(200, {"items": items})
+
+
+def is_me_path(event: Dict[str, Any]) -> bool:
+    """判斷是否為 /me 路徑。"""
+    resource = event.get("resource") or ""
+    path = event.get("path") or event.get("rawPath") or ""
+    return resource == "/me" or path.rstrip("/").endswith("/me")
+
+
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """GET/POST/PATCH /elders 長者資料 Lambda 主進入點。"""
     try:
         method = get_http_method(event)
+
+        if is_me_path(event):
+            if method == "GET":
+                return handle_get_me(event)
+            return responses.error(405, "METHOD_NOT_ALLOWED", f"不支援的 HTTP 方法: {method}")
+
+        if is_caregivers_path(event):
+            if method == "POST":
+                return handle_post_caregiver_link(event)
+            elif method == "GET":
+                return handle_get_caregivers(event)
+            return responses.error(405, "METHOD_NOT_ALLOWED", f"不支援的 HTTP 方法: {method}")
 
         if is_health_notes_path(event):
             if method == "POST":

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/i18n/strings.dart';
 import '../../shared/models/caregiver.dart';
 import '../../shared/services/api_error_codes.dart';
 import '../../shared/services/api_exception.dart';
@@ -60,7 +61,7 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
   Future<void> _submit() async {
     final id = _ctrl.text.trim();
     if (id.isEmpty) {
-      setState(() => _feedback = const _Feedback.error('請先輸入 ID'));
+      setState(() => _feedback = _Feedback.error(t('請先輸入 ID')));
       return;
     }
 
@@ -75,14 +76,14 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
     try {
       final link = await AppSession.instance.linkCaregiver(id);
       result = link.isNew
-          ? _Feedback.success('已經連結 ${link.caregiver.name}')
-          : _Feedback.error('${link.caregiver.name} 已經連結過了');
+          ? _Feedback.success(t1('已經連結 {}', link.caregiver.name))
+          : _Feedback.error(t1('{} 已經連結過了', link.caregiver.name));
     } on ApiException catch (e) {
       result = _Feedback.error(
         e.code == ApiErrorCodes.caregiverNotFound
             // 這是最可能發生的錯，而且長輩自己修得好，所以要講得具體。
-            ? '找不到這個 ID，請再確認一次'
-            : '連結沒有成功，請稍後再試一次',
+            ? t('找不到這個 ID，請再確認一次')
+            : t('連結沒有成功，請稍後再試一次'),
       );
     }
 
@@ -112,10 +113,10 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
               BigBackButton(onTap: () => context.pop()),
               const SizedBox(height: AppSpacing.xl),
 
-              Text('連結家人', style: text.headlineLarge),
+              Text(t('連結家人'), style: text.headlineLarge),
               const SizedBox(height: AppSpacing.md),
               Text(
-                '請家人輸入他的 ID，\n就能看到您每天的狀況。',
+                t('請家人輸入他的 ID，\n就能看到您每天的狀況。'),
                 style:
                     text.headlineSmall?.copyWith(color: AppColors.inkSecondary),
               ),
@@ -125,7 +126,7 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
               BigTextField(
                 controller: _ctrl,
                 focusNode: _focus,
-                hint: '家人的 ID',
+                hint: t('家人的 ID'),
                 enabled: !_busy,
                 letterSpacing: 2,
                 inputFormatters: [
@@ -139,7 +140,7 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
               ),
               const SizedBox(height: AppSpacing.lg),
 
-              BigButton(label: '加入', busy: _busy, onPressed: _submit),
+              BigButton(label: t('加入'), busy: _busy, onPressed: _submit),
 
               if (_feedback != null) ...[
                 const SizedBox(height: AppSpacing.lg),
@@ -149,7 +150,7 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
 
               if (linked.isNotEmpty) ...[
                 const SizedBox(height: AppSpacing.xl),
-                Text('已經連結的家人', style: text.headlineSmall),
+                Text(t('已經連結的家人'), style: text.headlineSmall),
                 const SizedBox(height: AppSpacing.md),
                 for (final c in linked) _LinkedRow(caregiver: c),
               ],

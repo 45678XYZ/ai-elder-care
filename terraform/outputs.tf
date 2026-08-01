@@ -88,10 +88,6 @@ output "batch_queue_url" {
   value       = aws_sqs_queue.batch.id
 }
 
-output "concept_vector_index" {
-  description = "概念向量索引名稱；填索引內容時傳給 build_concept_vector_index.py"
-  value       = aws_s3vectors_index.concepts.index_name
-}
 
 output "summary_generator_function_name" {
   description = "排程摘要 Lambda 名稱；手動補算可用 aws lambda invoke 帶 {\"mode\":\"nightly\",\"date\":\"YYYY-MM-DD\"}"

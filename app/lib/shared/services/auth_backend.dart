@@ -26,6 +26,13 @@ abstract interface class AuthBackend {
   Future<String> signIn({required String email, required String password});
 
   Future<void> signOut();
+
+  /// 目前這一刻可用的 ID token；沒登入或 session 已經救不回來時回 null。
+  ///
+  /// 與 [signIn] 分開是因為 Cognito 的 ID token 只有一小時效期，而登入狀態要跨啟動保留
+  /// （長輩不會每天重新登入）——光把登入當下那一份存起來，隔天每一支 API 都會 401。
+  /// 實作端負責在過期時用 refresh token 換新，呼叫端只管每次要用之前問一次。
+  Future<String?> currentIdToken();
 }
 
 /// 註冊後的下一步。

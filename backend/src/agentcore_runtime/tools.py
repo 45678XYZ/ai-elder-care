@@ -100,10 +100,10 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
         },
     ),
     (
-        "deactivate_routine",
-        "Deactivate or cancel an existing scheduled routine for the elder.",
+        "delete_routine",
+        "Permanently delete an existing scheduled routine for the elder. If the elder wants it back later, create a new one.",
         {
-            "routine_id": (str, True, "要停用的行程 ID，例如 rtn_001"),
+            "routine_id": (str, True, "要刪除的行程 ID，例如 rtn_001"),
         },
     ),
     (
@@ -125,7 +125,8 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
     (
         "update_elder_profile",
         "Update the elder's profile, including adding new health notes, appending to lifestyle habits, "
-        "or changing their nickname based on conversation.",
+        "changing their nickname, or switching language preference based on conversation. "
+        "Only set lang_preference/hakka_dialect when the elder EXPLICITLY asks to switch.",
         {
             "health_note_to_add": (
                 str,
@@ -138,6 +139,18 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
                 "欲補充的生活習慣與喜好（如：喜歡喝溫開水、不吃牛肉）。將附加至既有字串。",
             ),
             "nickname": (str, False, "長者希望被稱呼的新暱稱。"),
+            "lang_preference": (
+                str,
+                False,
+                "語言偏好：zh-TW（華語）或 hak（客語）。僅在長者明確表示想切換語言時才填。",
+            ),
+            "hakka_dialect": (
+                str,
+                False,
+                "客語腔調：htia_sixian（四縣）、htia_hailu（海陸）、htia_dapu（大埔）、"
+                "htia_raoping（饒平）、htia_zhaoan（詔安）、htia_nansixian（南四縣）。"
+                "僅在長者明確指定腔調時才填。",
+            ),
         },
     ),
     (
@@ -202,15 +215,40 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
             "limit": (int, False, "要回顧最近幾句對話，預設為 8，最多 15。建議用預設值即可。"),
         },
     ),
+    (
+        "get_weather_forecast",
+        "Get the current weather forecast for the elder's area. Use when the elder asks about weather, "
+        "temperature, rain, or whether to bring an umbrella/wear warm clothes. Also useful for proactive "
+        "care reminders related to weather (e.g., cold snap warning, heat stroke prevention).",
+        {
+            "location": (
+                str,
+                False,
+                "氣象署地區名稱（如：臺北市、高雄市）。不填則自動從長者居住地取得。",
+            ),
+        },
+    ),
+    (
+        "get_events_by_time",
+        "Query the elder's life events within a specific date range. Use when the elder asks about what "
+        "happened on particular days (e.g., 'Did I take my medicine last Tuesday?', 'What exercise did I do "
+        "this week?'). Unlike get_recent_events which returns the latest 20, this tool filters by exact dates.",
+        {
+            "start_date": (str, True, "查詢起始日期，格式為 YYYY-MM-DD"),
+            "end_date": (str, True, "查詢結束日期，格式為 YYYY-MM-DD"),
+            "event_type": (
+                str,
+                False,
+                "可選的事件類型過濾：routine_completion, wellbeing, activity, family, diet, safety, other",
+            ),
+        },
+    ),
 ]
 
 # 呼叫後代表 routine 定義或當日狀態已變更；chat.py 依此回 routines_updated
 ROUTINE_MUTATING_TOOLS = frozenset(
-    {"complete_routine", "create_routine", "update_routine", "deactivate_routine"}
+    {"complete_routine", "create_routine", "update_routine", "delete_routine"}
 )
-
-# 呼叫後代表已對照護者發出安全通知
-SAFETY_TOOLS = frozenset({"notify_caregiver"})
 
 
 def _args_model(tool_name: str, params: ParamSpec):

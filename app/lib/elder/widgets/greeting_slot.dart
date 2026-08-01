@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../shared/i18n/strings.dart';
+
 /// 時段問候（早安／午安／晚安）與對應的早安圖。
 ///
 /// 分界照長輩的實際作息定，不是把一天平均切三份：
@@ -23,7 +25,12 @@ enum GreetingSlot {
 
   const GreetingSlot(this.label, this.icon, this.asset);
 
+  /// 華語原文。**同時是 i18n 對照表的 key**，所以不隨長輩選的書寫語言變動——
+  /// 要顯示在畫面上的請用 [text]。
   final String label;
+
+  /// 畫面上實際顯示的問候語，會依長輩選的書寫語言換成客語漢字。
+  String get text => t(label);
 
   /// 沒有圖檔時的替代圖示（早安圖找不到就退回色塊加大字）。
   final IconData icon;

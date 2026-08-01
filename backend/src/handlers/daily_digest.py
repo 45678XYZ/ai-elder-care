@@ -10,14 +10,16 @@
 """
 
 import json
+import logging
 import os
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 import boto3
 
 from src.shared import db
+
+logger = logging.getLogger(__name__)
 
 # 台灣時區 (+08:00)
 TZ_TAIPEI = timezone(timedelta(hours=8))
@@ -88,7 +90,8 @@ def build_digest_email(elder_name: str, elder_id: str, today_str: str,
         "sleep": "😴 睡眠",
         "medication": "💊 用藥",
         "wellbeing": "💛 身心狀況",
-        "other": "📌 其他"
+        "safety": "🚨 安全",
+        "other": "📌 其他",
     }
     for key, label in section_labels.items():
         val = sections.get(key)
@@ -134,23 +137,22 @@ def process_elder(elder: Dict[str, Any], today_str: str) -> int:
     caregiver_ids = elder.get("caregiver_ids", [])
 
     if not elder_id or not caregiver_ids:
-        print(f"[Info] elder_id={elder_id} 無綁定照護者，跳過晚報")
+        logger.info("elder_id=%s 無綁定照護者，跳過晚報", elder_id)
         return 0
 
     # 取得今日健康摘要
     try:
         summaries, _ = db.list_daily_summaries(elder_id, today_str, today_str)
-
         summary = summaries[0] if summaries else {}
-    except Exception as e:
-        print(f"[Warning] 取得 elder={elder_id} 摘要失敗: {e}")
+    except Exception:
+        logger.exception("取得摘要失敗：elder_id=%s", elder_id)
         summary = {}
 
     # 取得今日行程完成狀況
     try:
         routines_result = db.get_daily_routines(elder_id, today_str)
-    except Exception as e:
-        print(f"[Warning] 取得 elder={elder_id} 行程失敗: {e}")
+    except Exception:
+        logger.exception("取得行程失敗：elder_id=%s", elder_id)
         routines_result = {"items": []}
 
     # 組裝 Email 內文
@@ -165,16 +167,14 @@ def process_elder(elder: Dict[str, Any], today_str: str) -> int:
             sns.publish(
                 TopicArn=CAREGIVER_NOTIFY_TOPIC_ARN,
                 Subject=subject,
-                Message=email_body
+                Message=email_body,
             )
             sent_count = len(caregiver_ids)
-            print(f"[DailyDigest] elder={elder_id} 晚報已發送至 {sent_count} 位照護者")
-        except Exception as e:
-            print(f"[Error] SNS 發送晚報失敗 elder={elder_id}: {e}")
+            logger.info("晚報已發送：elder_id=%s 照護者數=%s", elder_id, sent_count)
+        except Exception:
+            logger.exception("SNS 發送晚報失敗：elder_id=%s", elder_id)
     else:
-        # Mock 模式（本地開發 / 未設定 SNS）
-        print(f"[Mock DailyDigest] elder={elder_id} | Subject: {subject}")
-        print(email_body[:300])
+        logger.info("[Mock] 晚報未發送（無 SNS Topic）：elder_id=%s", elder_id)
         sent_count = len(caregiver_ids)
 
     return sent_count
@@ -182,21 +182,21 @@ def process_elder(elder: Dict[str, Any], today_str: str) -> int:
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """每日晚報 Lambda 主進入點（由 EventBridge Scheduler 觸發）。"""
-    print(f"[DailyDigest] 觸發事件: {json.dumps(event, ensure_ascii=False)}")
+    logger.info("觸發事件：%s", json.dumps(event, ensure_ascii=False))
 
     now_taipei = datetime.now(TZ_TAIPEI)
     today_str = now_taipei.strftime("%Y-%m-%d")
-    print(f"[DailyDigest] 處理日期: {today_str}")
+    logger.info("處理日期：%s", today_str)
 
     # 掃描所有長者
     try:
         all_elders: List[Dict[str, Any]] = db.list_elders()
-    except Exception as e:
-        print(f"[Error] 掃描 elders 表失敗: {e}")
-        return {"statusCode": 500, "body": f"掃描長者資料失敗: {str(e)}"}
+    except Exception:
+        logger.exception("掃描 elders 表失敗")
+        return {"statusCode": 500, "body": "掃描長者資料失敗"}
 
     if not all_elders:
-        print("[Info] 目前無任何長者資料，結束晚報")
+        logger.info("目前無任何長者資料，結束晚報")
         return {"statusCode": 200, "body": "無長者資料，晚報作業完成"}
 
     total_elders = len(all_elders)
@@ -208,19 +208,19 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         try:
             sent = process_elder(elder, today_str)
             total_sent += sent
-        except Exception as e:
-            print(f"[Error] 處理 elder={elder_id} 失敗: {e}")
+        except Exception:
+            logger.exception("處理晚報失敗：elder_id=%s", elder_id)
             failed.append(elder_id)
 
     result_summary = {
         "date": today_str,
         "total_elders": total_elders,
         "total_notifications_sent": total_sent,
-        "failed_elder_ids": failed
+        "failed_elder_ids": failed,
     }
 
-    print(f"[DailyDigest] 完成: {json.dumps(result_summary, ensure_ascii=False)}")
+    logger.info("晚報作業完成：%s", json.dumps(result_summary, ensure_ascii=False))
     return {
         "statusCode": 200,
-        "body": json.dumps(result_summary, ensure_ascii=False)
+        "body": json.dumps(result_summary, ensure_ascii=False),
     }

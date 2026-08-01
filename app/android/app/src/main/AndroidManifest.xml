@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 連後端（Cognito 登入、/chat、/elders…）。
+         Flutter 只在 debug/ 與 profile/ 的 manifest 自動加這一條，release 不會——
+         少了它 debug 一切正常、打包出來的 APK 卻連不上任何東西，而且錯誤長得像
+         使用者的網路壞掉（App 收到的就是 SocketException）。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <!-- 裝置端語音辨識（speech_to_text）需要麥克風權限 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
 
@@ -12,7 +18,7 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
 
     <application
-        android:label="ai_elder_care"
+        android:label="客照e點通"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

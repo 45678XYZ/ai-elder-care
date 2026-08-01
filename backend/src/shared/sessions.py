@@ -468,40 +468,6 @@ def finalize_closed(
 # -----------------------------------------------------------------------------
 
 
-def persist_chunk_manifest(
-    elder_id: str,
-    session_id: str,
-    manifest: Sequence[dict[str, Any]],
-    *,
-    planner_version: str,
-) -> list[dict[str, Any]]:
-    """首次成功的 manifest 條件式持久化；已存在則回既有值。
-
-    這是「分塊允許非確定性」與「batch 必須冪等」能並存的關鍵：只要第一次寫入後所有
-    retry、duplicate delivery 與 DLQ replay 都重用同一份，chunk ID 就不會漂移。
-    """
-    table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
-    try:
-        response = table.update_item(
-            Key={"elder_id": elder_id, "record_id": session_record_id(session_id)},
-            UpdateExpression=(
-                "SET chunk_manifest = :manifest, chunk_planner_version = :planner_version"
-            ),
-            ConditionExpression="attribute_not_exists(chunk_manifest)",
-            ExpressionAttributeValues={
-                ":manifest": db.prepare_item(list(manifest)),
-                ":planner_version": planner_version,
-            },
-            ReturnValues="ALL_NEW",
-        )
-    except ClientError as exc:
-        if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
-            raise SessionError(f"寫入 chunk manifest 失敗: {exc.response['Error']['Message']}")
-        existing = get_session(elder_id, session_id) or {}
-        logger.info("chunk manifest 已存在，重用既有規劃：session_id=%s", session_id)
-        return existing.get("chunk_manifest") or []
-    return db.convert_decimals(response.get("Attributes", {})).get("chunk_manifest") or []
-
 
 # -----------------------------------------------------------------------------
 # batch 狀態機

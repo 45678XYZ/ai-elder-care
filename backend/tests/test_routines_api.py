@@ -128,6 +128,22 @@ def store(monkeypatch):
     def get_events(elder_id, event_ids):
         return {eid: state["events"][eid] for eid in event_ids if eid in state["events"]}
 
+    def delete_routine(routine_id, *, deleted_by, client_request_id):
+        state["versions"] = [
+            v for v in state["versions"] if v["routine_id"] != routine_id
+        ]
+        state["tombstones"] = state.get("tombstones", {})
+        state["tombstones"][routine_id] = {
+            "routine_id": routine_id,
+            "version": 0,
+            "deleted": True,
+            "deleted_by": deleted_by,
+            "client_request_id": client_request_id,
+        }
+
+    def get_routine_tombstone(routine_id):
+        return state.get("tombstones", {}).get(routine_id)
+
     for name, fake in {
         "get_routine_version": get_routine_version,
         "list_routine_versions": list_routine_versions,
@@ -137,6 +153,8 @@ def store(monkeypatch):
         "list_routine_versions_by_elder": list_routine_versions_by_elder,
         "put_event_if_absent": put_event_if_absent,
         "get_events": get_events,
+        "delete_routine": delete_routine,
+        "get_routine_tombstone": get_routine_tombstone,
     }.items():
         monkeypatch.setattr(db, name, fake)
 
@@ -408,8 +426,61 @@ def test_delete_routine_endpoint(store):
     )
 
     assert resp["statusCode"] == 200
-    assert _body(resp)["active"] is False
-    assert store["versions"][1]["current_sort_key"].startswith("I#")
+    body = _body(resp)
+    assert body["deleted"] is True
+    assert body["routine_id"] == "rtn_001"
+    assert len(store["versions"]) == 0
+
+
+def test_delete_routine_idempotent_replay(store):
+    """同一 client_request_id 重送 DELETE 應冪等回 200。"""
+    _seed_routine(store)
+    event = _event(
+        "DELETE",
+        routine_id="rtn_001",
+        params={"client_request_id": "req-del-1"},
+        resource="/routines/{routine_id}",
+    )
+    handler.handler(event, None)
+    replay = handler.handler(event, None)
+
+    assert replay["statusCode"] == 200
+    assert _body(replay)["deleted"] is True
+
+
+def test_delete_routine_conflict_different_request_id(store):
+    """不同 client_request_id 刪同一 routine 應回 409。"""
+    _seed_routine(store)
+    handler.handler(
+        _event(
+            "DELETE",
+            routine_id="rtn_001",
+            params={"client_request_id": "req-del-1"},
+            resource="/routines/{routine_id}",
+        ),
+        None,
+    )
+    resp = handler.handler(
+        _event(
+            "DELETE",
+            routine_id="rtn_001",
+            params={"client_request_id": "req-del-OTHER"},
+            resource="/routines/{routine_id}",
+        ),
+        None,
+    )
+
+    assert resp["statusCode"] == 409
+
+
+def test_delete_routine_missing_request_id(store):
+    """DELETE 不帶 client_request_id 應回 400。"""
+    _seed_routine(store)
+    resp = handler.handler(
+        _event("DELETE", routine_id="rtn_001", resource="/routines/{routine_id}"),
+        None,
+    )
+    assert resp["statusCode"] == 400
 
 
 

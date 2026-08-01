@@ -194,22 +194,19 @@ def test_event_models():
 
 
 def test_event_create_accepts_safety_type_and_taxonomy_fields():
-    """safety 為第七個高階類別；concept_id／taxonomy_version 為後端內部欄位。"""
+    """safety 為第七個高階類別；taxonomy_version 為後端內部欄位。"""
     ec = EventCreate(
         elder_id="eld_001",
         ts="2026-07-25T18:20:00.000+08:00",
         type="safety",
-        concept_id="UCO.StatusOutcome.SafetyIncident.FallEvent",
         taxonomy_version="uco-1.0.0",
         detail="在浴室滑倒，沒有受傷",
         canonical_event_key="2026-07-25#SLOT_1800#長者#浴室滑倒",
     )
     assert ec.type == "safety"
-    assert ec.concept_id == "UCO.StatusOutcome.SafetyIncident.FallEvent"
     assert ec.taxonomy_version == "uco-1.0.0"
 
-    # concept_id／taxonomy_version 不屬於對外回應欄位
-    assert "concept_id" not in EventResponse.model_fields
+    # taxonomy_version 不屬於對外回應欄位
     assert "taxonomy_version" not in EventResponse.model_fields
 
 

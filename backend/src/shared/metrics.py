@@ -27,14 +27,12 @@ logger = logging.getLogger(__name__)
 NAMESPACE = os.environ.get("METRICS_NAMESPACE", "AiElderCare/Extraction")
 
 # 指標名稱集中管理，避免各處拼字不一致而變成兩個指標
-CHUNK_COUNT = "ChunkCount"
 EVENT_COUNT = "EventCount"
 DROPPED_EVENTS = "DroppedEvents"
 UNMATCHED_PREDICATES = "UnmatchedPredicates"
 DEDUP_MERGE_RATE = "DedupMergeRate"
 DEDUP_KEY_MERGED = "DedupKeyMerged"
 DEDUP_ALIAS_MERGED = "DedupAliasMerged"
-CHUNKER_FALLBACK = "ChunkerFallback"
 STRUCTURED_OUTPUT_DEGRADED = "StructuredOutputDegraded"
 MODEL_LATENCY = "ModelLatencyMs"
 BATCH_ATTEMPTS = "BatchAttempts"
@@ -108,15 +106,12 @@ def emit_pipeline_metrics(
     *,
     elder_id: str | None = None,
     session_id: str | None = None,
-    chunker_type: str = "",
 ) -> None:
     """把 `PipelineResult.metrics` 送成指標。
 
-    事件分類分佈另外一筆一筆送（維度 `EventType`），這樣才能在 CloudWatch 上分類別看趨勢；
-    高基數的 `concept_id` 不進維度，只留在 log properties。
+    事件分類分佈另外一筆一筆送（維度 `EventType`），這樣才能在 CloudWatch 上分類別看趨勢。
     """
     type_distribution = pipeline_metrics.get("type_distribution") or {}
-    dimensions = {"ChunkerType": chunker_type} if chunker_type else None
     properties = {
         key: value
         for key, value in (("elder_id", elder_id), ("session_id", session_id))
@@ -125,19 +120,15 @@ def emit_pipeline_metrics(
 
     emit(
         {
-            CHUNK_COUNT: pipeline_metrics.get("chunk_count", 0),
             EVENT_COUNT: pipeline_metrics.get("event_count", 0),
             DROPPED_EVENTS: pipeline_metrics.get("dropped_events", 0),
             UNMATCHED_PREDICATES: pipeline_metrics.get("unmatched_predicates", 0),
-            # 比率乘 100 以 Percent 呈現，CloudWatch 圖表比較好讀
             DEDUP_MERGE_RATE: float(pipeline_metrics.get("dedup_merge_rate", 0.0)) * 100,
             DEDUP_KEY_MERGED: pipeline_metrics.get("dedup_key_merged", 0),
             DEDUP_ALIAS_MERGED: pipeline_metrics.get("dedup_alias_merged", 0),
-            CHUNKER_FALLBACK: 1 if pipeline_metrics.get("chunker_fallback_used") else 0,
             STRUCTURED_OUTPUT_DEGRADED: pipeline_metrics.get("structured_output_degraded", 0),
             MODEL_LATENCY: pipeline_metrics.get("model_latency_ms", 0),
         },
-        dimensions=dimensions,
         properties=properties,
     )
 

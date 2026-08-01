@@ -1,7 +1,7 @@
 """GET /events handler 測試。
 
 除了正常路徑，特別鎖住「不外流 extraction internals」這條契約：canonical key、
-extraction track、revision、chunk、concept_id、structured_detail、evidence 清單
+extraction track、revision、chunk、structured_detail、evidence 清單
 都不得出現在回應裡（docs/api.md）。
 """
 
@@ -27,7 +27,6 @@ STORED_EVENT = {
     # 以下皆為後端內部欄位
     "canonical_event_key": "2026-07-26#SLOT_0900#長者#服用血壓藥",
     "extraction_track": "batch",
-    "concept_id": "UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication",
     "taxonomy_version": "uco-1.0.0",
     "structured_detail": {"medication_item": "血壓藥", "pill_count": 1},
     "evidence_conversation_ids": ["cnv_1", "cnv_2"],
@@ -81,7 +80,6 @@ def test_returns_public_fields_only(allow_access):
     for internal in (
         "canonical_event_key",
         "extraction_track",
-        "concept_id",
         "taxonomy_version",
         "structured_detail",
         "evidence_conversation_ids",

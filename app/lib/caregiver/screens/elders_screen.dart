@@ -50,8 +50,17 @@ class _EldersScreenState extends State<EldersScreen> {
 
   Future<List<Routine>> _fetch() async {
     await AppSession.instance.ensureEldersLoaded();
-    final list = await CareRepo.instance
-        .routines(elderId: AppSession.instance.selectedElderId!);
+    final elderId = AppSession.instance.selectedElderId;
+    // 還沒綁定任何長輩——剛註冊的照護者必然是這個狀態。這裡原本是 `selectedElderId!`，
+    // null 時直接丟 Null check operator，整頁被錯誤畫面取代，連同意書與登出都不見了。
+    // 「還沒有長輩」是正常狀態不是錯誤，回空清單讓畫面照常畫。
+    if (elderId == null) {
+      _routines.clear();
+      // 沒有長輩就不該有任何提醒留在系統裡（syncRoutines 開頭會 cancelAll）。
+      unawaited(NotificationService.instance.syncRoutines(const []));
+      return const [];
+    }
+    final list = await CareRepo.instance.routines(elderId: elderId);
     _routines
       ..clear()
       ..addAll(list);
@@ -105,42 +114,6 @@ class _EldersScreenState extends State<EldersScreen> {
     if (created.remind) await _ensureNotificationPermission();
   }
 
-  /// 新增一位長輩（`POST /elders`）。
-  ///
-  /// 這是照護者上線後的第一步（demo Act 1）：建立者的 token `sub` 會被後端自動加進
-  /// `caregiver_ids`，所以建完立刻就看得到這位長輩，不必再走一次綁定。
-  ///
-  /// 建完切換過去並重載：下一步一定是幫這位長輩排行程，停在上一位身上很容易
-  /// 沒注意就把行程加到別人頭上。
-  Future<void> _addElder() async {
-    final draft = await showModalBottomSheet<_ElderDraft>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.cardAlt,
-      shape: const RoundedRectangleBorder(borderRadius: AppRadius.voicePanel),
-      builder: (_) => const _ElderForm(),
-    );
-    if (draft == null || !mounted) return;
-
-    final Elder created;
-    try {
-      created = await AppSession.instance.createElder(draft.toJson());
-    } catch (e) {
-      if (mounted) _showError('新增長輩失敗：$e');
-      return;
-    }
-    if (!mounted) return;
-
-    _reload();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.barDark,
-        content: Text('已新增「${created.name}」，接下來可以幫他排行程',
-            style: const TextStyle(color: AppColors.onDark)),
-      ),
-    );
-  }
-
   /// 寫入失敗的統一提示。
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -185,33 +158,10 @@ class _EldersScreenState extends State<EldersScreen> {
     );
   }
 
-  /// 切換長輩的語音語言（`PATCH /elders/{id}` 的 `lang_preference`）。
-  ///
-  /// 這是全 App 唯一能改語言的地方：介面文字一律華語、長者端不提供切換，
-  /// 這個值只決定長輩說話與聽回覆走華語還是客語（客語裝置端無法辨識，改走錄音送後端）。
-  Future<void> _changeLang(Elder elder, String lang) async {
-    if (elder.langPreference == lang) return;
-
-    final Elder updated;
-    try {
-      updated = await CareRepo.instance
-          .updateElder(elder.elderId, {'lang_preference': lang});
-    } catch (e) {
-      if (mounted) _showError('切換語言失敗：$e');
-      return;
-    }
-    if (!mounted) return;
-
-    _replaceElder(updated);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.barDark,
-        content: Text(
-            '已改為${updated.langPreference == 'hak' ? '客語' : '華語'}，長輩下次說話時生效',
-            style: const TextStyle(color: AppColors.onDark)),
-      ),
-    );
-  }
+  // 語言切換不在這一頁：改由長輩自己在長者端今日頁切（見 elder/widgets/lang_toggle.dart）。
+  // 真正知道自己講哪一種話的是長輩本人，而照護者設錯時長輩沒有自救的辦法。
+  // 兩邊都能改反而更糟——長者的選擇只寫本機、照護者的寫後端，同時存在就會互相覆蓋，
+  // 而長輩那一份必須贏（實際在說話的是他），照護者這顆按下去等於按不動。
 
   /// 就地換掉 AppSession 裡的那一筆長者。
   ///
@@ -359,6 +309,32 @@ class _EldersScreenState extends State<EldersScreen> {
     _replaceElder(updated);
   }
 
+  /// 編輯居住地區（`PATCH /elders/{id}` 的 `address_region`）。
+  ///
+  /// 為什麼照護者要改得了：這個欄位是對話大腦查天氣的依據（後端的
+  /// `get_weather_forecast` 工具），長輩問「明天會不會下雨」全靠它。而長輩會搬家、
+  /// 也可能是子女幫忙填錯的——初次設定填完就永久唯讀，等於錯了沒人救得回來。
+  Future<void> _editAddressRegion(Elder elder) async {
+    final region = await showDialog<String>(
+      context: context,
+      builder: (ctx) =>
+          _AddressRegionDialog(initial: elder.addressRegion ?? ''),
+    );
+    if (region == null || !mounted) return;
+
+    final Elder updated;
+    try {
+      updated = await CareRepo.instance
+          .updateElder(elder.elderId, {'address_region': region});
+    } catch (e) {
+      if (mounted) _showError('儲存失敗：$e');
+      return;
+    }
+    if (!mounted) return;
+
+    _replaceElder(updated);
+  }
+
   /// 刪除一筆健康註記（`DELETE /elders/{id}/health_notes/{note_id}`）。
   ///
   /// 先問一次再刪：健康資訊刪掉之後照護者不會記得原本寫了什麼，而 AI 補上的那幾筆
@@ -440,6 +416,10 @@ class _EldersScreenState extends State<EldersScreen> {
     if (confirmed != true || !mounted) return;
 
     try {
+      // 每次按下刪除產一個新的 id。這一顆按鈕沒有自動重試，按完該筆就從清單消失，
+      // 所以拿不到同一筆再刪一次的機會；真正需要沿用同一個 id 的是「送出後沒收到
+      // 回應、使用者自己再按一次」，那種情況目前會吃 409（後端已經刪掉了）。
+      // 要處理得更好就得把 id 按 routine 存起來，等有人真的遇到再說。
       await CareRepo.instance
           .deleteRoutine(r.routineId, clientRequestId: _uuid.v4());
     } catch (e) {
@@ -477,81 +457,82 @@ class _EldersScreenState extends State<EldersScreen> {
               trailing: const _MyIdButton(),
             ),
             Expanded(
-              child: AsyncView<List<Routine>>(
-                future: _future,
-                onRetry: _reload,
-                builder: (context, _) {
-                  final elder = AppSession.instance.selectedElder;
-                  // 只列還在的。停用改成刪除之後就沒有「已停用」這個狀態了——
-                  // 後端目前仍是 active=false（資料還在），但那對照護者不該可見，
-                  // 顯示出來等於告訴他「刪掉的東西其實還在」。
-                  final visible = _routines.where((r) => r.active).toList();
+              // 同意書與登出放在 AsyncView **外面**，資料載不出來時也要看得到。
+              // 這兩個是這一頁唯一的出路：政策裡寫「刪除資料請聯繫家人或管理者」，
+              // 而能執行的人就是照護者；載入失敗時他更需要能登出重來。
+              // 長者端的今日頁踩過同一個坑（見 today_screen 的同名說明）。
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  AsyncView<List<Routine>>(
+                    future: _future,
+                    onRetry: _reload,
+                    builder: (context, _) {
+                      final elder = AppSession.instance.selectedElder;
+                      // 只列還在的。停用改成刪除之後就沒有「已停用」這個狀態了。
+                      final visible = _routines.where((r) => r.active).toList();
 
-                  return ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    children: [
-                      SectionHeader(
-                        '長輩資料',
-                        trailing: TextButton.icon(
-                          onPressed: _addElder,
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            foregroundColor: AppColors.accentText,
+                      // Column 而非 ListView：它已經是外層 ListView 的一個孩子。
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // 沒有「新增長輩」：綁定是**長者發起**的——長輩在他自己的
+                          // 手機上輸入照護者 ID（`POST /elders/{id}/caregivers`），綁上
+                          // 之後 `GET /elders` 就回完整資料，這一頁自然看得到。
+                          //
+                          // 從照護者這邊 `POST /elders` 造出來的長輩沒有帳號可以登入：
+                          // elder_accounts（sub→elder_id）是註冊時寫的，建立長者資料
+                          // 不會產生帳號對應。那會是一筆沒人進得去的孤兒資料。
+                          const SectionHeader('長輩資料'),
+                          const SizedBox(height: AppSpacing.sm),
+                          if (elder != null)
+                            _ElderProfileCard(
+                              elder: elder,
+                              onAddNote: () => _addHealthNote(elder),
+                              onRemoveNote: (n) => _removeHealthNote(elder, n),
+                              onEditHabit: () => _editHabitNote(elder),
+                              onEditRegion: () => _editAddressRegion(elder),
+                              onAddFamily: () => _addFamilyMember(elder),
+                              onRemoveFamily: (i) =>
+                                  _removeFamilyMember(elder, i),
+                            ),
+                          const SizedBox(height: AppSpacing.lg),
+                          SectionHeader(
+                            '例行公事',
+                            trailing: TextButton.icon(
+                              onPressed: _addRoutine,
+                              style: TextButton.styleFrom(
+                                minimumSize: const Size(48, 48),
+                                foregroundColor: AppColors.accentText,
+                              ),
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text('新增',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelSmall
+                                      ?.copyWith(color: AppColors.accentText)),
+                            ),
                           ),
-                          icon: const Icon(Icons.person_add_alt, size: 18),
-                          label: Text('新增長輩',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(color: AppColors.accentText)),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      if (elder != null)
-                        _ElderProfileCard(
-                          elder: elder,
-                          onLangChanged: (lang) => _changeLang(elder, lang),
-                          onAddNote: () => _addHealthNote(elder),
-                          onRemoveNote: (n) => _removeHealthNote(elder, n),
-                          onEditHabit: () => _editHabitNote(elder),
-                          onAddFamily: () => _addFamilyMember(elder),
-                          onRemoveFamily: (i) => _removeFamilyMember(elder, i),
-                        ),
-                      const SizedBox(height: AppSpacing.lg),
-                      SectionHeader(
-                        '例行公事',
-                        trailing: TextButton.icon(
-                          onPressed: _addRoutine,
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(48, 48),
-                            foregroundColor: AppColors.accentText,
-                          ),
-                          icon: const Icon(Icons.add, size: 18),
-                          label: Text('新增',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(color: AppColors.accentText)),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      if (visible.isEmpty)
-                        _EmptyRoutines(onAdd: _addRoutine)
-                      else
-                        for (final r in visible) ...[
-                          _RoutineCard(
-                            key: ValueKey(r.routineId),
-                            routine: r,
-                            onDelete: () => _deleteRoutine(r),
-                          ),
-                          const SizedBox(height: AppSpacing.md),
+                          const SizedBox(height: AppSpacing.sm),
+                          if (visible.isEmpty)
+                            _EmptyRoutines(onAdd: _addRoutine)
+                          else
+                            for (final r in visible) ...[
+                              _RoutineCard(
+                                key: ValueKey(r.routineId),
+                                routine: r,
+                                onDelete: () => _deleteRoutine(r),
+                              ),
+                              const SizedBox(height: AppSpacing.md),
+                            ],
                         ],
-                      const SizedBox(height: AppSpacing.xl),
-                      const _PolicyLink(),
-                      const SignOutButton(),
-                    ],
-                  );
-                },
+                      );
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  const _PolicyLink(),
+                  const SignOutButton(),
+                ],
               ),
             ),
           ],
@@ -594,26 +575,26 @@ class _PolicyLink extends StatelessWidget {
   }
 }
 
-/// 長輩基本資料。語音語言與健康狀況可改，其餘唯讀。
+/// 長輩基本資料。健康狀況、生活習慣與家人可改，其餘唯讀。
 class _ElderProfileCard extends StatefulWidget {
   const _ElderProfileCard({
     required this.elder,
-    required this.onLangChanged,
     required this.onAddNote,
     required this.onRemoveNote,
     required this.onEditHabit,
+    required this.onEditRegion,
     required this.onAddFamily,
     required this.onRemoveFamily,
   });
 
   final Elder elder;
 
-  /// 切換語音語言（`lang_preference`）。這是全 App 唯一能改它的地方。
-  final ValueChanged<String> onLangChanged;
-
   final VoidCallback onAddNote;
   final ValueChanged<HealthNote> onRemoveNote;
   final VoidCallback onEditHabit;
+
+  /// 編輯居住地區。天氣工具吃這個欄位，錯了長輩問天氣就答不準。
+  final VoidCallback onEditRegion;
   final VoidCallback onAddFamily;
 
   /// 依位置刪除——`FamilyMember` 沒有 ID。
@@ -696,7 +677,6 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
   @override
   Widget build(BuildContext context) {
     final elder = widget.elder;
-    final onLangChanged = widget.onLangChanged;
     final text = Theme.of(context).textTheme;
     final age =
         elder.birthYear == null ? null : DateTime.now().year - elder.birthYear!;
@@ -736,35 +716,6 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: AppSpacing.lg),
-
-          // 語音語言——全 App 唯一能改的地方（長者端不提供切換）
-          _ProfileRow(
-            label: '說話語言',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    _LangOption(
-                      label: '華語',
-                      selected: elder.langPreference != 'hak',
-                      onTap: () => onLangChanged('zh-TW'),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    _LangOption(
-                      label: '客語',
-                      selected: elder.langPreference == 'hak',
-                      onTap: () => onLangChanged('hak'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.xs),
-                Text('※ 影響語音辨識',
-                    style: text.bodySmall?.copyWith(color: AppColors.chevron)),
-              ],
-            ),
           ),
           const SizedBox(height: AppSpacing.md),
 
@@ -910,60 +861,32 @@ class _ElderProfileCardState extends State<_ElderProfileCard> {
                 : Text('尚未填寫',
                     style: text.bodySmall?.copyWith(color: AppColors.chevron)),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 語言選項。選中同時用實心底與勾表示，不只靠顏色（MASTER.md §6）。
-class _LangOption extends StatelessWidget {
-  const _LangOption({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Semantics(
-      button: true,
-      selected: selected,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: const BorderRadius.all(AppRadius.pill),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 44),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.accentText : Colors.transparent,
-            borderRadius: const BorderRadius.all(AppRadius.pill),
-            border: Border.all(
-              // 未選取走 borderInteractive 而不是 border：後者是輸入框線，
-              // 壓在紙色底上只有 1.3:1，看不出這裡有一顆可以按的東西。
-              color:
-                  selected ? AppColors.accentText : AppColors.borderInteractive,
-              width: selected ? 2 : 1,
+          const SizedBox(height: AppSpacing.md),
+          // 居住地區同樣要能改：長輩會搬家，而且這是初次設定時由子女代填的欄位，
+          // 填錯的機會不小。錯了的後果是天氣問了答不準（後端 get_weather_forecast
+          // 吃這個值），而不是明顯的壞掉，所以更需要一個看得到、改得動的地方。
+          _ProfileRow(
+            label: '居住地區',
+            trailing: Tooltip(
+              message: '編輯居住地區',
+              child: TextButton(
+                onPressed: widget.onEditRegion,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  padding: EdgeInsets.zero,
+                  foregroundColor: AppColors.accentText,
+                ),
+                child: Text('編輯',
+                    style:
+                        text.labelSmall?.copyWith(color: AppColors.accentText)),
+              ),
             ),
+            child: (elder.addressRegion?.trim().isNotEmpty ?? false)
+                ? Text(elder.addressRegion!, style: text.bodyMedium)
+                : Text('尚未填寫',
+                    style: text.bodySmall?.copyWith(color: AppColors.chevron)),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (selected) ...[
-                const Icon(Icons.check, size: 15, color: Colors.white),
-                const SizedBox(width: 4),
-              ],
-              Text(label,
-                  style: text.labelSmall?.copyWith(
-                      color: selected ? Colors.white : AppColors.inkSecondary)),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }
@@ -1361,6 +1284,84 @@ class _FamilyMemberDialogState extends State<_FamilyMemberDialog> {
 ///
 /// 允許存成空字串（等於清空）——`PATCH` 沒有把欄位改回 null 的語意，空字串是
 /// 契約內能表達「這裡沒東西」的方式。
+/// 編輯居住地區。單行、不給空字串。
+///
+/// 不做縣市／鄉鎮的下拉選單：那要維護一份全台行政區清單，而且長輩實際住的地方
+/// 未必對得上行政區劃（眷村、部落、某某社區）。天氣工具吃的是地名字串，讓照護者
+/// 照自己知道的寫比較準。
+class _AddressRegionDialog extends StatefulWidget {
+  const _AddressRegionDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_AddressRegionDialog> createState() => _AddressRegionDialogState();
+}
+
+class _AddressRegionDialogState extends State<_AddressRegionDialog> {
+  late final _ctrl = TextEditingController(text: widget.initial);
+
+  @override
+  void initState() {
+    super.initState();
+    // 「儲存」在空字串時是停用的，所以每次輸入都要重畫——沒有這個監聽，
+    // 原本是空的地區打了字之後按鈕還是灰的，看起來像壞掉。
+    _ctrl.addListener(_onChanged);
+  }
+
+  void _onChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    _ctrl.removeListener(_onChanged);
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return AlertDialog(
+      backgroundColor: AppColors.cardAlt,
+      title: Text('居住地區', style: text.titleMedium),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _ctrl,
+            autofocus: true,
+            style: text.bodyLarge,
+            decoration: InputDecoration(
+              hintText: '例如：台北市大安區',
+              hintStyle: text.bodyLarge?.copyWith(color: AppColors.chevron),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text('※ 長輩問天氣時要靠它',
+              style: text.labelSmall?.copyWith(color: AppColors.chevron)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: TextButton.styleFrom(foregroundColor: AppColors.ink),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          // 空字串不送：api.md 的 PATCH 是部分更新，沒有「清空欄位」的語意，
+          // 送空值只會讓後端存一個沒有意義的空地區。
+          onPressed: _ctrl.text.trim().isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_ctrl.text.trim()),
+          style: TextButton.styleFrom(foregroundColor: AppColors.accentText),
+          child: const Text('儲存'),
+        ),
+      ],
+    );
+  }
+}
+
 class _HabitNoteDialog extends StatefulWidget {
   const _HabitNoteDialog({required this.initial});
 
@@ -1499,25 +1500,35 @@ class _RoutineCard extends StatelessWidget {
                     style: text.bodySmall
                         ?.copyWith(color: AppColors.inkSecondary)),
                 const SizedBox(height: AppSpacing.xs),
-                Row(
+                // Wrap 而非 Row：這一列在 textScaler 2.0 下量出來約 290dp，
+                // 但卡片透過 Expanded 只分得到 213dp——差的 77px 就直接 overflow。
+                // 換行而不是截斷：「對話中建立」是來源標示，砍掉照護者就分不出
+                // 哪些行程是 AI 聽來的。圖示與其標籤綁在同一個 Row 裡不拆散。
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: AppSpacing.sm,
+                  runSpacing: 2,
                   children: [
-                    Icon(
-                      routine.remind
-                          ? Icons.notifications_active_outlined
-                          : Icons.notifications_off_outlined,
-                      size: 14,
-                      color: AppColors.chevron,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          routine.remind
+                              ? Icons.notifications_active_outlined
+                              : Icons.notifications_off_outlined,
+                          size: 14,
+                          color: AppColors.chevron,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(routine.remind ? '會提醒' : '不提醒',
+                            style: text.bodySmall
+                                ?.copyWith(color: AppColors.chevron)),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    Text(routine.remind ? '會提醒' : '不提醒',
-                        style:
-                            text.bodySmall?.copyWith(color: AppColors.chevron)),
-                    if (routine.createdBy == 'conversation') ...[
-                      const SizedBox(width: AppSpacing.sm),
+                    if (routine.createdBy == 'conversation')
                       Text('· 對話中建立',
                           style: text.bodySmall
                               ?.copyWith(color: AppColors.chevron)),
-                    ],
                   ],
                 ),
               ],
@@ -1623,236 +1634,6 @@ class _RoutineDraft {
 }
 
 /// 新增例行公事表單。失焦即驗證、錯誤訊息在欄位下方、有明確關閉鈕（§8／§12）。
-/// 新增長輩的表單內容（`POST /elders` 的 request 欄位，見 docs/api.md）。
-class _ElderDraft {
-  const _ElderDraft({
-    required this.name,
-    required this.nickname,
-    required this.lang,
-    required this.healthNotes,
-    required this.family,
-  });
-
-  final String name;
-  final String nickname;
-  final String lang;
-  final List<String> healthNotes;
-  final List<FamilyMember> family;
-
-  /// 只帶公開欄位：`elder_id`、`caregiver_ids`、`created_at`、`updated_at` 是
-  /// server-owned，傳了後端回 400 `INVALID_PARAMETER`。
-  ///
-  /// 空字串不送，讓後端套它自己的預設（api.md：未提供的 `health_notes`、`family`
-  /// 由後端補 `[]`），而不是送一堆空值進去。
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        if (nickname.isNotEmpty) 'nickname': nickname,
-        'lang_preference': lang,
-        if (healthNotes.isNotEmpty) 'health_notes': healthNotes,
-        if (family.isNotEmpty)
-          'family': [
-            for (final m in family)
-              {
-                'relation': m.relation,
-                'name': m.name,
-                if (m.note != null && m.note!.isNotEmpty) 'note': m.note,
-              },
-          ],
-      };
-}
-
-/// 新增長輩的表單。
-///
-/// 欄位取捨照 demo Act 1 的實際輸入：姓名、暱稱、語言、健康狀況、家人。
-/// 出生年、性別、居住地區 api.md 有但這裡不收——照護者現場輸入的欄位愈多愈慢，
-/// 而那三個目前沒有任何畫面在用；需要時走 `PATCH /elders/{id}` 補。
-class _ElderForm extends StatefulWidget {
-  const _ElderForm();
-
-  @override
-  State<_ElderForm> createState() => _ElderFormState();
-}
-
-class _ElderFormState extends State<_ElderForm> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameCtrl = TextEditingController();
-  final _nicknameCtrl = TextEditingController();
-
-  /// 健康狀況與家人用「一行一筆」的多行輸入，不做動態增減列。
-  ///
-  /// 動態列在手機上要處理新增、刪除、捲動與鍵盤遮擋，欄位一多就變成一堆小按鈕；
-  /// 而這兩項的內容本來就是短句，換行輸入對照護者更快，也不會有「按了加號卻沒填」
-  /// 留下的空列。家人一行寫「關係,姓名,備註」，逗號分隔。
-  final _healthCtrl = TextEditingController();
-  final _familyCtrl = TextEditingController();
-
-  String _lang = 'zh-TW';
-
-  @override
-  void dispose() {
-    _nameCtrl.dispose();
-    _nicknameCtrl.dispose();
-    _healthCtrl.dispose();
-    _familyCtrl.dispose();
-    super.dispose();
-  }
-
-  /// 一行一筆，去掉空白行。
-  static List<String> _lines(String raw) => [
-        for (final l in raw.split('\n'))
-          if (l.trim().isNotEmpty) l.trim(),
-      ];
-
-  /// 「關係,姓名,備註」→ [FamilyMember]。關係與姓名缺一不可，備註選填。
-  ///
-  /// 分隔符同時接受半形與全形逗號：照護者在手機上打中文時輸入法給的是全形，
-  /// 只認半形的話會整行被當成關係、姓名變空的。
-  static List<FamilyMember> _parseFamily(String raw) {
-    final out = <FamilyMember>[];
-    for (final line in _lines(raw)) {
-      final parts = line.split(RegExp('[,，]')).map((p) => p.trim()).toList();
-      if (parts.length < 2 || parts[0].isEmpty || parts[1].isEmpty) continue;
-      out.add(FamilyMember(
-        relation: parts[0],
-        name: parts[1],
-        note: parts.length > 2 && parts[2].isNotEmpty ? parts[2] : null,
-      ));
-    }
-    return out;
-  }
-
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    Navigator.of(context).pop(_ElderDraft(
-      name: _nameCtrl.text.trim(),
-      nickname: _nicknameCtrl.text.trim(),
-      lang: _lang,
-      healthNotes: _lines(_healthCtrl.text),
-      family: _parseFamily(_familyCtrl.text),
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Padding(
-      padding:
-          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          child: Form(
-            key: _formKey,
-            autovalidateMode: AutovalidateMode.onUserInteraction,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(child: Text('新增長輩', style: text.titleMedium)),
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      tooltip: '關閉',
-                      icon: const Icon(Icons.close, color: AppColors.ink),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Text('姓名', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _nameCtrl,
-                  style: text.bodyLarge,
-                  decoration: _elderDecoration('例如：陳阿蘭'),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? '請填寫長輩姓名' : null,
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                Text('稱呼', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _nicknameCtrl,
-                  style: text.bodyLarge,
-                  decoration: _elderDecoration('例如：阿蘭嬤（AI 會這樣叫他）'),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                Text('說話的語言', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                Wrap(
-                  spacing: AppSpacing.sm,
-                  children: [
-                    for (final l in const [('zh-TW', '華語'), ('hak', '客語')])
-                      _ChoicePill(
-                        label: l.$2,
-                        selected: _lang == l.$1,
-                        onTap: () => setState(() => _lang = l.$1),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                // 建檔時送純字串陣列（api.md 相容舊契約），後端一律標成
-                // source=caregiver。之後單筆增刪走管理頁，那裡才分得出哪幾筆是
-                // 對話中 AI 補上的。
-                Text('健康狀況', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _healthCtrl,
-                  style: text.bodyLarge,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: _elderDecoration('一行一項\n例如：高血壓'),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                Text('家人', style: text.labelMedium),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _familyCtrl,
-                  style: text.bodyLarge,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: _elderDecoration('一行一位，用逗號分開\n例如：兒子,陳志明,在台北工作'),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: FilledButton(
-                    onPressed: _submit,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.accentText,
-                      foregroundColor: Colors.white,
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.all(AppRadius.field),
-                      ),
-                    ),
-                    child: Text('建立', style: text.labelLarge),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  InputDecoration _elderDecoration(String hint) => InputDecoration(
-        hintText: hint,
-        hintStyle: const TextStyle(color: AppColors.chevron),
-        filled: true,
-        fillColor: AppColors.card,
-        enabledBorder: const OutlineInputBorder(
-          borderRadius: BorderRadius.all(AppRadius.field),
-          borderSide: BorderSide(color: AppColors.border),
-        ),
-        focusedBorder: const OutlineInputBorder(
-          borderRadius: BorderRadius.all(AppRadius.field),
-          borderSide: BorderSide(color: AppColors.accent, width: 2),
-        ),
-      );
-}
-
 class _RoutineForm extends StatefulWidget {
   const _RoutineForm();
 

@@ -1,4 +1,5 @@
 {
+  "taxonomy_version": "uco-1.0.0",
   "version": "high-level-types-1.0.0",
   "description": "對外的高階事件類別，與 docs/api.md 的 EventType 及 daily_summaries.sections 一一對應。順序即為摘要呈現順序。",
   "default_type": "other",

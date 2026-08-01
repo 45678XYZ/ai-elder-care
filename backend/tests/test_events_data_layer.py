@@ -64,7 +64,6 @@ def make_event(db, **overrides):
         "ts": "2026-07-26T09:05:00+08:00",
         "type": "medication",
         "detail": "早餐後服用血壓藥一顆",
-        "concept_id": "UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication",
         "taxonomy_version": "uco-1.0.0",
     }
     payload.update(overrides)

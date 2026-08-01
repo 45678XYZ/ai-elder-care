@@ -1,4 +1,4 @@
-import 'package:ai_elder_care/shared/services/calendar_tear_store.dart';
+import 'package:e_hakka_care/shared/services/calendar_tear_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -70,7 +70,8 @@ void main() {
         CalendarTearStore.dateKey(DateTime(2026, 7, 8)).compareTo('2026-07-09'),
         lessThan(0));
     expect(
-        CalendarTearStore.dateKey(DateTime(2026, 12, 1)).compareTo('2026-07-09'),
+        CalendarTearStore.dateKey(DateTime(2026, 12, 1))
+            .compareTo('2026-07-09'),
         greaterThan(0));
   });
 

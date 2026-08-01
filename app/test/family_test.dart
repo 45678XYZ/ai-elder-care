@@ -1,15 +1,15 @@
-import 'package:ai_elder_care/caregiver/screens/elders_screen.dart';
-import 'package:ai_elder_care/shared/models/elder.dart';
-import 'package:ai_elder_care/shared/services/care_repository.dart';
-import 'package:ai_elder_care/shared/services/demo_repository.dart';
-import 'package:ai_elder_care/shared/services/session_store.dart';
+import 'package:e_hakka_care/caregiver/screens/elders_screen.dart';
+import 'package:e_hakka_care/shared/models/elder.dart';
+import 'package:e_hakka_care/shared/services/care_repository.dart';
+import 'package:e_hakka_care/shared/services/demo_repository.dart';
+import 'package:e_hakka_care/shared/services/session_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 家屬的增刪（`PATCH /elders/{id}` 的 `family`）。
 ///
-/// 原本只有「新增長輩」表單那一次填得到，建完就再也改不了。
+/// 原本只有建立長輩的那一次填得到，建完就再也改不了。
 ///
 /// 與健康狀況不同的是這裡走整份取代就夠——`update_elder_profile` 沒有寫 family
 /// 的參數，這個欄位只有照護者在改，沒有跟 AI 互相覆蓋的問題。

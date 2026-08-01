@@ -46,7 +46,7 @@ module "pre_token" {
   function_name = "${var.project_name}-pre-token-trigger"
   description   = "Cognito pre-token-generation trigger"
   handler       = "pre_token_generation.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
 
   create_role = false
   lambda_role = aws_iam_role.pre_token.arn
@@ -94,8 +94,28 @@ resource "aws_iam_role" "lambda_backend_role" {
 
 # --- 生活記錄（Module B）批次萃取 ---
 #
-# 多支 Lambda 共用同一個部署包來源（backend/src + backend/requirements.txt），
+# 多支 Lambda 共用同一個部署包（backend/src + backend/requirements.txt），
 # 差別只在 handler 與環境變數。
+#
+# 打包集中在 module.backend_package 一支（create_function = false），13 支函數改用
+# create_package = false + s3_existing_package 指向它產出的同一個 S3 物件。
+#
+# 這樣寫的兩個理由：
+#
+# 1. 沒有競爭。共用來源代表 13 支算出來的 zip 檔名完全相同，而 package.py 只有「檔案已
+#    存在就重用」這一層保護，沒有鎖。各自打包時，預設 parallelism=10 會讓十幾個容器同時
+#    發現檔案不存在、同時跑 pip：每個各下載約 74 MB 把網路塞爆 → pip 開始
+#    Connection refused → 回頭試舊版本讓請求量再翻倍 → ResolutionImpossible；僥倖裝完的
+#    那個還會死在 os.utime → FileNotFoundError，因為別的 process 正在寫同一個檔。
+#    只有一支在打包就無從競爭，`-parallelism=1` 不再是必要的。
+#
+# 2. 只上傳一次。各自打包時 13 個模組各有自己的 aws_s3_object，而 key 是內容雜湊，
+#    於是同一份 74 MB 被上傳 13 次去覆蓋同一個物件——每次 apply 白傳約 890 MB。
+#
+# 包本身仍然是「全部依賴給全部函數」：av + numpy + soundfile 約 147 MB 只有
+# canonical_audio.py 與 extraction/dedup.py 會 import，其餘 10 支扛著它們卻從不使用。
+# 要再快就得依函數拆 requirements，或把重依賴移進 Lambda Layer；拆錯的代價是某支上線
+# 才 ImportError，因此沒有一併做。
 
 locals {
   # 部署包來源：自動將 backend/src 配至 zip 內的 src/，並由 pip_requirements 自動安裝依賴套件
@@ -117,9 +137,17 @@ locals {
 
   # 依賴一律在容器內安裝。社群模組的 package.py 是直接在本機跑 pip 且不帶 --platform，
   # 在 macOS 上會裝成 macosx wheel（requirements.txt 的 pydantic 帶編譯出來的 pydantic-core），
-  # zip 上去後 Lambda 冷啟就 ImportModuleError。映像檔沿用模組預設的
-  # public.ecr.aws/sam/build-python3.11，這裡只指定平台，讓誰打包結果都一樣。
+  # zip 上去後 Lambda 冷啟就 ImportModuleError。映像檔由模組依 runtime 推導
+  # （public.ecr.aws/sam/build-<runtime>），這裡只指定平台，讓誰打包結果都一樣。
   docker_build_options = ["--platform", "linux/arm64"]
+
+  # runtime 必須是 python3.12 以上，不能退回 3.11。
+  #
+  # python3.11 的執行環境是 Amazon Linux 2（glibc 2.26），但 requirements.txt 的
+  # av 只出 manylinux_2_28、numpy 只出 manylinux_2_27 的 arm64 wheel，兩個都裝不上去。
+  # pip 裝不了 wheel 會退回編譯原始碼，而 PyAV 需要 FFmpeg 的開發標頭檔，SAM 映像檔裡
+  # 沒有，打包會直接失敗（pkg-config could not find libraries ['avformat', ...]）。
+  # python3.13 的環境是 Amazon Linux 2023（glibc 2.34），三個套件都裝得起來。
 
   # 萃取行為一律由環境變數驅動，程式不寫死（見 docs/framework.md 後端環境變數）
   extraction_env = {
@@ -129,20 +157,12 @@ locals {
     TABLE_ROUTINES        = aws_dynamodb_table.routines.name
     TABLE_DAILY_SUMMARIES = aws_dynamodb_table.daily_summaries.name
 
-    BEDROCK_MODEL_ID            = var.bedrock_model_id
-    BEDROCK_CLASSIFIER_MODEL_ID = var.bedrock_classifier_model_id
-    BEDROCK_EXTRACTOR_MODEL_ID  = var.bedrock_extractor_model_id
-    BEDROCK_CHUNKER_MODEL_ID    = var.bedrock_chunker_model_id
+    BEDROCK_MODEL_ID           = var.bedrock_model_id
+    BEDROCK_EXTRACTOR_MODEL_ID = var.bedrock_extractor_model_id
 
-    EMBEDDING_MODEL_ID    = var.embedding_model_id
-    EMBEDDING_DIM         = tostring(var.embedding_dim)
-    CONCEPT_VECTOR_BUCKET = var.concept_vector_bucket
-    CONCEPT_VECTOR_INDEX  = var.concept_vector_index
-
-    EVENT_SLOT_MINUTES = tostring(var.event_slot_minutes)
-    CHUNKER_TYPE       = var.chunker_type
-    EXTRACTION_MODE    = var.extraction_mode
-    RAC_TOP_K          = tostring(var.rac_top_k)
+    EVENT_SLOT_MINUTES     = tostring(var.event_slot_minutes)
+    EXTRACTION_MODE        = var.extraction_mode
+    SEVEN_BATCH_CHAR_LIMIT = tostring(var.seven_batch_char_limit)
 
     BATCH_QUEUE_URL = aws_sqs_queue.batch.id
 
@@ -150,6 +170,42 @@ locals {
     METRICS_NAMESPACE = var.metrics_namespace
     METRICS_ENABLED   = "true"
   }
+
+  # 13 支函數共用的部署包位置。只傳 bucket 與 key：artifacts bucket 沒開 versioning，
+  # version_id 會是 null，而 s3_existing_package 宣告成 map(string)。模組取值走
+  # try(...version_id, null)，少這個鍵就是 null，行為一致且不必把 null 塞進 map。
+  #
+  # key 是內容雜湊，backend/ 一有異動就換一個值，函數因此看得到 s3_key 變更而更新程式碼——
+  # 不需要另外算 source_code_hash。
+  backend_package = {
+    bucket = module.backend_package.s3_object.bucket
+    key    = module.backend_package.s3_object.key
+  }
+}
+
+# 唯一實際執行 pip 與打包的地方；不建函數，只產出 zip 並上傳。
+module "backend_package" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
+  create_function = false
+  create_package  = true
+
+  # create_function = false 時模組不要求 runtime，但 package.py 是靠它決定用哪個 pip；
+  # 留空會讓 pip_requirements 默默降級成「把 requirements.txt 原樣塞進 zip」，依賴一個都
+  # 沒裝，部署照樣成功、等到函數冷啟才 ImportModuleError（agentcore.tf 踩過同一個坑）。
+  # 值必須與下面各函數的 runtime 一致：這裡決定 wheel 的 cp 標籤，那裡決定實際直譯器。
+  runtime = "python3.13"
+
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
 }
 
 resource "aws_iam_role" "extraction" {
@@ -202,8 +258,13 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["sns:Publish", "sns:Subscribe"]
+        Action   = ["sns:Publish", "sns:Subscribe", "sns:CreateTopic"]
         Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cognito-idp:AdminGetUser"]
+        Resource = aws_cognito_user_pool.accounts.arn
       },
       {
         Effect = "Allow"
@@ -217,12 +278,23 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
           "dynamodb:BatchGetItem",
           "dynamodb:BatchWriteItem"
         ]
+        # 每張表都要連 index ARN 一起放行：查 GSI 的權限不會由 base table ARN 涵蓋，
+        # 少了就會在 Query 當下被拒（tools 的 get_today_routines 走
+        # routine-versions-by-elder，正是踩到這個）。表本身沒有 GSI 時多這條也無害。
         Resource = [
           aws_dynamodb_table.elders.arn,
+          "${aws_dynamodb_table.elders.arn}/index/*",
+          aws_dynamodb_table.elder_accounts.arn,
           aws_dynamodb_table.conversations.arn,
+          "${aws_dynamodb_table.conversations.arn}/index/*",
           aws_dynamodb_table.events.arn,
+          "${aws_dynamodb_table.events.arn}/index/*",
           aws_dynamodb_table.daily_summaries.arn,
-          aws_dynamodb_table.routines.arn
+          "${aws_dynamodb_table.daily_summaries.arn}/index/*",
+          aws_dynamodb_table.routines.arn,
+          "${aws_dynamodb_table.routines.arn}/index/*",
+          aws_dynamodb_table.caregiver_lookup.arn,
+          "${aws_dynamodb_table.caregiver_lookup.arn}/index/*",
         ]
       }
     ]
@@ -245,19 +317,18 @@ module "chat" {
   function_name = "${var.project_name}-chat"
   description   = "POST /chat 對話進入點"
   handler       = "src.handlers.chat.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 28
   memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -296,19 +367,18 @@ module "tools" {
   function_name = "${var.project_name}-tools"
   description   = "對話大腦的工具箱"
   handler       = "src.handlers.tools.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 15
   memory_size   = 256
 
   create_role = false
   lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -319,6 +389,9 @@ module "tools" {
     TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
     TABLE_ROUTINES             = aws_dynamodb_table.routines.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+    CWA_API_KEY                = var.cwa_api_key
+    USER_POOL_ID               = aws_cognito_user_pool.accounts.id
+    SNS_TOPIC_PREFIX           = "${var.project_name}-elder-notify"
   }
 }
 
@@ -330,24 +403,25 @@ module "elders" {
   function_name = "${var.project_name}-elders"
   description   = "長者個人檔案與偏好 API"
   handler       = "src.handlers.elders.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 10
   memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = {
-    TABLE_ELDERS               = aws_dynamodb_table.elders.name
+    TABLE_ELDERS            = aws_dynamodb_table.elders.name
+    TABLE_CAREGIVER_LOOKUP  = aws_dynamodb_table.caregiver_lookup.name
+    ELDER_ACCOUNTS_TABLE       = aws_dynamodb_table.elder_accounts.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
   }
 }
@@ -364,18 +438,17 @@ module "post_confirmation" {
   function_name = "${var.project_name}-post-confirmation"
   description   = "Cognito post-confirmation trigger：註冊完成後綁定 SNS"
   handler       = "src.handlers.post_confirmation.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 10
 
   create_role = false
   lambda_role = aws_iam_role.lambda_backend_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -402,10 +475,6 @@ resource "aws_iam_role_policy_attachment" "extraction_bedrock" {
   policy_arn = aws_iam_policy.bedrock_invoke.arn
 }
 
-resource "aws_iam_role_policy_attachment" "extraction_vectors" {
-  role       = aws_iam_role.extraction.name
-  policy_arn = aws_iam_policy.concept_vector_read.arn
-}
 
 # 最小權限：只給實際會碰到的表與動作。
 data "aws_iam_policy_document" "extraction_data" {
@@ -522,19 +591,18 @@ module "batch_extractor" {
   function_name = "${var.project_name}-batch-extractor"
   description   = "Module B 生活記錄批次萃取器"
   handler       = "src.handlers.batch_extractor.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = var.batch_lambda_timeout
   memory_size   = 1024
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -558,19 +626,18 @@ module "session_closer" {
   function_name = "${var.project_name}-session-closer"
   description   = "Session 關閉與離線 materialization 觸發器"
   handler       = "src.handlers.session_closer.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 60
   memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -586,19 +653,20 @@ module "dlq_reconciler" {
   function_name = "${var.project_name}-dlq-reconciler"
   description   = "DLQ 訊息對賬與告警器"
   handler       = "src.handlers.dlq_reconciler.handler"
-  runtime       = "python3.11"
-  timeout       = 60
-  memory_size   = 512
+  runtime       = "python3.13"
+  # 與 aws_sqs_queue.batch_dlq 的 visibility timeout 綁在同一個變數：兩者一旦脫鉤，
+  # CreateEventSourceMapping 會因為 visibility < timeout 被拒
+  timeout     = var.dlq_reconciler_timeout
+  memory_size = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -621,19 +689,18 @@ module "api_events" {
   function_name = "${var.project_name}-api-events"
   description   = "照護者端事件時間軸 API"
   handler       = "src.handlers.events.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 15
   memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -666,19 +733,18 @@ module "api_summaries" {
   function_name = "${var.project_name}-api-summaries"
   description   = "照護者端每日摘要 API"
   handler       = "src.handlers.summaries.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = var.summary_lambda_timeout
   memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -693,19 +759,18 @@ module "summary_generator" {
   function_name = "${var.project_name}-summary-generator"
   description   = "排程每日摘要生成器（nightly + backfill）"
   handler       = "src.handlers.summary_generator.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = var.summary_generator_timeout
   memory_size   = 1024
 
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -720,7 +785,7 @@ module "api_stats" {
   function_name = "${var.project_name}-api-stats"
   description   = "照護者端互動與行程統計 API"
   handler       = "src.handlers.stats.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   # 統計即時彙總最多一個月的 occurrence 與 completion event，比單頁列表查詢多幾次讀取
   timeout     = 30
   memory_size = 512
@@ -728,12 +793,11 @@ module "api_stats" {
   create_role = false
   lambda_role = aws_iam_role.extraction.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 
@@ -827,19 +891,18 @@ module "api_routines" {
   function_name = "${var.project_name}-api-routines"
   description   = "例行公事定義與當日行程 API"
   handler       = "src.handlers.routines.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.13"
   timeout       = 15
   memory_size   = 512
 
   create_role = false
   lambda_role = aws_iam_role.api_routines.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 

@@ -54,6 +54,8 @@ TABLE_CONVERSATIONS = os.environ.get("TABLE_CONVERSATIONS", "conversations")
 TABLE_EVENTS = os.environ.get("TABLE_EVENTS", "events")
 TABLE_DAILY_SUMMARIES = os.environ.get("TABLE_DAILY_SUMMARIES", "daily_summaries")
 TABLE_ROUTINES = os.environ.get("TABLE_ROUTINES", "routines")
+TABLE_CAREGIVER_LOOKUP = os.environ.get("TABLE_CAREGIVER_LOOKUP", "caregiver-lookup")
+TABLE_ELDER_ACCOUNTS = os.environ.get("ELDER_ACCOUNTS_TABLE", "elder_accounts")
 
 # 事件時間軸索引；events 的 Base table SK 是 event_id，時間範圍查詢一律走此 GSI
 EVENTS_BY_TIME_INDEX = "events-by-time"
@@ -80,7 +82,6 @@ EVENT_MATERIAL_FIELDS: tuple[str, ...] = (
     "canonical_event_key",
     "type",
     "detail",
-    "concept_id",
     "routine_id",
     "routine_date",
 )
@@ -357,6 +358,15 @@ def create_elder(elder_data: dict[str, Any]) -> dict[str, Any]:
         raise DBError(f"建立長者資料失敗: {e.response['Error']['Message']}")
 
 
+def bind_elder_account(sub: str, elder_id: str) -> None:
+    """寫入 elder_accounts 表（sub → elder_id），讓 pre-token-generation trigger 能注入 claim。"""
+    table = get_dynamodb_resource().Table(TABLE_ELDER_ACCOUNTS)
+    try:
+        table.put_item(Item={"sub": sub, "elder_id": elder_id})
+    except ClientError as e:
+        raise DBError(f"綁定長者帳號失敗: {e.response['Error']['Message']}")
+
+
 def update_elder(elder_id: str, patch_data: dict[str, Any]) -> dict[str, Any]:
     """更新長者資料（部分更新）。自動刷新 updated_at 時間戳記。"""
     table = get_dynamodb_resource().Table(TABLE_ELDERS)
@@ -417,6 +427,92 @@ def list_elders(caregiver_id: str = None) -> list[dict[str, Any]]:
     except ClientError as e:
         raise DBError(f"查詢長者列表失敗: {e.response['Error']['Message']}")
 
+
+
+# -----------------------------------------------------------------------------
+# Caregiver Lookup 表操作
+# -----------------------------------------------------------------------------
+
+
+def put_caregiver_lookup(short_id: str, sub: str, name: str) -> dict[str, Any]:
+    """寫入或覆寫照護者 lookup 記錄（cg_ 短 ID → sub）。"""
+    table = get_dynamodb_resource().Table(TABLE_CAREGIVER_LOOKUP)
+    now = datetime.now(TZ_TAIPEI).isoformat()
+    item = {"short_id": short_id, "sub": sub, "name": name, "created_at": now}
+    try:
+        table.put_item(Item=item)
+        return item
+    except ClientError as e:
+        raise DBError(f"寫入 caregiver lookup 失敗: {e.response['Error']['Message']}")
+
+
+def get_caregiver_by_short_id(short_id: str) -> dict[str, Any] | None:
+    """以 cg_ 短 ID 查詢照護者 sub 與 name。"""
+    table = get_dynamodb_resource().Table(TABLE_CAREGIVER_LOOKUP)
+    try:
+        resp = table.get_item(Key={"short_id": short_id}, ConsistentRead=True)
+        return resp.get("Item")
+    except ClientError as e:
+        raise DBError(f"查詢 caregiver lookup 失敗: {e.response['Error']['Message']}")
+
+
+def get_caregiver_by_sub(sub: str) -> dict[str, Any] | None:
+    """以 Cognito sub 透過 GSI 查詢照護者 lookup 記錄。"""
+    table = get_dynamodb_resource().Table(TABLE_CAREGIVER_LOOKUP)
+    try:
+        resp = table.query(
+            IndexName="by-sub",
+            KeyConditionExpression="sub = :s",
+            ExpressionAttributeValues={":s": sub},
+        )
+        items = resp.get("Items", [])
+        return items[0] if items else None
+    except ClientError as e:
+        raise DBError(f"查詢 caregiver by sub 失敗: {e.response['Error']['Message']}")
+
+
+def batch_get_caregivers_by_subs(subs: list[str]) -> dict[str, dict[str, Any]]:
+    """批次以 sub 查詢照護者 lookup（回傳 {sub: item} 映射）。"""
+    if not subs:
+        return {}
+    table = get_dynamodb_resource().Table(TABLE_CAREGIVER_LOOKUP)
+    result: dict[str, dict[str, Any]] = {}
+    try:
+        for sub in subs:
+            resp = table.query(
+                IndexName="by-sub",
+                KeyConditionExpression="sub = :s",
+                ExpressionAttributeValues={":s": sub},
+            )
+            items = resp.get("Items", [])
+            if items:
+                result[sub] = items[0]
+    except ClientError as e:
+        raise DBError(f"批次查詢 caregiver 失敗: {e.response['Error']['Message']}")
+    return result
+
+
+def link_caregiver_to_elder(elder_id: str, caregiver_sub: str) -> dict[str, Any]:
+    """原子式將照護者 sub 加入長者的 caregiver_ids（若已存在則不重複加）。"""
+    table = get_dynamodb_resource().Table(TABLE_ELDERS)
+    try:
+        resp = table.update_item(
+            Key={"elder_id": elder_id},
+            UpdateExpression="SET caregiver_ids = list_append(if_not_exists(caregiver_ids, :empty), :new_id), updated_at = :now",
+            ConditionExpression="NOT contains(caregiver_ids, :sub)",
+            ExpressionAttributeValues={
+                ":new_id": [caregiver_sub],
+                ":empty": [],
+                ":sub": caregiver_sub,
+                ":now": datetime.now(TZ_TAIPEI).isoformat(),
+            },
+            ReturnValues="ALL_NEW",
+        )
+        return convert_decimals(resp.get("Attributes", {}))
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return convert_decimals(get_elder(elder_id))
+        raise DBError(f"綁定照護者失敗: {e.response['Error']['Message']}")
 
 
 # -----------------------------------------------------------------------------
@@ -833,7 +929,7 @@ def list_routine_versions(routine_id: str) -> list[dict[str, Any]]:
     except ClientError as e:
         raise DBError(f"查詢例行公事版本失敗: {e.response['Error']['Message']}")
 
-    return convert_decimals(items)
+    return [i for i in convert_decimals(items) if int(i.get("version", -1)) != TOMBSTONE_VERSION]
 
 
 def get_routine_version(routine_id: str, version: int) -> dict[str, Any] | None:
@@ -912,6 +1008,55 @@ def replace_current_routine_version(
         if code in ("TransactionCanceledException", "ConditionalCheckFailedException"):
             raise ConditionFailedError("例行公事已被其他請求改版")
         raise DBError(f"更新例行公事失敗: {e.response['Error']['Message']}")
+
+
+TOMBSTONE_VERSION = 0
+TOMBSTONE_TTL_DAYS = 7
+
+
+def delete_routine(routine_id: str, *, deleted_by: str, client_request_id: str) -> dict[str, Any]:
+    """刪除 routine 的所有正式版本並寫入 tombstone。
+
+    事件表中的 routine_completion 記錄不受影響：那些是歷史事實。
+    tombstone 保留 7 天供冪等重播，之後由 DynamoDB TTL 自動清除。
+    回傳 tombstone item。
+    """
+    import time
+
+    versions = list_routine_versions(routine_id)
+
+    table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+    with table.batch_writer() as batch:
+        for v in versions:
+            if int(v["version"]) == TOMBSTONE_VERSION:
+                continue
+            batch.delete_item(Key={"routine_id": routine_id, "version": int(v["version"])})
+
+    tombstone = {
+        "routine_id": routine_id,
+        "version": TOMBSTONE_VERSION,
+        "deleted": True,
+        "deleted_by": deleted_by,
+        "client_request_id": client_request_id,
+        "deleted_at": int(time.time()),
+        "ttl": int(time.time()) + TOMBSTONE_TTL_DAYS * 86400,
+    }
+    table.put_item(Item=tombstone)
+    return tombstone
+
+
+def get_routine_tombstone(routine_id: str) -> dict[str, Any] | None:
+    """取得 routine 的 tombstone（version=0），不存在則回 None。"""
+    table = get_dynamodb_resource().Table(TABLE_ROUTINES)
+    try:
+        resp = table.get_item(
+            Key={"routine_id": routine_id, "version": TOMBSTONE_VERSION},
+            ConsistentRead=True,
+        )
+        item = resp.get("Item")
+        return convert_decimals(item) if item else None
+    except ClientError as e:
+        raise DBError(f"讀取 routine tombstone 失敗: {e.response['Error']['Message']}")
 
 
 def list_current_routines(

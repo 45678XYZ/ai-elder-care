@@ -6,7 +6,7 @@
    - 相同 Key 之事件透過 `merge_events` 合併，保留屬性最完整者，並將對話證據（evidence）取聯集
 
 2. 第二階段（語義相似度去重 embedding similarity fallback）：
-   - 針對同 Slot、同 Subject、同 `concept_id` 但謂語文字不同的事件進行二次收斂
+   - 針對同 Slot、同 Subject、同 `type` 但謂語文字不同的事件進行二次收斂
    - 透過 embedding cosine similarity（門檻 MERGE_SIM_THRESHOLD = 0.75）判定語義等價
    - 取代舊版的 alias-based 去重，支援開放世界謂語 (Open-World Predicate)
 
@@ -99,17 +99,17 @@ def deduplicate(
             by_key[event.canonical_event_key] = merge_events(existing, event)
             key_merged += 1
 
-    # 第二階段：同 slot／subject／concept 但謂語文字不同者，以 embedding similarity 判定是否合併
+    # 第二階段：同 slot／subject／type 但謂語文字不同者，以 embedding similarity 判定是否合併
     alias_merged = 0
     grouped: dict[tuple[str, str, str], list[CanonicalEvent]] = {}
     for event in by_key.values():
         date_part, slot_part, *_ = event.canonical_event_key.split("#")
-        grouped.setdefault((f"{date_part}#{slot_part}", event.subject, event.concept_id), []).append(
+        grouped.setdefault((f"{date_part}#{slot_part}", event.subject, event.type), []).append(
             event
         )
 
     merged: list[CanonicalEvent] = []
-    for (slot_key, subject, concept_id), group in grouped.items():
+    for (slot_key, subject, type_id), group in grouped.items():
         if len(group) == 1:
             merged.append(group[0])
             continue
@@ -148,7 +148,7 @@ def _embedding_merge_group(
     embedder,
     slot_minutes: int,
 ) -> tuple[list[CanonicalEvent], int]:
-    """在同 (slot, subject, concept_id) 群組內，以 embedding cosine similarity 合併語義相近的事件。
+    """在同 (slot, subject, type) 群組內，以 embedding cosine similarity 合併語義相近的事件。
 
     使用貪婪聚類 (greedy clustering) 策略：
     1. 按資料完整度由高至低排序（最完整者作為各聚類的代表）
@@ -199,11 +199,11 @@ def _embedding_merge_group(
 
         if best_sim >= MERGE_SIM_THRESHOLD and best_idx >= 0:
             logger.info(
-                "語義去重合併：'%s' ↔ '%s' (sim=%.3f, concept=%s)",
+                "語義去重合併：'%s' ↔ '%s' (sim=%.3f, type=%s)",
                 event.predicate,
                 cluster_preds[best_idx],
                 best_sim,
-                event.concept_id,
+                event.type,
             )
             clusters[best_idx] = merge_events(clusters[best_idx], event)
             merge_count += 1

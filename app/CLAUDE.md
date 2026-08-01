@@ -1,4 +1,4 @@
-# ai-elder-care — Flutter App
+# 客照e點通（e-Hakka Care）— Flutter App
 
 單一 App，登入後依 Cognito 角色切換：**長者模式**（`lib/elder/`，語音為主）／**照護者模式**（`lib/caregiver/`，資料管理）。共用服務在 `lib/shared/`。
 
@@ -10,6 +10,7 @@
 - 狀態管理：目前無框架（`StatefulWidget`）；引入前先確認全隊一致
 - 語音：裝置端 ASR `speech_to_text`、TTS `flutter_tts`；正式 `/chat` 回傳音檔用 `just_audio`，客語錄音走 `record`
 - 網路：`http`（`lib/shared/services/api_client.dart`）
+- 登入：`amazon_cognito_identity_dart_2`（SRP，純 Dart 不動原生設定）；沒帶 `--dart-define=COGNITO_USER_POOL_ID` 時自動退回 demo 假帳號
 
 ## 設計方向：暖紙手帳
 
@@ -31,7 +32,10 @@
 
 ### 全域
 - **目標裝置是 Android 手機**，不為平板／桌面寬度另做版面。畫面本身是彈性的（Flex/Expanded），但寬螢幕下只會被拉開而非重新排版，這是接受的取捨。`web` build 僅供截圖與快速預覽用，不是出貨目標
-- **介面單一語言（華語），不做語言切換 UI、不做 i18n**。`lang_preference`（`zh-TW`｜`hak`）只決定**語音**走哪條路（客語裝置端無法辨識，改錄音送後端），與畫面文字無關；且**只能在照護者「管理」頁更改**，長者端不提供切換
+- **介面目前單一語言（華語），尚未做 i18n**。`lang_preference`（`zh-TW`｜`hak`）目前只決定**語音**走哪條路（客語裝置端無法辨識，改錄音送後端），與畫面文字無關
+- **語音語言只有長者端能切**（今日頁最底下的 `ElderLangToggle`，標籤「中文／客語」）。照護者「管理」頁那顆已移除——兩邊都能改的話，長者那份寫本機、照護者那份寫後端，同時存在就會互相覆蓋，而長輩那份必須贏（實際在說話的是他）。唯一例外是首次設定（`setup_screen`），那時長輩還沒有裝置。代價是長者那份只在本機（`PATCH /elders/{id}` 是照護者專屬端點），換裝置會退回首次設定的值
+- **畫面文字可切一般漢字／客語漢字**（今日頁的 `ElderTextLangToggle`）。對照表在 `lib/shared/i18n/strings.dart`，畫面文字一律經過 `t()`／`t1()`／`t2()`，**key 是華語原文**（改文案要同步改 key）。缺譯自動退回華語，不會變空白。**對話內容不經過 `t()`**——後端回什麼就顯示什麼
+- **語音與文字是兩顆獨立的鈕，不可合併**。講客語的長輩不一定讀得懂客語漢字——有人講客語但只認得一般漢字，綁在同一個開關等於逼他在「聽不懂語音」和「看不懂畫面」之間二選一。語音那顆寫「客語」（怎麼說），文字那顆寫「客語漢字」（怎麼寫）
 - 所有畫面須在 `textScaler: TextScaler.linear(2.0)` 下不 overflow（用 Flex/Expanded，勿寫死 px）
 - 狀態不可只靠顏色傳遞——必須搭配 icon 或文字
 - 對比度目標 WCAG AAA（7:1），非 AA

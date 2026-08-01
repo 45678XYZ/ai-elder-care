@@ -1,4 +1,4 @@
-"""印出分類體系的節點 → 高階類別對照表。
+"""印出分類體系的高階類別定義。
 
 用途是快速確認資產抽換或擴充後的映射結果，也是 Task 2 的驗收 demo。
 
@@ -7,7 +7,6 @@
 """
 
 import sys
-from collections import Counter
 
 from src.extraction.taxonomy import load_taxonomy
 
@@ -16,25 +15,13 @@ def main(argv: list[str]) -> int:
     taxonomy = load_taxonomy(argv[1] if len(argv) > 1 else None)
 
     print(f"taxonomy_version      : {taxonomy.taxonomy_version}")
-    print(f"ontology_version      : {taxonomy.ontology_version}")
     print(f"high_level_types      : {', '.join(taxonomy.type_ids)}")
     print(f"default_type          : {taxonomy.default_type}")
-    print(f"nodes / leaves        : {len(taxonomy.nodes)} / {len(taxonomy.leaf_ids())}")
     print()
 
-    counts: Counter[str] = Counter()
-    for concept_id in sorted(taxonomy.nodes):
-        event_type, matched = taxonomy.resolve_type(concept_id)
-        node = taxonomy.nodes[concept_id]
-        indent = "  " * node.level
-        via = "預設回退" if matched is None else ("直接登記" if matched == concept_id else f"繼承自 {matched}")
-        print(f"{event_type:<10} | {indent}{concept_id}（{node.display_name}）| {via}")
-        if node.is_leaf:
-            counts[event_type] += 1
-
-    print("\n葉節點分佈：")
-    for type_id in taxonomy.type_ids:
-        print(f"  {type_id:<10} {counts.get(type_id, 0)}")
+    print("高階類別：")
+    for high_level_type in taxonomy.types:
+        print(f"  {high_level_type.id:<12} {high_level_type.display_name:<8} | {high_level_type.description}")
     return 0
 
 

@@ -1,16 +1,16 @@
-import 'package:ai_elder_care/app_router.dart';
-import 'package:ai_elder_care/caregiver/screens/setup_screen.dart';
-import 'package:ai_elder_care/caregiver/screens/summaries_screen.dart';
-import 'package:ai_elder_care/elder/screens/today_screen.dart';
-import 'package:ai_elder_care/main.dart';
-import 'package:ai_elder_care/shared/screens/sign_in_screen.dart';
-import 'package:ai_elder_care/shared/screens/sign_up_screen.dart';
-import 'package:ai_elder_care/shared/screens/verify_email_screen.dart';
-import 'package:ai_elder_care/shared/services/auth_service.dart';
-import 'package:ai_elder_care/shared/services/demo_auth_backend.dart';
-import 'package:ai_elder_care/shared/services/session_store.dart';
-import 'package:ai_elder_care/shared/widgets/form_widgets.dart';
-import 'package:ai_elder_care/theme/app_theme.dart';
+import 'package:e_hakka_care/app_router.dart';
+import 'package:e_hakka_care/caregiver/screens/setup_screen.dart';
+import 'package:e_hakka_care/caregiver/screens/summaries_screen.dart';
+import 'package:e_hakka_care/elder/screens/today_screen.dart';
+import 'package:e_hakka_care/main.dart';
+import 'package:e_hakka_care/shared/screens/sign_in_screen.dart';
+import 'package:e_hakka_care/shared/screens/sign_up_screen.dart';
+import 'package:e_hakka_care/shared/screens/verify_email_screen.dart';
+import 'package:e_hakka_care/shared/services/auth_service.dart';
+import 'package:e_hakka_care/shared/services/demo_auth_backend.dart';
+import 'package:e_hakka_care/shared/services/session_store.dart';
+import 'package:e_hakka_care/shared/widgets/form_widgets.dart';
+import 'package:e_hakka_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,8 +56,14 @@ void main() {
   /// 足夠讓假後端的 Future 完成、redirect 重算並重畫。寫法同 auth_screens_test.dart，
   /// 只是 frame 數放寬——這裡是整個 App，換頁的轉場動畫（約 300ms）也要推完，
   /// 否則新頁還在滑入、舊頁還沒退場，點按會落在轉場中的圖層上而打不到按鈕。
+  ///
+  /// 幀數從 20 加到 40（1 秒 → 2 秒）是因為第一次登入時 `consumePendingSetup` 會
+  /// `await` 一次 `POST /elders`（長者自註冊綁定 sub→elder_id），demo 那條是兩段
+  /// 各 400ms 的 `Future.delayed` 串起來。推不完的話測試結束時計時器還掛著，
+  /// 會炸「A Timer is still pending even after the widget tree was disposed」——
+  /// 而那個訊息完全看不出來是這條路造成的。
   Future<void> settle(WidgetTester tester) async {
-    for (var i = 0; i < 20; i++) {
+    for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
   }
@@ -133,9 +139,15 @@ void main() {
   }
 
   /// 在初次設定頁填完必填欄位並送出。
+  ///
+  /// 三個必填：姓名、出生年、居住地區（稱呼是選填）。欄位順序即畫面順序，
+  /// 靠索引取用——加欄位時這裡要跟著改，那是刻意的：新增必填欄位卻沒有任何
+  /// 測試察覺，等於流程被擋住也沒人知道。
   Future<void> completeSetup(WidgetTester tester, String name) async {
-    await tester.enterText(
-        inScreen(SetupScreen, find.byType(TextField)).first, name);
+    final fields = inScreen(SetupScreen, find.byType(TextField));
+    await tester.enterText(fields.at(0), name); // 姓名
+    await tester.enterText(fields.at(2), '1948'); // 出生年
+    await tester.enterText(fields.at(3), '台北市大安區'); // 居住地區
     await tester.pump();
     await tester.tap(find.text('完成設定'));
     await settle(tester);
