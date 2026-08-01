@@ -185,6 +185,12 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
         Resource = "*"
       },
       {
+        # Amazon Transcribe Streaming 不支援資源層級 ARN 限制。
+        Effect   = "Allow"
+        Action   = ["transcribe:StartStreamTranscription"]
+        Resource = "*"
+      },
+      {
         Effect   = "Allow"
         Action   = ["s3:PutObject", "s3:GetObject"]
         Resource = "arn:aws:s3:::${var.project_name}-audio/*"
@@ -192,11 +198,6 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       {
         Effect   = "Allow"
         Action   = ["bedrock-agentcore:InvokeAgentRuntime", "bedrock:InvokeModel"]
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["sagemaker:InvokeEndpoint"]
         Resource = "*"
       },
       {
@@ -264,9 +265,13 @@ module "chat" {
     S3_AUDIO_BUCKET = "${var.project_name}-audio"
 
     # 對話大腦：AgentCore Runtime 以 ARN 定址、以 endpoint 名稱當 qualifier（見 agentcore.tf）
-    AGENTCORE_RUNTIME_ARN      = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
-    AGENTCORE_ENDPOINT_NAME    = aws_bedrockagentcore_agent_runtime_endpoint.live.name
-    SAGEMAKER_CE_ENDPOINT_NAME = ""
+    AGENTCORE_RUNTIME_ARN   = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
+    AGENTCORE_ENDPOINT_NAME = aws_bedrockagentcore_agent_runtime_endpoint.live.name
+
+    # ASR／TTS 的路由、核准與 endpoint 都由這兩份設定驅動（見 asr_lambda_config.tf、tts_lambda_config.tf）
+    ASR_CONFIG_JSON = local.asr_config_json
+    TTS_CONFIG_JSON = local.tts_config_json
+
     TABLE_ELDERS               = aws_dynamodb_table.elders.name
     TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
     TABLE_EVENTS               = aws_dynamodb_table.events.name
@@ -849,4 +854,3 @@ module "api_routines" {
     METRICS_ENABLED   = "true"
   }
 }
-

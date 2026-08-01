@@ -45,6 +45,7 @@ def test_elder_create_model_defaults_and_validation():
     ec = ElderCreate(name="陳阿蘭")
     assert ec.name == "陳阿蘭"
     assert ec.lang_preference == "zh-TW"
+    assert ec.hakka_dialect == "htia_sixian"
     assert ec.address_region is None
     assert ec.health_notes == []
     assert ec.family == []
@@ -57,6 +58,7 @@ def test_elder_create_model_defaults_and_validation():
         birth_year=1948,
         gender="female",
         lang_preference="hak",
+        hakka_dialect="htia_hailu",
         address_region="台北市大安區",
         health_notes=["高血壓"],
         family=[FamilyMember(relation="兒子", name="志明")],
@@ -64,6 +66,7 @@ def test_elder_create_model_defaults_and_validation():
         caregiver_ids=["cg_001"],
     )
     assert ec_full.lang_preference == "hak"
+    assert ec_full.hakka_dialect == "htia_hailu"
     assert ec_full.address_region == "台北市大安區"
     assert len(ec_full.family) == 1
     assert ec_full.family[0].name == "志明"
@@ -360,5 +363,4 @@ def test_daily_summary_models():
     assert "input_through_at" not in dumped
     assert "completeness_rank" not in dumped
     assert dumped["sections"]["diet"] == "三餐正常"
-
 

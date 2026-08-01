@@ -25,6 +25,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # 細分類節點（concept_id）由 extraction 的可抽換分類體系資產決定，不在此列舉。
 EventType = Literal["diet", "activity", "sleep", "medication", "wellbeing", "safety", "other"]
 
+HakkaDialect = Literal[
+    "htia_sixian",
+    "htia_hailu",
+    "htia_dapu",
+    "htia_raoping",
+    "htia_zhaoan",
+    "htia_nansixian",
+]
+
 # daily_summaries.sections 與 EventType 一一對應，順序即為呈現順序。
 SUMMARY_SECTION_KEYS: tuple[str, ...] = get_args(EventType)
 
@@ -100,6 +109,9 @@ class ElderCreate(BaseModel):
     birth_year: int | None = Field(default=None, description="出生年份，例如：1948")
     gender: Literal["male", "female", "other"] | None = Field(default=None, description="性別")
     lang_preference: Literal["zh-TW", "hak"] = Field(default="zh-TW", description="語言偏好（預設 zh-TW）")
+    hakka_dialect: HakkaDialect = Field(
+        default="htia_sixian", description="客語 ASR/TTS 共用腔調（預設四縣腔）"
+    )
     address_region: str | None = Field(default=None, description="居住區域，例如：台北市大安區")
     health_notes: list[HealthNote] = Field(default_factory=list, description="健康狀況/病史備註標籤")
     family: list[FamilyMember] = Field(default_factory=list, description="親友背景資訊")
@@ -119,6 +131,7 @@ class ElderUpdate(BaseModel):
     birth_year: int | None = Field(default=None, description="出生年份")
     gender: Literal["male", "female", "other"] | None = Field(default=None, description="性別")
     lang_preference: Literal["zh-TW", "hak"] | None = Field(default=None, description="語言偏好")
+    hakka_dialect: HakkaDialect | None = Field(default=None, description="客語 ASR/TTS 共用腔調")
     address_region: str | None = Field(default=None, description="居住區域")
     health_notes: list[HealthNote] | None = Field(default=None, description="健康狀況/病史備註標籤（整份取代）")
     family: list[FamilyMember] | None = Field(default=None, description="親友背景資訊")
@@ -139,6 +152,7 @@ class ElderResponse(BaseModel):
     birth_year: int | None = Field(default=None, description="出生年份")
     gender: str | None = Field(default=None, description="性別")
     lang_preference: str = Field(default="zh-TW", description="語言偏好")
+    hakka_dialect: HakkaDialect = Field(default="htia_sixian", description="客語 ASR/TTS 共用腔調")
     address_region: str | None = Field(default=None, description="居住區域")
     health_notes: list[HealthNote] = Field(default_factory=list, description="健康狀況備註")
     family: list[FamilyMember] = Field(default_factory=list, description="親友背景資訊")
@@ -232,6 +246,7 @@ class ConversationItem(BaseModel):
     routine_id: str | None = Field(default=None, description="關聯例行公事 ID")
 
     lang: Literal["zh-TW", "hak"] = Field(default="zh-TW", description="對話語言")
+    hakka_dialect: HakkaDialect | None = Field(default=None, description="本輪採用的 profile 客語腔調快照")
     input_type: Literal["text", "audio"] = Field(default="text", description="輸入類型 (文字 / 語音)")
 
     elder_transcript: str | None = Field(default=None, description="長者說的話 / 語音轉寫文字 (Elder)")

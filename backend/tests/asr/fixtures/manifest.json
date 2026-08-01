@@ -1,0 +1,79 @@
+{
+  "description": "ASR canonicalizer test fixtures - anonymous, safe synthetic data",
+  "fixtures": [
+    {
+      "id": "short_valid_wav",
+      "file": "short_valid.wav",
+      "format": "wav",
+      "description": "Short valid WAV, ~0.5s 440Hz sine wave at 16kHz mono",
+      "expected": "success",
+      "duration_ms_approx": 500
+    },
+    {
+      "id": "valid_m4a",
+      "file": "valid.m4a",
+      "format": "m4a",
+      "description": "Valid M4A/AAC, ~0.5s 440Hz sine wave at 16kHz mono",
+      "expected": "success",
+      "duration_ms_approx": 500
+    },
+    {
+      "id": "corrupt_wav",
+      "file": "corrupt.wav",
+      "format": "wav",
+      "description": "Corrupt WAV - valid RIFF/WAVE header but invalid audio data",
+      "expected": "invalid_audio"
+    },
+    {
+      "id": "mismatch_wav_as_m4a",
+      "file": "mismatch_wav_as_m4a.wav",
+      "declared_format": "m4a",
+      "actual_format": "wav",
+      "description": "WAV content declared as M4A - format/content mismatch",
+      "expected": "invalid_audio"
+    },
+    {
+      "id": "mismatch_m4a_as_wav",
+      "file": "mismatch_m4a_as_wav.m4a",
+      "declared_format": "wav",
+      "actual_format": "m4a",
+      "description": "M4A content declared as WAV - format/content mismatch",
+      "expected": "invalid_audio"
+    },
+    {
+      "id": "boundary_59999ms",
+      "file": "boundary_59999ms.wav",
+      "format": "wav",
+      "description": "Exactly 59.999s (959984 frames at 16kHz) - accepted boundary",
+      "expected": "success",
+      "duration_ms": 59999,
+      "frame_count": 959984,
+      "sample_rate": 16000
+    },
+    {
+      "id": "boundary_60000ms",
+      "file": "boundary_60000ms.wav",
+      "format": "wav",
+      "description": "Exactly 60.000s (960000 frames at 16kHz) - accepted boundary",
+      "expected": "success",
+      "duration_ms": 60000,
+      "frame_count": 960000,
+      "sample_rate": 16000
+    },
+    {
+      "id": "boundary_60001ms",
+      "file": "boundary_60001ms.wav",
+      "format": "wav",
+      "description": "Exactly 60.001s (960016 frames at 16kHz) - exceeds limit",
+      "expected": "audio_duration_exceeded",
+      "duration_ms": 60001,
+      "frame_count": 960016,
+      "sample_rate": 16000
+    }
+  ],
+  "safety_notes": [
+    "All fixtures are synthetically generated 440Hz sine waves.",
+    "No real elder data, PII, or copyrighted audio is used.",
+    "Source bytes are never passed to any provider."
+  ]
+}

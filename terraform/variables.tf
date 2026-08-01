@@ -8,6 +8,131 @@ variable "aws_region" {
   description = "部署區域"
   type        = string
   default     = "us-west-2"
+
+  validation {
+    condition     = contains(["us-east-1", "us-west-2"], var.aws_region)
+    error_message = "競賽環境只允許部署至 us-east-1 或 us-west-2。"
+  }
+}
+
+# --- ASR 實體模型端點（見 asr_models.tf）---
+# 預設不建立 GPU 資源；啟用前須備妥兩個模型 image 與 artifact。Formo 六腔 prompt
+# 由 Terraform 固定建立，不接受單一可變 prompt 參數。
+
+variable "asr_enable_endpoints" {
+  description = "是否建立 ASR 推論端點。預設關閉，避免未驗證的模型產生 GPU 費用"
+  type        = bool
+  default     = false
+}
+
+variable "asr_model_artifact_bucket" {
+  description = "存放 ASR 模型 artifact（model.tar.gz）的 S3 bucket 名稱"
+  type        = string
+  default     = ""
+}
+
+variable "asr_ce_image_uri" {
+  description = "Taiwan-Tongues-ASR-CE 推論容器的 ECR image URI"
+  type        = string
+  default     = ""
+}
+
+variable "asr_ce_model_data_url" {
+  description = "Taiwan-Tongues-ASR-CE 模型 artifact 的 S3 URI"
+  type        = string
+  default     = ""
+}
+
+variable "asr_formo_image_uri" {
+  description = "FormoSpeech Whisper-v3 推論容器的 ECR image URI"
+  type        = string
+  default     = ""
+}
+
+variable "asr_formo_model_data_url" {
+  description = "FormoSpeech Whisper-v3 模型 artifact 的 S3 URI"
+  type        = string
+  default     = ""
+}
+
+# --- TTS 遠端模型端點（見 tts_models.tf）---
+
+variable "tts_model_artifact_bucket" {
+  description = "存放 TTS model.tar.gz 的 S3 bucket 名稱"
+  type        = string
+  default     = ""
+}
+
+variable "tts_enable_omnivoice_endpoint" {
+  description = "是否建立 OmniVoice 客語六腔 TTS endpoint"
+  type        = bool
+  default     = false
+}
+
+variable "tts_omnivoice_image_uri" {
+  description = "OmniVoice 推論容器 ECR image URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_omnivoice_model_data_url" {
+  description = "OmniVoice model artifact S3 URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_omnivoice_approved" {
+  description = "OmniVoice 的授權、存取、容量、延遲與 staging gate 是否全部核准"
+  type        = bool
+  default     = false
+}
+
+variable "tts_enable_voxhakka_endpoint" {
+  description = "是否建立 VoxHakka 五腔備援 endpoint（不支援南四縣）"
+  type        = bool
+  default     = false
+}
+
+variable "tts_voxhakka_image_uri" {
+  description = "VoxHakka 推論容器 ECR image URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_voxhakka_model_data_url" {
+  description = "VoxHakka model artifact S3 URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_voxhakka_approved" {
+  description = "VoxHakka 的授權、存取、容量、延遲與 staging gate 是否全部核准"
+  type        = bool
+  default     = false
+}
+
+variable "tts_enable_breezyvoice_endpoint" {
+  description = "是否建立台灣華語 BreezyVoice endpoint；預設關閉，須先做品質與 runtime 驗證"
+  type        = bool
+  default     = false
+}
+
+variable "tts_breezyvoice_image_uri" {
+  description = "BreezyVoice 推論容器 ECR image URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_breezyvoice_model_data_url" {
+  description = "BreezyVoice model artifact S3 URI"
+  type        = string
+  default     = ""
+}
+
+variable "tts_breezyvoice_approved" {
+  description = "BreezyVoice 的授權、容量、延遲與 staging gate 是否全部核准"
+  type        = bool
+  default     = false
 }
 
 # --- RAG（Bedrock Knowledge Base）---

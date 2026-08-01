@@ -649,7 +649,6 @@ resource "aws_lambda_permission" "close_session" {
   source_arn    = "${aws_api_gateway_rest_api.api.execution_arn}/*/POST/chat/sessions/*/close"
 }
 
-
 # =============================================================================
 # API Gateway Deployment 及 Stage (v1)
 # =============================================================================
