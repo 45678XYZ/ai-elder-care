@@ -1,0 +1,3 @@
+# serving 層額外依賴；推論本身的套件由 BreezyVoice 的 requirements.txt 決定。
+# fastapi 已由上游釘在 0.111.0，這裡只補它沒帶的 ASGI server。
+uvicorn==0.30.1

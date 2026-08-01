@@ -1,0 +1,8 @@
+# 推論與 serving 依賴。torch 走 cu121 wheel，與 Dockerfile 的 CUDA 12.1 基底相符。
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.4.1
+transformers==4.44.2
+accelerate==0.34.2
+numpy>=1.26,<2
+fastapi==0.115.6
+uvicorn==0.30.1

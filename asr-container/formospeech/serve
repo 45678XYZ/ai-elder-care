@@ -1,0 +1,10 @@
+#!/bin/bash
+# SageMaker 以 `docker run <image> serve` 啟動推論容器，固定走 8080 埠。
+set -euo pipefail
+
+# 單一 worker：一張 GPU 上只放得下一份 whisper-large-v3，多 worker 會把顯存吃爆。
+exec python3 -m uvicorn app.server:app \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --workers 1 \
+  --log-level info
