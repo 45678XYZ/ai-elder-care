@@ -41,8 +41,12 @@ class _SummariesScreenState extends State<SummariesScreen> {
 
   Future<ApiPage<DailySummary>> _fetch() async {
     await AppSession.instance.ensureEldersLoaded();
-    return CareRepo.instance
-        .summaries(elderId: AppSession.instance.selectedElderId!);
+    final elderId = AppSession.instance.selectedElderId;
+    // 還沒綁定任何長輩就沒有摘要可查。原本是 `selectedElderId!`，null 時丟
+    // Null check operator，整頁變成「載入失敗」而重試永遠不會成功——
+    // 剛註冊的照護者第一眼看到的就是那個。詳見 stats_screen 的同名說明。
+    if (elderId == null) return const ApiPage(items: []);
+    return CareRepo.instance.summaries(elderId: elderId);
   }
 
   void _reload() => setState(_load);
@@ -52,10 +56,20 @@ class _SummariesScreenState extends State<SummariesScreen> {
   /// 生成完重拉列表而不是直接把回傳的那筆塞進畫面：`POST /summaries/generate` 回的是
   /// 單一物件，而這一頁顯示的是最近幾天的列表，重拉才能保證兩者一致。
   Future<void> _generate() async {
+    // 沒有長輩就沒有東西可生成。不靜靜地什麼都不做——按了沒反應會讓人一直按。
+    final elderId = AppSession.instance.selectedElderId;
+    if (elderId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: AppColors.barDark,
+          content: Text('還沒有綁定的長輩', style: TextStyle(color: AppColors.onDark)),
+        ),
+      );
+      return;
+    }
     setState(() => _generating = true);
     try {
-      await CareRepo.instance
-          .generateSummary(elderId: AppSession.instance.selectedElderId!);
+      await CareRepo.instance.generateSummary(elderId: elderId);
       if (!mounted) return;
       _reload();
       ScaffoldMessenger.of(context).showSnackBar(

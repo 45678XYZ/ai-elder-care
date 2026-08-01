@@ -85,16 +85,11 @@ module "daily_digest" {
   create_role = false
   lambda_role = aws_iam_role.daily_digest_role.arn
 
-  source_path   = local.backend_source_path
-  artifacts_dir = "${path.module}/build"
+  # 包由 module.backend_package 統一產出（見本檔上方說明），這裡只指向它
+  create_package      = false
+  s3_existing_package = local.backend_package
 
-  store_on_s3 = true
-  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
-  s3_prefix   = "backend/"
-
-  architectures             = local.lambda_architectures
-  build_in_docker           = true
-  docker_additional_options = local.docker_build_options
+  architectures = local.lambda_architectures
 
   cloudwatch_logs_retention_in_days = 30
 

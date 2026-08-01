@@ -343,8 +343,19 @@ class ApiClient {
   }
 
   /// `DELETE /routines/{id}` — 永久刪除例行公事（照護者端）。
-  Future<void> deleteRoutine(String routineId) async {
-    await _request('DELETE', '/routines/$routineId');
+  ///
+  /// [clientRequestId] **必填，且放 query 不放 body**（api.md）。沒帶的話後端回
+  /// 400 `MISSING_REQUEST_ID`。後端刪除時留一個 7 天 TTL 的 tombstone：同一個 id
+  /// 重送讀 tombstone 回 200，換一個 id 打已刪除的則回 409 `IDEMPOTENCY_CONFLICT`
+  /// ——所以**重試一定要沿用同一個值**，不能每次現產一個新的。
+  ///
+  /// 回應是 `{"deleted": true, "routine_id": ...}`，不是 routine 物件，所以沒有回傳值。
+  Future<void> deleteRoutine(
+    String routineId, {
+    required String clientRequestId,
+  }) async {
+    await _request('DELETE', '/routines/$routineId',
+        query: {'client_request_id': clientRequestId});
   }
 
   /// `POST /routines/{id}/complete` — 手動確認完成（兩端）。

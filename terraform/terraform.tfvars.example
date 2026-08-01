@@ -1,0 +1,18 @@
+# 本機變數範本。複製成 terraform.tfvars 後填入實際值：
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars 被 .gitignore 排除，不會進版控（見 .gitignore 的 *.tfvars）。
+#
+# ⚠️ 這裡列的每一個變數都有「空字串」預設值，少填不會報錯——terraform 會安靜地把線上
+# 既有的值覆蓋成空的。也就是說忘了填的代價不是 apply 失敗，而是某個功能在 demo 當下
+# 才發現壞掉。apply 前請確認 plan 沒有把這些環境變數改成 ""。
+
+# 中央氣象署開放資料 API 授權碼（https://opendata.cwa.gov.tw/）。
+# tools Lambda 的 get_weather_forecast 用它查天氣；空值會讓那個工具失效。
+#
+# 已經部署過的話，現行值可以直接從線上取回：
+#   aws lambda get-function-configuration \
+#     --function-name e-hakka-care-tools --region us-west-2 \
+#     --query 'Environment.Variables.CWA_API_KEY' --output text
+cwa_api_key = "CWA-請填入實際授權碼"

@@ -39,8 +39,19 @@ class _StatsScreenState extends State<StatsScreen> {
 
   Future<Stats> _fetch() async {
     await AppSession.instance.ensureEldersLoaded();
-    return CareRepo.instance
-        .stats(elderId: AppSession.instance.selectedElderId!, days: 7);
+    final elderId = AppSession.instance.selectedElderId;
+    // 還沒綁定任何長輩——剛註冊的照護者必然是這個狀態。這裡原本是 `selectedElderId!`，
+    // null 時當場丟 Null check operator，整頁變成「載入失敗」加一顆重試鈕，
+    // 而重試永遠不會成功。「還沒有長輩」是正常狀態不是錯誤，回一份空統計讓畫面照常畫。
+    // 摘要、時間軸、管理頁都踩過同一個坑。
+    if (elderId == null) {
+      return const Stats(
+        elderId: '',
+        today: StatsToday(),
+        period: StatsPeriod(),
+      );
+    }
+    return CareRepo.instance.stats(elderId: elderId, days: 7);
   }
 
   void _reload() => setState(_load);

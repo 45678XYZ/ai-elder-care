@@ -640,7 +640,7 @@ def test_handle_get_weather_forecast_success(monkeypatch):
 
     monkeypatch.setattr(
         "urllib.request.urlopen",
-        lambda req, timeout=None: MockResponse()
+        lambda req, timeout=None, context=None: MockResponse()
     )
     monkeypatch.setattr(
         db, "get_elder",
@@ -698,7 +698,7 @@ def test_handle_get_weather_forecast_with_explicit_location(monkeypatch):
 
     monkeypatch.setattr(
         "urllib.request.urlopen",
-        lambda req, timeout=None: MockResponse()
+        lambda req, timeout=None, context=None: MockResponse()
     )
 
     res = tools.handle_get_weather_forecast({
@@ -710,6 +710,47 @@ def test_handle_get_weather_forecast_with_explicit_location(monkeypatch):
     assert res["forecast"][0]["weather"] == "晴時多雲"
 
 
+def test_handle_get_weather_forecast_relaxes_x509_strict(monkeypatch):
+    """送出的 TLS context 必須解除 VERIFY_X509_STRICT，但保留其餘驗證。
+
+    python3.13 起這個 flag 預設開啟，會要求 CA 憑證具備 Subject Key Identifier；
+    氣象署的 TWCA 憑證鏈沒有，握手因此被拒（Missing Subject Key Identifier），
+    整支工具在正式環境靜默失效。這裡直接檢查旗標，是因為那個錯誤只在真實握手時
+    才會出現，mock 掉 urlopen 的測試本來就看不到——僅斷言「有回資料」擋不住回歸。
+    """
+    import ssl as ssl_mod
+
+    monkeypatch.setattr(tools, "_CWA_API_KEY", "TEST-KEY-123")
+    monkeypatch.setattr(
+        db, "get_elder",
+        lambda eid: {"elder_id": eid, "address_region": "台北市"}
+    )
+
+    captured = {}
+
+    class MockResponse:
+        def read(self):
+            return b'{"records": {"location": []}}'
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    def capture(req, timeout=None, context=None):
+        captured["context"] = context
+        return MockResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", capture)
+    tools.handle_get_weather_forecast({"elder_id": "eld_001"})
+
+    ctx = captured["context"]
+    assert ctx is not None, "必須顯式帶 context，否則會用到 3.13 的嚴格預設值"
+    assert not (ctx.verify_flags & ssl_mod.VERIFY_X509_STRICT)
+    # 只鬆綁格式檢查，不是停用驗證：主機名稱與憑證鏈仍要驗
+    assert ctx.check_hostname is True
+    assert ctx.verify_mode == ssl_mod.CERT_REQUIRED
+
+
 def test_handle_get_weather_forecast_api_failure(monkeypatch):
     """氣象署 API 連線失敗時回傳 error。"""
     monkeypatch.setattr(tools, "_CWA_API_KEY", "TEST-KEY-123")
@@ -718,7 +759,7 @@ def test_handle_get_weather_forecast_api_failure(monkeypatch):
         lambda eid: {"elder_id": eid, "address_region": "台北市"}
     )
 
-    def mock_urlopen_fail(req, timeout=None):
+    def mock_urlopen_fail(req, timeout=None, context=None):
         raise ConnectionError("Network unreachable")
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen_fail)

@@ -134,67 +134,81 @@ class _TodayScreenState extends State<TodayScreen> {
     return Scaffold(
       backgroundColor: AppColors.app,
       body: SafeArea(
-        child: AsyncView<DailyRoutineView>(
-          future: _future,
-          onRetry: _reload,
-          elderMode: true,
-          isEmpty: (v) => v.items.isEmpty,
-          emptyIcon: Icons.event_available_outlined,
-          emptyText: t('今天沒有安排喔'),
-          builder: (context, view) {
-            final items = view.items.toList()
-              ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
+        // 頁面骨架（撕曆、語言鈕、連結家人、登出）一律畫出來，**不受行程載入結果影響**。
+        //
+        // 這裡原本是整頁交給 AsyncView、清單放在它的 builder 裡。後果是資料一旦不是
+        // 「載入成功且非空」，整頁就只剩一行字或一個錯誤框：剛註冊的長輩必然沒有行程，
+        // 於是他沒有登出鈕、沒有語言切換，連當下唯一該做的「連結家人」入口都不見——
+        // 那是一條走不出去的死路。後端出錯時同理，而那正是最需要能登出重來的時候。
+        //
+        // 所以只有「今天的安排」那一段跟著 future 走，其餘永遠在。
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            // 這一頁凡是含畫面文字的 widget 都**不能加 const**：const 會被正規化
+            // 成同一個實例，切換書寫語言後 setState 重建時 Flutter 比到
+            // identical(new, old) 就整棵跳過，字永遠停在建立時那一版。
+            // 撕曆裡有問候語（早安／恁早），登出鈕有「登出」，兩個都中招過。
+            // 純排版的 SizedBox 沒有文字，維持 const 沒問題。
+            // ignore: prefer_const_constructors
+            TearableCalendarSheet(child: const _CalendarSheet()),
+            const SizedBox(height: AppSpacing.xl),
+            SectionHeader(t('今天的安排'), elderMode: true),
+            const SizedBox(height: AppSpacing.md),
+            AsyncView<DailyRoutineView>(
+              future: _future,
+              onRetry: _reload,
+              elderMode: true,
+              isEmpty: (v) => v.items.isEmpty,
+              emptyIcon: Icons.event_available_outlined,
+              emptyText: t('今天沒有安排喔'),
+              builder: (context, view) {
+                final items = view.items.toList()
+                  ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
 
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              children: [
-                // 這一頁凡是含畫面文字的 widget 都**不能加 const**：const 會被正規化
-                // 成同一個實例，切換書寫語言後 setState 重建時 Flutter 比到
-                // identical(new, old) 就整棵跳過，字永遠停在建立時那一版。
-                // 撕曆裡有問候語（早安／恁早），登出鈕有「登出」，兩個都中招過。
-                // 純排版的 SizedBox 沒有文字，維持 const 沒問題。
-                // ignore: prefer_const_constructors
-                TearableCalendarSheet(child: const _CalendarSheet()),
-                const SizedBox(height: AppSpacing.xl),
-                SectionHeader(t('今天的安排'), elderMode: true),
-                const SizedBox(height: AppSpacing.md),
-                for (final o in items) ...[
-                  _RoutineRow(
-                    key: ValueKey(o.routineId),
-                    occurrence: o,
-                    status: _statusOf(o),
-                    onComplete: () => _complete(o),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                ],
-                // 還沒有家人連結時才出現，連上之後就消失——這是一次性的設定，
-                // 不該天天佔著長輩每日要看的畫面。放在最後，不跟「接下來要做什麼」搶注意力。
-                if (!AppSession.instance.hasLinkedCaregiver) ...[
-                  const SizedBox(height: AppSpacing.xl),
-                  _LinkCaregiverEntry(
-                    onTap: () async {
-                      await context.push('/elder/link');
-                      // 從連結頁回來要重畫：連上了這張卡就該不見。
-                      if (mounted) setState(() {});
-                    },
-                  ),
-                ],
-                // 以下兩個都放全頁最底下：長輩要滑過所有行程才遇得到，日常使用
-                // 踩不到。這一頁本來就是長者端唯一適合擺它們的地方——聊天室的
-                // 三個互動額度要留給麥克風、打字與分頁，不能再塞。
-                const SizedBox(height: AppSpacing.xl),
-                const ElderLangToggle(),
-                const SizedBox(height: AppSpacing.lg),
-                const ElderDialectToggle(),
-                const SizedBox(height: AppSpacing.lg),
-                const ElderTextLangToggle(),
-                const SizedBox(height: AppSpacing.xl),
-                // 不加 const，理由見本清單開頭。
-                // ignore: prefer_const_constructors
-                SignOutButton(elderMode: true),
-              ],
-            );
-          },
+                // Column 而非 ListView：它已經是外層 ListView 的一個孩子，
+                // 再巢一層可捲動的會拿到無界高度而爆版。
+                return Column(
+                  children: [
+                    for (final o in items) ...[
+                      _RoutineRow(
+                        key: ValueKey(o.routineId),
+                        occurrence: o,
+                        status: _statusOf(o),
+                        onComplete: () => _complete(o),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
+                  ],
+                );
+              },
+            ),
+            // 還沒有家人連結時才出現，連上之後就消失——這是一次性的設定，
+            // 不該天天佔著長輩每日要看的畫面。放在最後，不跟「接下來要做什麼」搶注意力。
+            if (!AppSession.instance.hasLinkedCaregiver) ...[
+              const SizedBox(height: AppSpacing.xl),
+              _LinkCaregiverEntry(
+                onTap: () async {
+                  await context.push('/elder/link');
+                  // 從連結頁回來要重畫：連上了這張卡就該不見。
+                  if (mounted) setState(() {});
+                },
+              ),
+            ],
+            // 以下兩個都放全頁最底下：長輩要滑過所有行程才遇得到，日常使用
+            // 踩不到。這一頁本來就是長者端唯一適合擺它們的地方——聊天室的
+            // 三個互動額度要留給麥克風、打字與分頁，不能再塞。
+            const SizedBox(height: AppSpacing.xl),
+            const ElderLangToggle(),
+            const SizedBox(height: AppSpacing.lg),
+            const ElderDialectToggle(),
+            const SizedBox(height: AppSpacing.lg),
+            const ElderTextLangToggle(),
+            const SizedBox(height: AppSpacing.xl),
+            // 不加 const，理由見本清單開頭。
+            // ignore: prefer_const_constructors
+            SignOutButton(elderMode: true),
+          ],
         ),
       ),
     );
