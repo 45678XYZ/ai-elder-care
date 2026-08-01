@@ -236,16 +236,26 @@ flutter test       # 所有測試通過
 
 **已完成**
 
-- 長者模式：語音問答免手持迴圈（裝置端華語 ASR → TTS，打字備援）、今日行程與手動完成、農民曆撕曆頁首、連結家人
+- 長者模式：語音問答免手持迴圈、今日行程與手動完成、農民曆撕曆頁首、連結家人
+- 兩種語言的輸入路徑都通了：華語裝置端辨識送 `text`、客語錄音送 `audio` 由後端辨識（api.md 兩種都收）
+- `POST /chat` 已接上（`CareRepo.chat()` → `ApiRepository` → `ChatSession`）；RAG PoC 的 `/ask` 只剩 demo 模式在用
 - 照護者模式：長輩管理（健康狀況／生活習慣／家人／例行公事增刪改）、每日摘要、統計、事件時間軸
 - 長者端可自行切換**說話語言**（華語／客語）與**畫面文字**（一般漢字／客語漢字），兩者獨立
 - demo 資料完整，不接後端可跑完整個流程
 
 **未完成**
 
-- **Cognito 登入**：目前是本機 demo 帳號（`DemoAuthBackend`），換裝置就沒有身分記錄
-- **正式 `/chat`**：目前接的是 RAG PoC 的 `/ask`，沒有語音回覆與 session
-- **客語語音**：`lang_preference` 已能切，但 `chat_screen` 仍走華語辨識迴圈，錄音送後端那條未接
-- `POST /elders`：首次設定只寫本機，尚未建到後端
+- **Cognito 登入**：目前是本機 demo 帳號（`DemoAuthBackend`），換裝置就沒有身分記錄。見 `auth_service.dart` 檔尾的 `TODO(cognito)`
+- **`POST /elders`**：首次設定只寫本機（`setup_screen.dart`），尚未建到後端
+- **`elder_accounts` 表（sub → elder_id）**：目前沒有任何程式碼寫入。長者帳號登入後要靠它對應到自己是哪一位長輩——這是後端的部分
 
-後端上線的切換順序：**Cognito 先於一切**，沒有 token 其餘端點都會 401。
+## 後端上線的切換順序
+
+順序不能顛倒，**Cognito 先於一切**，沒有 token 其餘端點一律 401：
+
+1. 部署 terraform，拿到 API endpoint 與 Cognito User Pool ID / Client ID
+2. 接 amplify_auth_cognito，`ApiClient` 的 `tokenProvider` 指向真 token
+3. 首次設定改呼叫 `POST /elders`，並寫入 `elder_accounts`
+4. 最後才切 `--dart-define=USE_BACKEND=true`——它只是最後一個開關，不是中間步驟
+
+切過去之後 `DemoRepository` / `DemoData` / `DemoAuthBackend` 就可以整批移除。

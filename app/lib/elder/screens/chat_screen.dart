@@ -28,7 +28,10 @@ enum _Phase { idle, listening, thinking, speaking }
 /// 後端會寫進 routines，但今日畫面與本地通知是 App 自己的，不重整就看不到。
 ///
 /// 長者規格：內文 >=24sp、觸控 >=60dp、可互動元素 <=3、語音有打字備援（§5）。
-/// 客語（isHakka）裝置端 ASR 不支援，需改走錄音送後端——目前 TODO，先沿用華語迴圈。
+///
+/// 兩種語言走的路不同：華語用裝置端辨識、送 `text`；客語裝置端 ASR 聽不懂，改錄音
+/// 送 `audio` 由後端辨識（見 [_recordTurn]，api.md 兩種都收）。差別不只是資料形態
+/// ——錄音那條**聆聽期間畫面上沒有逐字稿**，長輩說了什麼要等 `transcript` 回來。
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
 
