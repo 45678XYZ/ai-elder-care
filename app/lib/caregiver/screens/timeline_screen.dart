@@ -53,8 +53,16 @@ class _TimelineScreenState extends State<TimelineScreen>
   @override
   Future<void> autoRefresh() async {
     try {
+      // 先確保清單載好再取 id：第一次進來時 `selectedElderId` 要等
+      // `ensureEldersLoaded` 之後才有值，太早取會拿到 null 而把好結果誤判成過期。
+      // 這個呼叫是冪等的（有資料就直接返回），不會多打一次 `GET /elders`。
+      await AppSession.instance.ensureEldersLoaded();
+      final requested = AppSession.instance.selectedElderId;
       final page = await _fetchFirstPage();
       if (!mounted) return;
+      // 切長輩走 `onElderChanged → _reload()`，跟這一趟背景重拉是兩個並行的請求，
+      // **後回來的贏**。前一位的比較慢時，標題顯示的是新長輩、內容卻是上一位的。
+      if (AppSession.instance.selectedElderId != requested) return;
       setState(() => _future = Future.value(page));
     } catch (_) {
       // 靜默：`_fetchFirstPage` 失敗時不會動到 `_items`，畫面維持原樣
@@ -83,10 +91,17 @@ class _TimelineScreenState extends State<TimelineScreen>
       return const ApiPage(items: []);
     }
     // `EventCategory` 的 name 與 api.md 的 `type` 字串一一對應，可直接當參數送。
+    final filter = _filter;
     final page = await CareRepo.instance.events(
       elderId: elderId,
-      type: _filter?.name,
+      type: filter?.name,
     );
+    // 守在真正動狀態的這一行前面，而不是只守呼叫端：`_load()` 與背景重拉都會
+    // 走到這裡，而它們是並行的。條件在這一趟出去時被換掉的話，這份結果套下去
+    // 就是把新長輩／新分類的清單換成舊的那一份。
+    if (AppSession.instance.selectedElderId != elderId || _filter != filter) {
+      return page;
+    }
     _items
       ..clear()
       ..addAll(page.items);
@@ -102,15 +117,24 @@ class _TimelineScreenState extends State<TimelineScreen>
     // elderId 理論上不會是 null（有游標就代表第一頁載成功過），但這裡不用 `!`：
     // 這一頁其餘地方就是被那個寫法炸掉的。
     if (token == null || elderId == null || _loadingMore) return;
+    final filter = _filter;
     setState(() => _loadingMore = true);
     try {
       // 游標原樣帶回，不解析內容；查詢條件必須與取得游標時完全一致（api.md 共通分頁規則）
       final page = await CareRepo.instance.events(
         elderId: elderId,
-        type: _filter?.name,
+        type: filter?.name,
         nextToken: token,
       );
       if (!mounted) return;
+      // 這一趟出去的期間，使用者可能已經換了長輩或分類——那兩條都會走 `_load()`
+      // 把 `_items` 清空重來，而載入更多那顆鈕雖然 disable 了，分類膠囊與長輩
+      // 切換器沒有。舊結果照樣 addAll 進那份乾淨的清單，畫面上就是兩位長輩的
+      // 紀錄混在同一條時間軸；`_pagedBack` 也會被設成 true，讓一份從沒翻過頁的
+      // 清單再也不背景重拉。條件對不上就整包丟掉，那份資料已經不屬於現在這一頁。
+      if (AppSession.instance.selectedElderId != elderId || _filter != filter) {
+        return;
+      }
       setState(() {
         _items.addAll(page.items);
         _nextToken = page.nextToken;
