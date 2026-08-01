@@ -488,8 +488,8 @@ class DemoRepository implements CareRepository {
   @override
   Future<void> deleteRoutine(String routineId,
       {required String clientRequestId}) async {
-    // demo 直接從清單移除。後端那條是留下 active=false 的終態版本（資料還在），
-    // 兩邊對畫面而言一樣：都看不到了。
+    // demo 直接從清單移除，與後端的硬刪一致。冪等鍵在這裡沒有作用：本機清單刪過就
+    // 不在了，重送等於刪一個不存在的，不會有真後端那種 409。
     final list = await _mutableRoutines(null);
     list.removeWhere((r) => r.routineId == routineId);
     return Future.delayed(DemoData.latency, () {});
