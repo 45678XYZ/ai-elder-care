@@ -216,6 +216,10 @@ class Deadline:
         """檢查 deadline 是否已到期。"""
         return self._clock() >= self.expiry
 
+    def remaining_seconds(self) -> float:
+        """回傳剩餘秒數；已到期時固定為零。"""
+        return max(0.0, self.expiry - self._clock())
+
     @classmethod
     def create(
         cls, expiry: float, clock: Callable[[], float]

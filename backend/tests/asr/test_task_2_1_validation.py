@@ -19,6 +19,7 @@ from src.shared.asr import (
     Language,
     ModelMetadata,
     ProviderConfig,
+    ProviderKind,
     ProviderStatus,
     RouteConfig,
     Transcript,
@@ -219,14 +220,22 @@ class TestModelMetadataConstants:
     def test_ce_metadata(self) -> None:
         assert CE_MODEL_METADATA.model_id == "adi-gov-tw/Taiwan-Tongues-ASR-CE-v2.0"
         assert CE_MODEL_METADATA.license == "other"
-        assert CE_MODEL_METADATA.usage_restriction == UsageRestriction.COLAB_VALIDATION_ONLY
+        assert (
+            CE_MODEL_METADATA.usage_restriction
+            == UsageRestriction.STAGING_VALIDATION_ONLY
+        )
         assert not CE_MODEL_METADATA.is_production_allowed
 
     def test_formo_metadata(self) -> None:
         assert FORMO_MODEL_METADATA.model_id == "formospeech/whisper-large-v3-taiwanese-hakka"
         assert FORMO_MODEL_METADATA.license == "CC BY-NC 4.0"
         assert FORMO_MODEL_METADATA.access_status == AccessStatus.GATED
-        assert FORMO_MODEL_METADATA.usage_restriction == UsageRestriction.COLAB_VALIDATION_ONLY
+        assert (
+            FORMO_MODEL_METADATA.usage_restriction
+            == UsageRestriction.STAGING_VALIDATION_ONLY
+        )
+        assert FORMO_MODEL_METADATA.production_gate.access_granted is True
+        assert "access_granted" not in FORMO_MODEL_METADATA.production_gate.missing_items
         assert not FORMO_MODEL_METADATA.is_production_allowed
 
 
@@ -239,7 +248,7 @@ class TestConfigParser:
             "routes": {
                 "zh-TW": {
                     "route": "aws_zh_tw",
-                    "provider_identifier": "aws_zh_tw_adapter",
+                    "provider_identifier": "amazon_transcribe_zh_tw",
                     "enabled": True,
                 },
                 "hak": {
@@ -249,10 +258,10 @@ class TestConfigParser:
                 },
             },
             "providers": {
-                "aws_zh_tw_adapter": {
-                    "identifier": "aws_zh_tw_adapter",
+                "amazon_transcribe_zh_tw": {
+                    "identifier": "amazon_transcribe_zh_tw",
                     "status": "enabled",
-                    "metadata_ref": None,
+                    "kind": "aws_managed",
                 },
                 "hak_mock": {
                     "identifier": "hak_mock",
@@ -266,7 +275,7 @@ class TestConfigParser:
                     "revision": "v2.0",
                     "license": "other",
                     "access_status": "open",
-                    "usage_restriction": "colab_validation_only",
+                    "usage_restriction": "staging_validation_only",
                     "approval_state": "not_approved",
                 },
                 "formo": {
@@ -274,7 +283,7 @@ class TestConfigParser:
                     "revision": "main",
                     "license": "CC BY-NC 4.0",
                     "access_status": "gated",
-                    "usage_restriction": "colab_validation_only",
+                    "usage_restriction": "staging_validation_only",
                     "approval_state": "not_approved",
                 },
             },
@@ -285,6 +294,10 @@ class TestConfigParser:
         assert isinstance(config, AsrConfig)
         assert "zh-TW" in config.routes
         assert "hak" in config.routes
+        assert (
+            config.providers["amazon_transcribe_zh_tw"].kind
+            is ProviderKind.AWS_MANAGED
+        )
 
     def test_missing_routes_fail_closed(self) -> None:
         data = self._valid_config_data()
@@ -316,8 +329,18 @@ class TestConfigParser:
 
     def test_unknown_provider_status_fail_closed(self) -> None:
         data = self._valid_config_data()
-        data["providers"]["aws_zh_tw_adapter"]["status"] = "unknown_status"
+        data["providers"]["amazon_transcribe_zh_tw"]["status"] = "unknown_status"
         with pytest.raises(ConfigParseError, match="Unknown provider status"):
+            parse_asr_config(data)
+
+    @pytest.mark.parametrize("extra_key", ["metadata_ref", "endpoint_name", "region"])
+    def test_aws_managed_provider_extra_keys_fail_closed(
+        self, extra_key: str
+    ) -> None:
+        data = self._valid_config_data()
+        data["providers"]["amazon_transcribe_zh_tw"][extra_key] = None
+
+        with pytest.raises(ConfigParseError, match="unsupported keys"):
             parse_asr_config(data)
 
 

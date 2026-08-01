@@ -8,6 +8,11 @@ variable "aws_region" {
   description = "部署區域"
   type        = string
   default     = "us-west-2"
+
+  validation {
+    condition     = contains(["us-east-1", "us-west-2"], var.aws_region)
+    error_message = "競賽環境只允許部署至 us-east-1 或 us-west-2。"
+  }
 }
 
 # --- ASR 實體模型端點（見 asr_models.tf）---
@@ -38,24 +43,6 @@ variable "asr_ce_model_data_url" {
   default     = ""
 }
 
-variable "asr_ce_instance_type" {
-  description = "CE 端點的推論機型"
-  type        = string
-  default     = "ml.g5.xlarge"
-}
-
-variable "asr_ce_min_instances" {
-  description = "CE 端點最小實例數"
-  type        = number
-  default     = 1
-}
-
-variable "asr_ce_max_instances" {
-  description = "CE 端點最大實例數"
-  type        = number
-  default     = 4
-}
-
 variable "asr_formo_image_uri" {
   description = "FormoSpeech Whisper-v3 推論容器的 ECR image URI"
   type        = string
@@ -66,30 +53,6 @@ variable "asr_formo_model_data_url" {
   description = "FormoSpeech Whisper-v3 模型 artifact 的 S3 URI"
   type        = string
   default     = ""
-}
-
-variable "asr_formo_instance_type" {
-  description = "Formo 端點的推論機型"
-  type        = string
-  default     = "ml.g5.2xlarge"
-}
-
-variable "asr_formo_min_instances" {
-  description = "Formo 端點最小實例數"
-  type        = number
-  default     = 1
-}
-
-variable "asr_formo_max_instances" {
-  description = "Formo 端點最大實例數"
-  type        = number
-  default     = 2
-}
-
-variable "asr_target_invocations_per_instance" {
-  description = "每個實例的目標每分鐘呼叫數；超過即向外擴充"
-  type        = number
-  default     = 20
 }
 
 # --- TTS 遠端模型端點（見 tts_models.tf）---
@@ -170,24 +133,6 @@ variable "tts_breezyvoice_approved" {
   description = "BreezyVoice 的授權、容量、延遲與 staging gate 是否全部核准"
   type        = bool
   default     = false
-}
-
-variable "tts_instance_type" {
-  description = "TTS 遠端模型 endpoint 共用推論機型；正式核准前須逐模型實測"
-  type        = string
-  default     = "ml.g5.xlarge"
-}
-
-variable "tts_min_instances" {
-  description = "每個 TTS endpoint 最小實例數"
-  type        = number
-  default     = 1
-}
-
-variable "tts_max_instances" {
-  description = "每個 TTS endpoint 最大實例數"
-  type        = number
-  default     = 2
 }
 
 # --- RAG（Bedrock Knowledge Base）---

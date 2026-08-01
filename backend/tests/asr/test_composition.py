@@ -6,6 +6,7 @@ Composition root 測試 — 預設設定必須 fail closed、provider 只在核�
 """
 from __future__ import annotations
 
+import builtins
 import json
 import threading
 import time
@@ -33,7 +34,11 @@ from src.shared.asr.config import (
     ProviderStatus,
     UsageRestriction,
 )
-from src.shared.asr.providers import SageMakerAsrProvider
+from src.shared.asr.providers import (
+    AMAZON_TRANSCRIBE_PROVIDER_ID,
+    AmazonTranscribeAsrProvider,
+    SageMakerAsrProvider,
+)
 from src.shared.asr.types import (
     AsrErrorCategory,
     CancellationSignal,
@@ -46,7 +51,7 @@ from src.shared.asr.types import (
 )
 
 APPROVED_GATE = ModelProductionGate(
-    colab_validation_passed=True,
+    staging_validation_passed=True,
     license_cleared=True,
     access_granted=True,
     quota_cleared=True,
@@ -97,11 +102,14 @@ def test_default_config_declares_both_languages() -> None:
     config = default_config()
     assert set(config.routes) == {"hak", "zh-TW"}
     assert config.routes["hak"].provider_order == ("hak_mock", "ce_remote")
-    assert config.routes["zh-TW"].provider_order == ("ce_remote", "formo_remote")
+    assert config.routes["zh-TW"].provider_order == (
+        AMAZON_TRANSCRIBE_PROVIDER_ID,
+        "ce_remote",
+    )
 
 
 def test_default_config_leaves_both_models_unapproved() -> None:
-    """預設狀態下兩個候選模型都不得可用——Colab 驗證還沒做。"""
+    """預設狀態下兩個候選模型都不得可用——staging 驗證還沒做。"""
     config = default_config()
     for metadata in config.model_metadata.values():
         assert metadata.is_production_allowed is False
@@ -109,9 +117,10 @@ def test_default_config_leaves_both_models_unapproved() -> None:
 
 
 def test_default_registry_contains_no_local_models() -> None:
-    """未核准 → 連實例都不該存在。remote-only 架構下只有 hak_mock。"""
+    """本機預設不得建立 managed／remote provider，只保留 hak_mock。"""
     registry = build_provider_registry(default_config())
     assert set(registry) == {"hak_mock"}
+    assert AMAZON_TRANSCRIBE_PROVIDER_ID not in registry
     assert "ce_remote" not in registry
     assert "formo_remote" not in registry
 
@@ -151,6 +160,57 @@ def test_approved_formo_model_is_instantiated() -> None:
     registry = build_provider_registry(config)
     assert isinstance(registry["formo_remote"], SageMakerAsrProvider)
     assert registry["formo_remote"].endpoint_name == "ai-elder-care-asr-formo"
+
+
+def test_enabled_known_aws_managed_provider_is_instantiated() -> None:
+    config = default_config()
+    config.providers[AMAZON_TRANSCRIBE_PROVIDER_ID] = ProviderConfig(
+        identifier=AMAZON_TRANSCRIBE_PROVIDER_ID,
+        status=ProviderStatus.ENABLED,
+        kind=ProviderKind.AWS_MANAGED,
+    )
+
+    registry = build_provider_registry(config)
+
+    assert isinstance(
+        registry[AMAZON_TRANSCRIBE_PROVIDER_ID], AmazonTranscribeAsrProvider
+    )
+
+
+def test_building_managed_provider_does_not_import_streaming_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SDK 只可在第一次實際外呼時 lazy import。"""
+    config = default_config()
+    config.providers[AMAZON_TRANSCRIBE_PROVIDER_ID] = ProviderConfig(
+        identifier=AMAZON_TRANSCRIBE_PROVIDER_ID,
+        status=ProviderStatus.ENABLED,
+        kind=ProviderKind.AWS_MANAGED,
+    )
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith("amazon_transcribe"):
+            raise AssertionError("Streaming SDK was imported before invocation.")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    registry = build_provider_registry(config)
+    assert isinstance(
+        registry[AMAZON_TRANSCRIBE_PROVIDER_ID], AmazonTranscribeAsrProvider
+    )
+
+
+def test_unknown_aws_managed_provider_is_not_instantiated() -> None:
+    config = default_config()
+    config.providers["unknown_managed"] = ProviderConfig(
+        identifier="unknown_managed",
+        status=ProviderStatus.ENABLED,
+        kind=ProviderKind.AWS_MANAGED,
+    )
+
+    assert "unknown_managed" not in build_provider_registry(config)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -461,7 +521,7 @@ def test_third_model_can_be_added_to_allowlist_without_touching_router() -> None
                 revision="v1",
                 license="apache-2.0",
                 access_status=AccessStatus.OPEN,
-                usage_restriction=UsageRestriction.COLAB_VALIDATION_ONLY,
+                usage_restriction=UsageRestriction.STAGING_VALIDATION_ONLY,
                 approval_state=ApprovalState.NOT_APPROVED,
             )
         )

@@ -9,13 +9,21 @@ output "cognito_user_pool_client_id" {
 }
 
 output "asr_ce_endpoint_name" {
-  description = "ASR 主力端點名稱；未啟用時為空字串"
+  description = "ASR 中文與客語共同備援端點名稱；未啟用時為空字串"
   value       = join("", aws_sagemaker_endpoint.asr_ce[*].name)
 }
 
 output "asr_formo_endpoint_names" {
-  description = "ASR 客語六腔固定 prompt 端點名稱；未啟用時為空 map"
+  description = "ASR 客語六腔主力固定 prompt 端點名稱；未啟用時為空 map"
   value       = { for dialect, endpoint in aws_sagemaker_endpoint.asr_formo : dialect => endpoint.name }
+}
+
+output "asr_endpoint_instance_types" {
+  description = "ASR 七個 SageMaker endpoint 的固定機型；未啟用時為空 map"
+  value = var.asr_enable_endpoints ? merge(
+    { ce = local.asr_ce_instance_type },
+    local.asr_formo_instance_types,
+  ) : {}
 }
 
 output "asr_invoke_policy_arn" {
@@ -32,6 +40,11 @@ output "asr_config_json" {
 output "tts_endpoint_names" {
   description = "已建立的 TTS endpoint 名稱；未啟用時為空 map"
   value       = { for key, endpoint in aws_sagemaker_endpoint.tts : key => endpoint.name }
+}
+
+output "tts_endpoint_instance_types" {
+  description = "已建立 TTS endpoint 的逐模型固定機型；未啟用時為空 map"
+  value       = { for key, model in local.tts_remote_models : key => model.instance_type }
 }
 
 output "tts_config_json" {

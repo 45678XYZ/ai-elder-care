@@ -20,7 +20,7 @@ from .types import AsrErrorCategory, TypedAsrError
 class UsageRestriction(enum.Enum):
     """模型用途限制。"""
 
-    COLAB_VALIDATION_ONLY = "colab_validation_only"
+    STAGING_VALIDATION_ONLY = "staging_validation_only"
     PRODUCTION = "production"
 
 
@@ -54,7 +54,7 @@ class ProviderStatus(enum.Enum):
 
     ENABLED = "enabled"
     DISABLED = "disabled"
-    COLAB_ONLY = "colab_only"
+    STAGING_ONLY = "staging_only"
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -70,13 +70,16 @@ class ProviderKind(enum.Enum):
     - `remote_model`：呼叫我們自己託管的推論端點（SageMaker）。必須有
       model metadata 且 production gate 逐項核准，另外必須有 endpoint_name。
 
+    - `aws_managed`：呼叫受控的 AWS 管理式 ASR；不綁定模型 metadata，
+      實際服務與語言能力由 composition allowlist 決定。
+
     已移除（remote-only 架構）：
     - `local_model`：Lambda 不可在 process 內執行模型推論。
-    - `aws_managed`：無使用場景的 AWS 代管 ASR placeholder。
     """
 
     MOCK = "mock"
     REMOTE_MODEL = "remote_model"
+    AWS_MANAGED = "aws_managed"
 
     @property
     def requires_model_approval(self) -> bool:
@@ -88,7 +91,7 @@ class ProviderKind(enum.Enum):
 # Model Production Gate — 逐項人工核准才允許 production invocation
 # ─────────────────────────────────────────────────────────────────
 _MODEL_PRODUCTION_GATE_ITEMS = (
-    "colab_validation_passed",
+    "staging_validation_passed",
     "license_cleared",
     "access_granted",
     "quota_cleared",
@@ -103,7 +106,8 @@ class ModelProductionGate:
 
     每一項都是必須由人確認、無法由程式推導的外部事實，因此全部預設 False：
 
-    - `colab_validation_passed`：模型已在 Colab 人工驗證流程跑出可用結果。
+    - `staging_validation_passed`：模型已在目標 SageMaker instance 的 staging
+      環境跑出可用結果。
     - `license_cleared`：授權允許本專案的實際用途。Formo 為 CC BY-NC 4.0
       （限非商業），一旦本專案轉為商業用途就不得核准這一項。
     - `access_granted`：gated model 的存取權限已取得。
@@ -111,7 +115,7 @@ class ModelProductionGate:
     - `runtime_capacity_verified`：執行環境（GPU 記憶體、併發數）已實測可承載。
     """
 
-    colab_validation_passed: bool = False
+    staging_validation_passed: bool = False
     license_cleared: bool = False
     access_granted: bool = False
     quota_cleared: bool = False
@@ -204,7 +208,7 @@ CE_MODEL_METADATA = ModelMetadata(
     revision="v2.0",
     license="other",
     access_status=AccessStatus.OPEN,
-    usage_restriction=UsageRestriction.COLAB_VALIDATION_ONLY,
+    usage_restriction=UsageRestriction.STAGING_VALIDATION_ONLY,
     approval_state=ApprovalState.NOT_APPROVED,
     production_gate=ModelProductionGate.default_incomplete(),
 )
@@ -215,14 +219,16 @@ FORMO_MODEL_METADATA = ModelMetadata(
     revision="main",
     license="CC BY-NC 4.0",
     access_status=AccessStatus.GATED,
-    usage_restriction=UsageRestriction.COLAB_VALIDATION_ONLY,
+    usage_restriction=UsageRestriction.STAGING_VALIDATION_ONLY,
     approval_state=ApprovalState.NOT_APPROVED,
-    production_gate=ModelProductionGate.default_incomplete(),
+    # 使用者已取得 gated repository 讀取權；其餘 production gate 仍需 staging
+    # 與目標 instance 的 runtime 證據，故模型仍維持 fail closed。
+    production_gate=ModelProductionGate(access_granted=True),
 )
 
 # CE/Formo 的 model id 集合——router 與 parser 用它辨識「需要 production gate
 # 才可上線的候選模型」。
-COLAB_CANDIDATE_MODEL_IDS: frozenset[str] = frozenset(
+STAGING_CANDIDATE_MODEL_IDS: frozenset[str] = frozenset(
     {CE_MODEL_METADATA.model_id, FORMO_MODEL_METADATA.model_id}
 )
 
@@ -403,6 +409,15 @@ def _parse_provider_config(data: Any, context: str) -> ProviderConfig:
         raise ConfigParseError(
             f"Unknown provider kind '{raw_kind}' in {context}. Fail closed."
         )
+
+    if kind is ProviderKind.AWS_MANAGED:
+        allowed_keys = {"identifier", "status", "kind"}
+        extra_keys = set(data) - allowed_keys
+        if extra_keys:
+            raise ConfigParseError(
+                f"AWS managed provider contains unsupported keys in {context}. "
+                "Fail closed."
+            )
 
     endpoint_name = data.get("endpoint_name")
     if endpoint_name is not None and not isinstance(endpoint_name, str):

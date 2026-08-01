@@ -14,7 +14,7 @@ from src.shared.asr.config import (
     AccessStatus,
     ApprovalState,
     AsrConfig,
-       CE_MODEL_METADATA,
+    CE_MODEL_METADATA,
     ModelMetadata,
     ModelProductionGate,
     ProviderConfig,
@@ -23,6 +23,7 @@ from src.shared.asr.config import (
     RouteConfig,
     UsageRestriction,
 )
+from src.shared.asr.providers import AMAZON_TRANSCRIBE_PROVIDER_ID
 from src.shared.asr.router import AsrRouter
 from src.shared.asr.types import (
     AsrErrorCategory,
@@ -48,7 +49,7 @@ FORMO_ALLOWLIST = frozenset(
 )
 
 APPROVED_GATE = ModelProductionGate(
-    colab_validation_passed=True,
+    staging_validation_passed=True,
     license_cleared=True,
     access_granted=True,
     quota_cleared=True,
@@ -185,8 +186,8 @@ def test_unapproved_local_model_provider_is_not_used() -> None:
 # ─────────────────────────────────────────────────────────────────
 # 資格篩選
 # ─────────────────────────────────────────────────────────────────
-def test_ineligible_primary_is_skipped_and_approved_fallback_is_used() -> None:
-    """未核准的主力在建鏈階段就被排除，這不算執行期 failover。"""
+def test_unapproved_formo_primary_does_not_fall_through_to_ce() -> None:
+    """主力未核准是 route gate 失敗，不得繞過它直接呼叫 CE。"""
     unapproved = SpyProvider("formo_remote", Transcript(text="不該被用到"))
     approved = SpyProvider("ce_remote", Transcript(text="備援結果"))
     config = build_config(
@@ -219,14 +220,15 @@ def test_ineligible_primary_is_skipped_and_approved_fallback_is_used() -> None:
 
     outcome = route(router)
 
-    assert isinstance(outcome.result, Transcript)
+    assert isinstance(outcome.result, TypedAsrError)
+    assert outcome.result.category is AsrErrorCategory.ROUTE_NOT_APPROVED
     assert unapproved.calls == 0
-    assert approved.calls == 1
-    assert outcome.attempt_count == 1
+    assert approved.calls == 0
+    assert outcome.attempt_count == 0
     assert outcome.failover_occurred is False
 
 
-def test_disabled_provider_is_skipped() -> None:
+def test_disabled_primary_does_not_fall_through_to_backup() -> None:
     disabled = SpyProvider("ce_remote", Transcript(text="不該被用到"))
     config = build_config(
         primary="ce_remote",
@@ -249,9 +251,50 @@ def test_disabled_provider_is_skipped() -> None:
 
     outcome = route(router)
 
-    assert isinstance(outcome.result, Transcript)
-    assert outcome.served_provider_id == "hak_mock"
+    assert isinstance(outcome.result, TypedAsrError)
+    assert outcome.result.category is AsrErrorCategory.ROUTE_NOT_APPROVED
+    assert outcome.attempt_count == 0
     assert disabled.calls == 0
+
+
+def test_disabled_transcribe_primary_does_not_fall_through_to_ce() -> None:
+    """managed 主力停用是 route gate 失敗，不能視為 provider runtime 錯誤。"""
+    transcribe = SpyProvider(
+        AMAZON_TRANSCRIBE_PROVIDER_ID, Transcript(text="不該被用到")
+    )
+    ce = SpyProvider("ce_remote", Transcript(text="不該被用到"))
+    config = build_config(
+        primary=AMAZON_TRANSCRIBE_PROVIDER_ID,
+        fallback=("ce_remote",),
+        language="zh-TW",
+        providers={
+            AMAZON_TRANSCRIBE_PROVIDER_ID: ProviderConfig(
+                identifier=AMAZON_TRANSCRIBE_PROVIDER_ID,
+                status=ProviderStatus.DISABLED,
+                kind=ProviderKind.AWS_MANAGED,
+            ),
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
+                status=ProviderStatus.ENABLED,
+                metadata_ref="ce",
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
+            ),
+        },
+        metadata={"ce": APPROVED_CE_METADATA},
+    )
+    router = AsrRouter(
+        config,
+        providers={AMAZON_TRANSCRIBE_PROVIDER_ID: transcribe, "ce_remote": ce},
+    )
+
+    outcome = route(router, Language.ZH_TW)
+
+    assert isinstance(outcome.result, TypedAsrError)
+    assert outcome.result.category is AsrErrorCategory.ROUTE_NOT_APPROVED
+    assert transcribe.calls == 0
+    assert ce.calls == 0
+    assert outcome.attempt_count == 0
 
 
 def test_provider_declared_without_instance_is_ineligible() -> None:
@@ -361,14 +404,75 @@ def test_runtime_provider_failure_falls_over_to_backup() -> None:
     assert outcome.served_provider_id == "hak_mock"
 
 
-def test_route_not_approved_from_provider_does_not_fall_over() -> None:
-    """provider 回報未核准時不得靠備援繞過。"""
-    gated = SpyProvider(
+def test_transcribe_unavailable_falls_over_to_approved_ce() -> None:
+    """中文 managed 主力暫時不可用時，才嘗試已核准的 CE 備援。"""
+    transcribe = SpyProvider(
+        AMAZON_TRANSCRIBE_PROVIDER_ID,
+        TypedAsrError(
+            category=AsrErrorCategory.PROVIDER_UNAVAILABLE,
+            message="safe",
+            retryable=True,
+        ),
+    )
+    ce = SpyProvider("ce_remote", Transcript(text="CE 備援結果"))
+    config = build_config(
+        primary=AMAZON_TRANSCRIBE_PROVIDER_ID,
+        fallback=("ce_remote",),
+        language="zh-TW",
+        providers={
+            AMAZON_TRANSCRIBE_PROVIDER_ID: ProviderConfig(
+                identifier=AMAZON_TRANSCRIBE_PROVIDER_ID,
+                status=ProviderStatus.ENABLED,
+                kind=ProviderKind.AWS_MANAGED,
+            ),
+            "ce_remote": ProviderConfig(
+                identifier="ce_remote",
+                status=ProviderStatus.ENABLED,
+                metadata_ref="ce",
+                kind=ProviderKind.REMOTE_MODEL,
+                endpoint_name="ep-ce",
+            ),
+        },
+        metadata={"ce": APPROVED_CE_METADATA},
+    )
+    router = AsrRouter(
+        config,
+        providers={AMAZON_TRANSCRIBE_PROVIDER_ID: transcribe, "ce_remote": ce},
+    )
+
+    outcome = route(router, Language.ZH_TW)
+
+    assert isinstance(outcome.result, Transcript)
+    assert outcome.result.text == "CE 備援結果"
+    assert transcribe.calls == 1
+    assert ce.calls == 1
+    assert outcome.attempted_provider_ids == (
+        AMAZON_TRANSCRIBE_PROVIDER_ID,
+        "ce_remote",
+    )
+    assert outcome.failover_occurred is True
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        AsrErrorCategory.INVALID_AUDIO,
+        AsrErrorCategory.UNSUPPORTED_LANGUAGE,
+        AsrErrorCategory.ROUTE_NOT_APPROVED,
+        AsrErrorCategory.CANCELLED,
+        AsrErrorCategory.DEADLINE_EXCEEDED,
+    ],
+)
+def test_terminal_provider_errors_do_not_fall_over(
+    category: AsrErrorCategory,
+) -> None:
+    """輸入、核准、取消與逾期錯誤不得靠備援繞過。"""
+    terminal_provider = SpyProvider(
         "ce_remote",
         TypedAsrError(
-            category=AsrErrorCategory.ROUTE_NOT_APPROVED,
+            category=category,
             message="safe",
-            retryable=False,
+            retryable=category is AsrErrorCategory.DEADLINE_EXCEEDED,
         ),
     )
     backup = SpyProvider("hak_mock_backup", Transcript(text="不該被用到"))
@@ -390,13 +494,14 @@ def test_route_not_approved_from_provider_does_not_fall_over() -> None:
         metadata={"ce": APPROVED_CE_METADATA},
     )
     router = AsrRouter(
-        config, providers={"ce_remote": gated, "hak_mock_backup": backup}
+        config,
+        providers={"ce_remote": terminal_provider, "hak_mock_backup": backup},
     )
 
     outcome = route(router)
 
     assert isinstance(outcome.result, TypedAsrError)
-    assert outcome.result.category is AsrErrorCategory.ROUTE_NOT_APPROVED
+    assert outcome.result.category is category
     assert backup.calls == 0
 
 

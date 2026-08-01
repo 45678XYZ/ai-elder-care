@@ -21,6 +21,7 @@ locals {
         languages     = "hak"
         dialects      = join(",", local.tts_hakka_dialects)
         speaker       = ""
+        instance_type = "ml.g4dn.xlarge"
       }
     } : {},
     var.tts_enable_voxhakka_endpoint ? {
@@ -33,6 +34,7 @@ locals {
         languages     = "hak"
         dialects      = join(",", local.tts_voxhakka_dialects)
         speaker       = "XF"
+        instance_type = "ml.g4dn.xlarge"
       }
     } : {},
     var.tts_enable_breezyvoice_endpoint ? {
@@ -45,9 +47,19 @@ locals {
         languages     = "zh-TW"
         dialects      = ""
         speaker       = ""
+        instance_type = "ml.g4dn.4xlarge"
       }
     } : {}
   )
+
+  # 2026-07-22 競賽帳號的 SageMaker real-time endpoint instance 配額。
+  tts_endpoint_instance_quotas = {
+    "ml.g4dn.xlarge"  = 2
+    "ml.g4dn.4xlarge" = 1
+  }
+  tts_requested_instance_types = [
+    for model in values(local.tts_remote_models) : model.instance_type
+  ]
 }
 
 check "tts_endpoints_require_artifacts" {
@@ -60,6 +72,22 @@ check "tts_endpoints_require_artifacts" {
       ])
     )
     error_message = "啟用 TTS endpoint 時必須提供 artifact bucket、image URI 與 model data URL。"
+  }
+}
+
+check "tts_endpoint_instance_quotas" {
+  assert {
+    condition = alltrue([
+      for instance_type in local.tts_requested_instance_types :
+      contains(keys(local.tts_endpoint_instance_quotas), instance_type)
+      ]) && alltrue([
+      for instance_type, quota in local.tts_endpoint_instance_quotas :
+      length([
+        for requested_type in local.tts_requested_instance_types : requested_type
+        if requested_type == instance_type
+      ]) <= quota
+    ])
+    error_message = "TTS endpoint instance 配置超過競賽帳號配額，或使用未核准的機型。"
   }
 }
 
@@ -153,8 +181,8 @@ resource "aws_sagemaker_endpoint_configuration" "tts" {
   production_variants {
     variant_name           = "primary"
     model_name             = aws_sagemaker_model.tts[each.key].name
-    initial_instance_count = var.tts_min_instances
-    instance_type          = var.tts_instance_type
+    initial_instance_count = 1
+    instance_type          = each.value.instance_type
   }
 }
 
@@ -162,35 +190,6 @@ resource "aws_sagemaker_endpoint" "tts" {
   for_each             = local.tts_remote_models
   name                 = each.value.endpoint_name
   endpoint_config_name = aws_sagemaker_endpoint_configuration.tts[each.key].name
-}
-
-resource "aws_appautoscaling_target" "tts" {
-  for_each = local.tts_remote_models
-
-  service_namespace  = "sagemaker"
-  resource_id        = "endpoint/${aws_sagemaker_endpoint.tts[each.key].name}/variant/primary"
-  scalable_dimension = "sagemaker:variant:DesiredInstanceCount"
-  min_capacity       = var.tts_min_instances
-  max_capacity       = var.tts_max_instances
-}
-
-resource "aws_appautoscaling_policy" "tts_invocations" {
-  for_each = local.tts_remote_models
-
-  name               = "${each.value.endpoint_name}-invocations"
-  policy_type        = "TargetTrackingScaling"
-  service_namespace  = aws_appautoscaling_target.tts[each.key].service_namespace
-  resource_id        = aws_appautoscaling_target.tts[each.key].resource_id
-  scalable_dimension = aws_appautoscaling_target.tts[each.key].scalable_dimension
-
-  target_tracking_scaling_policy_configuration {
-    target_value = 20
-    predefined_metric_specification {
-      predefined_metric_type = "SageMakerVariantInvocationsPerInstance"
-    }
-    scale_out_cooldown = 60
-    scale_in_cooldown  = 300
-  }
 }
 
 resource "aws_iam_policy" "invoke_tts_endpoints" {

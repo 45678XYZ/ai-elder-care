@@ -8,16 +8,17 @@
 
 locals {
   # ASR_CONFIG_JSON — 由 Terraform 從 endpoint 名稱與設定組裝。
-  # 啟用時產生完整的 remote-only 設定；未啟用時兩條 production route 都停用。
+  # 啟用 SageMaker 端點時加入 CE／Formo；未啟用時中文仍使用 Amazon Transcribe，
+  # 只有六條客語 production route 停用。
   # 建立 endpoint 不等於模型已核准；個別模型 ADR 未通過前，production gate
   # 必須維持關閉，build_provider_registry() 不會建立遠端 provider。
   asr_config_json = var.asr_enable_endpoints ? jsonencode({
     routes = merge({
       "zh-TW" = {
         route               = "zh_tw_primary"
-        provider_identifier = "ce_remote"
+        provider_identifier = "amazon_transcribe_zh_tw"
         enabled             = true
-        fallback_chain      = []
+        fallback_chain      = ["ce_remote"]
       }
       }, {
       for dialect, endpoint_name in local.asr_formo_endpoint_names :
@@ -29,6 +30,11 @@ locals {
       }
     })
     providers = merge({
+      amazon_transcribe_zh_tw = {
+        identifier = "amazon_transcribe_zh_tw"
+        status     = "enabled"
+        kind       = "aws_managed"
+      }
       ce_remote = {
         identifier    = "ce_remote"
         status        = "enabled"
@@ -52,10 +58,10 @@ locals {
         revision          = "v2.0"
         license           = "other"
         access_status     = "open"
-        usage_restriction = "colab_validation_only"
+        usage_restriction = "staging_validation_only"
         approval_state    = "not_approved"
         production_gate = {
-          colab_validation_passed   = false
+          staging_validation_passed = false
           license_cleared           = false
           access_granted            = false
           quota_cleared             = false
@@ -68,12 +74,12 @@ locals {
         revision          = "main"
         license           = "CC BY-NC 4.0"
         access_status     = "gated"
-        usage_restriction = "colab_validation_only"
+        usage_restriction = "staging_validation_only"
         approval_state    = "not_approved"
         production_gate = {
-          colab_validation_passed   = false
+          staging_validation_passed = false
           license_cleared           = false
-          access_granted            = false
+          access_granted            = true
           quota_cleared             = false
           runtime_capacity_verified = false
           approval_record_ref       = null
@@ -83,9 +89,9 @@ locals {
     }) : jsonencode({
     routes = merge({
       "zh-TW" = {
-        route               = "zh_tw_disabled"
-        provider_identifier = "production_disabled"
-        enabled             = false
+        route               = "zh_tw_primary"
+        provider_identifier = "amazon_transcribe_zh_tw"
+        enabled             = true
         fallback_chain      = []
       }
       }, {
@@ -98,6 +104,11 @@ locals {
       }
     })
     providers = {
+      amazon_transcribe_zh_tw = {
+        identifier = "amazon_transcribe_zh_tw"
+        status     = "enabled"
+        kind       = "aws_managed"
+      }
       production_disabled = {
         identifier = "production_disabled"
         status     = "disabled"

@@ -171,6 +171,12 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
         Resource = "*"
       },
       {
+        # Amazon Transcribe Streaming 不支援資源層級 ARN 限制。
+        Effect   = "Allow"
+        Action   = ["transcribe:StartStreamTranscription"]
+        Resource = "*"
+      },
+      {
         Effect   = "Allow"
         Action   = ["s3:PutObject", "s3:GetObject"]
         Resource = "arn:aws:s3:::${var.project_name}-audio/*"
@@ -230,7 +236,6 @@ resource "aws_lambda_function" "chat" {
       S3_AUDIO_BUCKET            = "${var.project_name}-audio"
       BEDROCK_AGENT_ID           = aws_bedrockagent_agent.elder_companion_agent.id
       BEDROCK_AGENT_ALIAS_ID     = "TSTALIASID"
-      AWS_REGION                 = var.aws_region
       ASR_CONFIG_JSON            = local.asr_config_json
       TTS_CONFIG_JSON            = local.tts_config_json
       TABLE_ELDERS               = aws_dynamodb_table.elders.name

@@ -9,6 +9,7 @@ description = "智慧長照陪伴 App — Python Lambda 後端"
 requires-python = ">=3.11"
 # 執行期依賴（Lambda 部署包依此安裝；boto3 為 Lambda 執行環境內建，本機開發需要）
 dependencies = [
+  "amazon-transcribe==0.6.4",
   "boto3",
   "numpy>=2.0",
   "pydantic",

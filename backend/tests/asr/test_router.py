@@ -126,7 +126,7 @@ def _make_zh_tw_config_gate_complete() -> AsrConfig:
     from src.shared.asr.config import ModelProductionGate
 
     approved_gate = ModelProductionGate(
-        colab_validation_passed=True,
+        staging_validation_passed=True,
         license_cleared=True,
         access_granted=True,
         quota_cleared=True,

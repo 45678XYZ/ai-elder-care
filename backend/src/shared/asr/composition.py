@@ -21,6 +21,8 @@ from .config import (
 )
 from .facade import AsrFacade
 from .providers import (
+    AMAZON_TRANSCRIBE_PROVIDER_ID,
+    AmazonTranscribeAsrProvider,
     AsrProvider,
     HakMockProvider,
     RemoteEndpointSpec,
@@ -38,6 +40,9 @@ REMOTE_MODEL_LANGUAGES = {
     CE_MODEL_METADATA.model_id: frozenset({Language.ZH_TW, Language.HAK}),
     FORMO_MODEL_METADATA.model_id: frozenset({Language.HAK}),
 }
+AWS_MANAGED_PROVIDER_LANGUAGES = {
+    AMAZON_TRANSCRIBE_PROVIDER_ID: frozenset({Language.ZH_TW}),
+}
 
 
 class StdoutTelemetrySink:
@@ -51,12 +56,20 @@ def default_config() -> AsrConfig:
         routes={
             "hak": RouteConfig("hak_primary", "hak_mock", True, ("ce_remote",)),
             "zh-TW": RouteConfig(
-                "zh_tw_primary", "ce_remote", True, ("formo_remote",)
+                "zh_tw_primary",
+                AMAZON_TRANSCRIBE_PROVIDER_ID,
+                True,
+                ("ce_remote",),
             ),
         },
         providers={
             "hak_mock": ProviderConfig(
                 "hak_mock", ProviderStatus.ENABLED, kind=ProviderKind.MOCK
+            ),
+            AMAZON_TRANSCRIBE_PROVIDER_ID: ProviderConfig(
+                identifier=AMAZON_TRANSCRIBE_PROVIDER_ID,
+                status=ProviderStatus.DISABLED,
+                kind=ProviderKind.AWS_MANAGED,
             ),
             "ce_remote": ProviderConfig(
                 identifier="ce_remote",
@@ -102,10 +115,32 @@ def build_provider_registry(config: AsrConfig) -> dict[str, AsrProvider]:
             if provider_id == "hak_mock":
                 registry[provider_id] = HakMockProvider()
             continue
+        if provider.kind is ProviderKind.AWS_MANAGED:
+            managed = _build_aws_managed_provider(provider_id, provider)
+            if managed is not None:
+                registry[provider_id] = managed
+            continue
         remote = _build_remote_provider(provider_id, provider, config)
         if remote is not None:
             registry[provider_id] = remote
     return registry
+
+
+def _build_aws_managed_provider(
+    provider_id: str, provider: ProviderConfig
+) -> AmazonTranscribeAsrProvider | None:
+    """只允許程式碼明列的 AWS managed adapter，拒絕任意服務名稱。"""
+    if (
+        provider_id not in AWS_MANAGED_PROVIDER_LANGUAGES
+        or provider.identifier != provider_id
+        or provider.metadata_ref is not None
+        or provider.endpoint_name is not None
+    ):
+        return None
+    return AmazonTranscribeAsrProvider(
+        provider_id=provider_id,
+        region_name=os.environ.get(ENV_AWS_REGION) or None,
+    )
 
 
 def _build_remote_provider(

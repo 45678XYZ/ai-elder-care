@@ -167,18 +167,31 @@ class AsrRouter:
         self, route: RouteConfig
     ) -> list[tuple[str, AsrProvider]]:
         eligible: list[tuple[str, AsrProvider]] = []
-        for provider_id in route.provider_order:
+        for position, provider_id in enumerate(route.provider_order):
             config = self._config.providers.get(provider_id)
             provider = self._providers.get(provider_id)
             if config is None or provider is None:
+                if position == 0:
+                    return []
                 continue
             if config.status is not ProviderStatus.ENABLED:
+                if position == 0:
+                    return []
                 continue
             if config.kind is ProviderKind.REMOTE_MODEL:
                 if not config.endpoint_name or not config.metadata_ref:
+                    if position == 0:
+                        return []
                     continue
                 metadata = self._config.model_metadata.get(config.metadata_ref)
                 if metadata is None or not metadata.is_production_allowed:
+                    if position == 0:
+                        return []
+                    continue
+            elif config.kind is ProviderKind.AWS_MANAGED:
+                if config.endpoint_name is not None or config.metadata_ref is not None:
+                    if position == 0:
+                        return []
                     continue
             eligible.append((provider_id, provider))
         return eligible

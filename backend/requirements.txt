@@ -1,5 +1,6 @@
 # Lambda 執行期依賴（由 Terraform 社群模組 terraform-aws-modules/lambda/aws 的 pip_requirements 自動打包進 zip）
 # boto3 為 AWS Lambda 執行環境內建，此處僅列出額外套件
+amazon-transcribe==0.6.4
 av>=14
 numpy>=2.0
 pydantic>=2.0
