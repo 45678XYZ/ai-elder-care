@@ -102,9 +102,10 @@ API Gateway + Cognito JWT 認證
 
 ### 1. 前端 App (Flutter)
 
+平台檔案（`android/`、`web/`）已在版控內，**不要跑 `flutter create`**——它會用模板覆蓋掉現有設定，其中麥克風權限、通知 receiver 與 `<queries>` 掉了不會報錯，只會變成按了沒反應。
+
 ```bash
 cd app
-flutter create --platforms android --project-name e_hakka_care .
 flutter pub get
 flutter run
 ```
