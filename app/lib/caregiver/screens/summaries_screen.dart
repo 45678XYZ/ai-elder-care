@@ -41,8 +41,16 @@ class _SummariesScreenState extends State<SummariesScreen>
   @override
   Future<void> autoRefresh() async {
     try {
+      // 先確保清單載好再取 id：第一次進來時 `selectedElderId` 要等
+      // `ensureEldersLoaded` 之後才有值，太早取會拿到 null 而把好結果誤判成過期。
+      // 這個呼叫是冪等的（有資料就直接返回），不會多打一次 `GET /elders`。
+      await AppSession.instance.ensureEldersLoaded();
+      final requested = AppSession.instance.selectedElderId;
       final page = await _fetch();
       if (!mounted) return;
+      // 切長輩走 `onElderChanged → _reload()`，跟這一趟背景重拉是兩個並行的請求，
+      // **後回來的贏**。前一位的比較慢時，標題顯示的是新長輩、摘要卻是上一位的。
+      if (AppSession.instance.selectedElderId != requested) return;
       setState(() => _future = Future.value(page));
     } catch (_) {
       // 靜默：畫面維持上一份成功的資料
