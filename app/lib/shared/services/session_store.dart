@@ -404,7 +404,6 @@ class AppSession {
   }
 
   /// 首次設定完成：寫入長者資料並標記**這個帳號**已完成，之後登入不再進 /setup。
-  /// TODO: 後端上線後改為 POST /elders，此持久化僅為登入前的 Demo 過渡。
   Future<void> saveSetup({
     required String name,
     required String nickname,
@@ -437,6 +436,21 @@ class AppSession {
     }
     await p.setString(_dialectKey(account), hakkaDialect);
     await p.setBool(_setupDoneKey(account), true);
+
+    // 後端建立長者資料並綁定帳號
+    try {
+      await CareRepo.instance.createElder({
+        'name': name,
+        if (nickname.isNotEmpty) 'nickname': nickname,
+        if (birthYear != null) 'birth_year': birthYear,
+        if (addressRegion.isNotEmpty) 'address_region': addressRegion,
+        'lang_preference': lang == 'hak' ? 'hak' : 'zh-TW',
+        'hakka_dialect': hakkaDialect,
+        'self_register': true,
+      });
+    } catch (_) {
+      // 後端不可用時不擋首次設定流程
+    }
   }
 
   /// 註冊流程中完成設定：把長輩資料暫存在 [email] 底下（見 [_kPendingSetupPrefix]）。
@@ -517,6 +531,21 @@ class AppSession {
     }
     await p.setBool(_setupDoneKey(accountId), true);
     await p.remove(key);
+
+    // 後端建立長者資料並綁定帳號（self_register=true 讓 pre-token trigger 下次能注入 elder_id）
+    try {
+      await CareRepo.instance.createElder({
+        'name': name is String ? name : '',
+        if (nickname is String && nickname.isNotEmpty) 'nickname': nickname,
+        if (birthYear is int) 'birth_year': birthYear,
+        if (region is String && region.isNotEmpty) 'address_region': region,
+        if (lang is String) 'lang_preference': lang == 'hak' ? 'hak' : 'zh-TW',
+        if (dialect is String && dialect.isNotEmpty) 'hakka_dialect': dialect,
+        'self_register': true,
+      });
+    } catch (_) {
+      // 後端不可用時不擋首次設定流程：本機資料已存好，下次啟動可重試
+    }
 
     await loadForAccount(accountId);
   }

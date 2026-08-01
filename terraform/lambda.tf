@@ -235,6 +235,7 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
         Resource = [
           aws_dynamodb_table.elders.arn,
           "${aws_dynamodb_table.elders.arn}/index/*",
+          aws_dynamodb_table.elder_accounts.arn,
           aws_dynamodb_table.conversations.arn,
           "${aws_dynamodb_table.conversations.arn}/index/*",
           aws_dynamodb_table.events.arn,
@@ -381,6 +382,7 @@ module "elders" {
 
   environment_variables = {
     TABLE_ELDERS               = aws_dynamodb_table.elders.name
+    ELDER_ACCOUNTS_TABLE       = aws_dynamodb_table.elder_accounts.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
   }
 }
