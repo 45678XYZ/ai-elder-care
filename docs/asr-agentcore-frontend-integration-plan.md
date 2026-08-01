@@ -53,7 +53,7 @@
 
 - 不執行真實模型 production rollout。
 - 不執行 `terraform apply` 或 `terraform destroy`。
-- 不核准 CE／Formo 模型，不偽造 Colab evidence、授權、quota 或容量證據。
+- 不核准 CE／Formo 模型，不偽造 staging/runtime evidence、授權、quota 或容量證據。
 - 不建立或實作 SageMaker inference container image；本次只保留已定義的 container I/O
   契約與 gated IaC。
 - 不整併 Flutter 畫面、Cognito SDK、照護者綁定 endpoint 或 frontend branch。
@@ -78,26 +78,28 @@
 - Lambda 不下載、載入或執行 ASR 模型。
 - 不加入 `torch`、`transformers`、`faster-whisper` 或其他模型推論依賴。
 - `ASR_CONFIG_JSON` 是 Chat Lambda 唯一的 ASR 設定來源。
-- 未核准 route 回 `route_not_approved`，不可回落到其他服務或固定假逐字稿。
-- Formo prompt 固定在 SageMaker container 部署設定；Lambda request 不傳 prompt ID。
+- 中文固定 Amazon Transcribe Streaming → CE；客語六腔固定對應 Formo endpoint → CE。
+- 只有 provider unavailable/failure/invalid response 可進同語言備援；未核准 provider 不外呼。
+- Formo prompt 與 `FORMO_GENERATION_LANGUAGE=Chinese` 固定在 SageMaker container 部署設定；
+  Lambda request 不傳，且 Formo capability 仍只允許 `hak`。
 - 音訊 bytes、逐字稿、HF token、長者個資與 provider 原始回應不得進入日誌或錯誤訊息。
 - `docs/api.md` 的 ASR request／response 契約維持不變。
 
 ### 3.3 Production fail-closed
 
 `default_config()` 的 `hak_mock` 只允許單元測試與明確的本機開發設定使用。Terraform
-部署的 Chat Lambda 即使 `asr_enable_endpoints=false`，仍要注入一份「所有真實路由均未核准、
-production 不啟用 mock」的明確 `ASR_CONFIG_JSON`，避免 production 因環境變數為空而把客語
-音訊轉成固定測試文字。
+部署的 Chat Lambda 即使 `asr_enable_endpoints=false`，仍要注入一份明確
+`ASR_CONFIG_JSON`：中文啟用受控 Transcribe，SageMaker providers 停用，且 production
+不啟用 mock，避免客語音訊被轉成固定測試文字。
 
 預期狀態如下：
 
 | 環境 | `zh-TW` audio | `hak` audio | 外呼 | GPU endpoint |
 |---|---|---|---|---|
 | 單元測試／明確 local mock | fail closed 或測試指定 provider | `hak_mock` | 否 | 否 |
-| Production、endpoint 未啟用 | `route_not_approved` | `route_not_approved` | 否 | 否 |
-| Endpoint 已建但模型未核准 | `route_not_approved` | `route_not_approved` | 否 | 有，但不得導流 |
-| 模型證據與五項 gate 全通過 | 依核准 route | 依核准 route | 僅核准 endpoint | 有 |
+| Production、endpoint 未啟用 | Transcribe | `route_not_approved` | 僅 Transcribe | 否 |
+| Endpoint 已建但模型未核准 | Transcribe；CE 不可作備援 | `route_not_approved` | Transcribe；模型不得導流 | 有，但不得導流 |
+| 模型證據與五項 gate 全通過 | Transcribe → CE | Formo → CE | 受控 Transcribe／核准 endpoint | 有 |
 
 ## 4. 現況缺口
 
@@ -148,7 +150,7 @@ production 不啟用 mock」的明確 `ASR_CONFIG_JSON`，避免 production 因�
   - config parser 與 production gate
   - provider protocol／registry
   - router／failover
-  - SageMaker remote provider
+  - Amazon Transcribe Streaming 與 SageMaker remote providers
   - concurrency／deadline／cancellation
   - telemetry allowlist
   - facade／composition root
@@ -159,8 +161,8 @@ production 不啟用 mock」的明確 `ASR_CONFIG_JSON`，避免 production 因�
 
 必須在 port 時重新確認：
 
-- 移除任何 local model 與 AWS managed ASR provider。
-- `ProviderKind` 只保留 `mock`、`remote_model`。
+- 移除任何 local model；AWS managed 只允許精確 ID `amazon_transcribe_zh_tw`。
+- `ProviderKind` 只保留 `mock`、`aws_managed`、`remote_model`。
 - model registry 只允許明確登記的模型。
 - 未核准 provider 不建立實例，也不能外呼。
 - 錯誤與 telemetry 不含原始音訊、逐字稿或例外文字。
@@ -170,8 +172,8 @@ production 不啟用 mock」的明確 `ASR_CONFIG_JSON`，避免 production 因�
 
 - ASR domain 不依賴 HTTP、DB、session 或 Agent。
 - `python -m pytest tests/asr -q` 全過。
-- 搜尋不到 `LOCAL_MODEL`、`AWS_MANAGED`、`torch`、`transformers`、
-  `faster-whisper` 的 production dependency。
+- 搜尋不到 local-model 路徑，以及 `torch`、`transformers`、`faster-whisper` 的
+  production dependency；`AWS_MANAGED` 只可出現在受控 Transcribe 路徑。
 
 ### Phase 2：把 ASR 接入 `main` 的 Chat turn state machine
 
@@ -314,7 +316,7 @@ requirements 不足。建議：
 1. `asr_enable_endpoints=false` 為預設。
 2. false 時：
    - SageMaker model、endpoint config、endpoint、autoscaling 全部 count 為 0。
-   - Chat 仍收到明確的 production-disabled `ASR_CONFIG_JSON`。
+   - Chat 仍收到中文 Transcribe 啟用、SageMaker providers 停用的明確 `ASR_CONFIG_JSON`。
    - production 不啟用 `hak_mock`。
 3. true 時必須同時提供：
    - CE image URI
@@ -322,11 +324,11 @@ requirements 不足。建議：
    - Formo image URI
    - Formo model-data URL
    - artifact bucket
-   - 合法的 Formo deployment prompt
-4. Formo prompt 只注入 SageMaker container environment，不注入 Chat Lambda。
+4. 六個 Formo prompt 與 `FORMO_GENERATION_LANGUAGE=Chinese` 只注入各 SageMaker container
+   environment，不注入 Chat Lambda。
 5. endpoint 建立與 route production approval 是兩道獨立 gate；只有資源存在仍不得導流。
-6. Chat IAM 只允許 `sagemaker:InvokeEndpoint` 到兩個明確 endpoint ARN；移除 main 的
-   `Resource="*"`。
+6. Chat IAM 只允許 `transcribe:StartStreamTranscription` 與
+   `sagemaker:InvokeEndpoint` 到七個明確 endpoint ARN；移除 main 的 `Resource="*"`。
 7. `ASR_CONFIG_JSON` 透過 Chat Lambda environment 注入，不建立個別 endpoint env。
 8. 只執行：
 
@@ -471,7 +473,7 @@ flutter test
 ### PR 3：ASR gated infrastructure
 
 - 加入預設關閉的 SageMaker resources。
-- 注入 production-disabled `ASR_CONFIG_JSON`。
+- 注入中文 Transcribe enabled、SageMaker providers disabled 的 production `ASR_CONFIG_JSON`。
 - 加入 scoped IAM、validation、outputs 與 Terraform tests。
 
 建議 commits：
@@ -487,7 +489,7 @@ flutter test
 
 | 風險 | 等級 | 處置 |
 |---|---|---|
-| Production 誤用 `hak_mock` | P0 | Terraform 永遠注入 production-disabled config；測試斷言不會回固定假逐字稿 |
+| Production 誤用 `hak_mock` | P0 | Terraform 永遠注入明確 production config；測試斷言中文只用受控 Transcribe、客語不會回固定假逐字稿 |
 | Agent write tool 提前寫 DB | P0 | RETURN_CONTROL + staged actions + `turns.commit()` transaction |
 | 模型提供其他 `elder_id` | P0 | trusted scope 取代模型參數，加入 prompt-injection 測試 |
 | M4A native dependency 在 Lambda import 失敗 | P0 | Linux artifact build、Chat 專用 requirements、deploy-package smoke test |
@@ -513,8 +515,8 @@ Bedrock Agents Classic 與 AgentCore 是不同服務。本計畫暫時沿用 mai
 - [x] main 原有 backend tests 全過。
 - [x] ASR tests 與 Chat bridge tests 全過。
 - [x] text chat 行為與 main 相容。
-- [x] production disabled config 下，`zh-TW`／`hak` audio 都 fail closed，無遠端外呼、
-      無固定假逐字稿。
+- [ ] SageMaker-disabled config 下，`zh-TW` 只外呼受控 Transcribe，`hak` fail closed，且不使用
+      固定假逐字稿。
 - [x] 相同 `client_request_id` replay 不重做 ASR 或 tool side effects。
 - [x] ASR failure 會 terminalize turn 並釋放 inflight。
 - [ ] write tools、turn completion 與 session 更新同 transaction 提交。
@@ -534,7 +536,7 @@ Bedrock Agents Classic 與 AgentCore 是不同服務。本計畫暫時沿用 mai
 以下不阻擋本次 fail-closed 整併，但不得被宣稱已完成：
 
 1. 建置並驗證 CE／Formo SageMaker inference containers。
-2. 執行 Colab 人工驗證、WER/CER、真實 M4A、延遲、quota 與容量測試。
+2. 在指定 SageMaker instance 執行 staging/runtime、WER/CER、合成 M4A、延遲、quota 與容量測試。
 3. 完成授權審查；Formo 的非商業授權不得在商業情境誤核准。
 4. 逐模型完成 production approval ADR，再開啟 route。
 5. 從 Bedrock Agents Classic 遷移 AgentCore Runtime／Memory／Gateway。
@@ -598,8 +600,8 @@ CE／Formo 模型的辨識準確率、延遲、容量、授權或 production rea
 - production 設定只從 `ASR_CONFIG_JSON` 取得；設定缺失或解析失敗必須 fail closed。
   純文字 Chat 不得建立 ASR client，也不得因 ASR 設定失效。
 - `default_config()` 的 `hak_mock` 只供單元測試或明確本機開發。Terraform 在 endpoints
-  關閉時仍注入 production-disabled config，使 `zh-TW` 與 `hak` 都回
-  `route_not_approved`，不得外呼 GPU endpoint，也不得回傳固定假逐字稿。
+  關閉時仍注入 production config：`zh-TW` 使用受控 Transcribe，`hak` 回
+  `route_not_approved`；不得外呼 GPU endpoint，也不得回傳固定假逐字稿。
 - Lambda dependency 僅包含 canonicalization 所需的 `numpy`、`soundfile` 與 `av`；不得
   加入 `torch`、`transformers` 或 `faster-whisper` 等模型 runtime。
 
@@ -619,21 +621,23 @@ CE／Formo 模型的辨識準確率、延遲、容量、授權或 production rea
 
 #### 路由、PII 與基礎設施 gate
 
-- 遠端 provider 只有在 route enabled、metadata 完整、approval state 合法、五項 production
-  gates 全數通過且 endpoint 存在時才可呼叫。`route_not_approved` 不得 fallback 到 mock 或
-  另一個未核准模型。
+- 自託管 provider 只有在 route enabled、metadata 完整、approval state 合法、五項 production
+  gates 全數通過且 endpoint 存在時才可呼叫。Managed provider 只允許固定 Transcribe ID；
+  `route_not_approved` 不得 fallback 到 mock 或另一個未核准模型。
 - 日誌採固定 16 欄 allowlist；不得記錄原始／canonical 音訊、逐字稿、provider 原始回應、
   `elder_id`、endpoint 名稱或 exception message。
-- ASR endpoint Terraform flag 預設為 `false`，所以預設為零 GPU。開啟前必須備妥 CE／
-  Formo image、model artifact、bucket 與部署期 prompt，並通過授權與人工 approval；IAM
-  權限須限定到核准的 endpoint。此次未執行任何 plan 或 apply。
+- ASR endpoint Terraform flag 預設為 `false`，所以預設為零 GPU；中文 Transcribe 不受此
+  開關影響。開啟前必須備妥 CE／Formo image、model artifact、bucket 與部署設定，並通過
+  授權與人工 approval；IAM 權限須限定到 Transcribe action 與核准 endpoints。此次未執行
+  任何 plan 或 apply。
 
 #### 尚未解決、不可誤稱完成
 
 - `main` 的 raw Lambda artifact 仍引用 `terraform/build/backend.zip`；Python 3.11 Linux native
   wheels、`av`／`soundfile` 載入與 deploy-package smoke test 尚未完成，這是實際部署 blocker。
-- 真實 CE／Formo image 與 model artifact、Colab／真實 M4A、WER／CER、延遲、quota、容量、
-  模型存取與授權均未驗證；Formo 非商業授權在商業情境不得核准。
+- 真實 CE／Formo image 與 model artifact、指定 instance staging/runtime／合成 M4A、
+  WER／CER、延遲、quota、容量與授權均未驗證；Formo access 已取得，但非商業授權在
+  商業情境不得核准。
 - Bedrock Agents Classic 仍有 `sessionId`／`memoryId`、trusted elder scope、write tool 原子性
   等風險；本次通過的 ASR bridge tests 不能替代 Phase 3 的安全修正。
 - Frontend branch 尚未整併；Cognito SDK、caregiver binding APIs、AAC-LC 真機錄音與 timeout

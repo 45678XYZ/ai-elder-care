@@ -59,3 +59,7 @@ JSON 無效、schema 不明、route 參照不存在 provider 或 remote model ga
 
 Router 再檢查 provider 的 `languages` 與 `dialects`，因此 fallback_chain 即使設定錯誤也
 不能跨語言或把南四縣送進 VoxHakka。
+
+OmniVoice、VoxHakka、BreezyVoice 的 endpoint enable 與 approval gate 彼此獨立，允許三者
+同時建立或單獨關閉。Instance type 與「每端點一台、無 autoscaling」是 Terraform 部署設定，
+不得加入 `TTS_CONFIG_JSON` 讓 Lambda 控制容量。

@@ -30,6 +30,10 @@
 - 文件同步：修改文件或新增/移動文件與頂層目錄時，更新 README 結構樹、文件清單與相關文件的交叉連結。
 - 只在修改系統架構、資料模型、模組邊界或 repo 佈局時閱讀完整的 `docs/framework.md`；局部修改依主題只讀權威文件與對應 skill 的按需閱讀表。完成後依受影響區域執行 `docs/conventions.md` 要求的檢查，例如 `backend/` 使用 `python -m pytest`。
 - IaC 本機驗證可使用 OpenTofu CLI（`tofu init/fmt/validate/plan`），但不得把專案交付物轉成 OpenTofu：檔案維持 `.tf`、文件與架構名稱維持 Terraform，且指令造成的 `.terraform.lock.hcl` registry／hash 改寫須在工作完成前恢復為 Terraform 版本。未經使用者明確指示不得執行 `tofu apply/destroy`，規則等同 Terraform。
+- 語音 remote-only 的意思是 Lambda 不載入 ASR／TTS 模型；受控的 Amazon Transcribe
+  Streaming `zh-TW` 與 Polly 屬允許的 AWS managed providers。CE/Formo 與自託管 TTS
+  production 核准只接受指定 SageMaker instance 的 staging/runtime evidence；未核准一律
+  fail closed。
 - 與使用者溝通時使用繁體中文。
 
 ## Skills

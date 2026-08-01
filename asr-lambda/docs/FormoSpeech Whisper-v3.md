@@ -11,14 +11,18 @@ SageMaker inference container 的實作注意事項。
   [`docs/asr/sagemaker-inference-contract.md`](../../docs/asr/sagemaker-inference-contract.md)。
 - Container 收到 mono／16 kHz／PCM S16LE；不可把模型載入邏輯放進 Lambda。
 
-## Prompt 部署邊界
+## Prompt 與漢字解碼部署邊界
 
-- Prompt ID 必須固定在 container 環境變數或 SageMaker deployment 設定。
-- Lambda request 不得攜帶 prompt ID。
-- 尚未選定 prompt 前，Formo endpoint 必須維持未啟用。
+- 六個 endpoints 的 `FORMO_PROMPT_ID` 必須分別固定為對應的六腔 wire value；不得在
+  request 時切換。
+- 每個 endpoint 固定 `FORMO_GENERATION_LANGUAGE=Chinese`，讓 Whisper 輸出客語漢字。
+  這不是中文 ASR capability；Formo 仍只允許 `hak` route。
+- Lambda request 不得攜帶 prompt ID 或 generation language。
 
 ## 存取與日誌
 
-- HF token 只可在 artifact 建置或短生命週期 runtime 中使用，不得傳入 Lambda。
+- HF token 只可在本機／CI 的 artifact 建置階段以 secret 短暫注入；不得傳入 Lambda 或
+  SageMaker environment。
 - 不得把 HF token、音訊、逐字稿、prompt ID 或 provider 原始回應寫入日誌。
-- 模型仍未核准前，本文件不得被視為 production deployment 授權。
+- Gated access 已取得，但模型授權、指定 instance staging 與 runtime 容量仍未核准；本文件
+  不得被視為 production deployment 授權。

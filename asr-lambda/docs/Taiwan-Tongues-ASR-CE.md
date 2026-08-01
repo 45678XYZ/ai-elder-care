@@ -4,6 +4,9 @@
 [`docs/asr/model-catalog.md`](../../docs/asr/model-catalog.md)。本文件只保留
 SageMaker inference container 的實作注意事項。
 
+CE 定位為中文與六腔客語的共同備援；未通過 staging/runtime、授權與容量 gate 前不得接受
+production invocation。
+
 ## 推論格式
 
 - 使用 CTranslate2／faster-whisper 載入模型 artifact。

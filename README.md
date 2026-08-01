@@ -8,6 +8,7 @@
 - API 規格：[docs/api.md](docs/api.md)
 - ASR 子系統架構：[docs/asr/framework.md](docs/asr/framework.md)
 - ASR 模型目錄：[docs/asr/model-catalog.md](docs/asr/model-catalog.md)
+- ASR 主備援決策：[docs/adr/asr-managed-transcribe-routing.md](docs/adr/asr-managed-transcribe-routing.md)
 - TTS 子系統架構：[docs/tts/framework.md](docs/tts/framework.md)
 - TTS 實作計畫：[docs/tts/implementation-plan.md](docs/tts/implementation-plan.md)
 - 使用者旅程：[docs/user-journey.md](docs/user-journey.md)
@@ -24,10 +25,10 @@
 ├── .agents/        # Codex 專案 skills
 ├── AGENTS.md       # Codex 全專案工作規範
 ├── app/            # Flutter（elder/ caregiver/ 兩組頁面 + shared services）
-├── asr-lambda/     # SageMaker inference container 開發文件與本機 conda 環境
+├── asr-lambda/     # CE/Formo SageMaker container 開發與 staging 相容性預檢
 ├── backend/        # Python Lambda handlers＋ASR/TTS 領域模組＋extraction pipeline
-├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, SageMaker ASR/TTS
-├── data/           # 模擬長者 persona、情境對話腳本、seed 腳本、knowledge/ 衛教文件
+├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, Transcribe, SageMaker ASR/TTS
+├── data/           # 模擬長者 persona、合成情境腳本、seed 腳本、knowledge/ 衛教文件
 ├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、交付文件、PII、開發流程與功能移植計畫
 └── skills/         # 供各 AI 工具開發使用的 skill（開發者需自行加入自己的工具）
 ```

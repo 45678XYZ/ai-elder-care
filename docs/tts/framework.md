@@ -39,6 +39,10 @@ Agent reply_text + lang + profile dialect + deadline + correlation
 Terraform 預設不建立遠端 TTS endpoint。中文在未核准台灣華語模型時仍可使用 Polly
 相容層；客語 route 沒有已啟用且通過 gate 的 provider 時回領域錯誤，Chat 只回文字。
 
+三個自託管 provider 使用獨立 enable／approval gate，可同時建立；每個 endpoint 固定一台且
+不建立 autoscaling：OmniVoice、VoxHakka 各使用 `ml.g4dn.xlarge`，BreezyVoice 使用
+`ml.g4dn.4xlarge`。Instance 建立不代表模型通過 production gate。
+
 ## 六腔設定
 
 固定 wire values：`htia_sixian`、`htia_hailu`、`htia_dapu`、`htia_raoping`、

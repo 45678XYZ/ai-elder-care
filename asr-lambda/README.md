@@ -1,6 +1,7 @@
 # ASR 模型整合 — 容器開發與驗證環境
 
-本目錄提供 ASR 模型的 conda 環境設定，定位為 **SageMaker inference container 開發與人工驗證**用途。
+本目錄提供 ASR 模型的 conda 環境設定，定位為 **SageMaker inference container 開發與
+staging/runtime 驗證**用途。
 
 > **重要**：Lambda 不在 process 內執行模型推論（remote-only 架構）。
 > 本環境用於建立與測試 inference container，不是 Lambda 執行環境。
@@ -19,7 +20,7 @@
 
 - [Miniconda](https://docs.conda.io/en/latest/miniconda.html) 或 [Anaconda](https://www.anaconda.com/)
 - NVIDIA GPU + 驅動（CUDA 12.4 相容）
-- FormoSpeech 模型需事先申請 Hugging Face gated access 並取得 token
+- FormoSpeech 模型需使用已取得 gated access 的 Hugging Face 帳號；下載時以 secret 注入 token
 
 ## 環境建立與啟用
 
@@ -68,10 +69,12 @@ python -c "from transformers import WhisperForConditionalGeneration; print('tran
 - `backend/src/shared/asr/` 是 Lambda remote-only 領域套件，不依賴本環境的模型推論套件。
 - 本環境用來讓 inference container 接收 Lambda 產生的 mono／16 kHz／PCM S16LE。
 - `backend/tests/asr/` 的測試使用 `pytest==8.3.5` 與 `hypothesis==6.122.3`，與本環境版本一致。
-- Colab 驗證包（`backend/asr_colab/`）有各自獨立的 `requirements.lock`，本環境僅供本機開發使用。
+- 模型 production gate 只接受指定 SageMaker instance 的 staging/runtime 證據；本環境只供
+  container 開發與相容性預檢，不代表 production 核准。
 
 ## 注意事項
 
 - 本環境需要 NVIDIA GPU；若無 GPU 僅能執行不涉及模型推論的單元測試。
-- FormoSpeech 為 gated model，使用前需以 `huggingface-cli login` 登入已獲授權的帳號。
+- FormoSpeech gated access 已取得；下載時使用限定該 repository 的 fine-grained read token，
+  或直接使用已封裝的 `model.tar.gz`。不要把 token 放入 Lambda、SageMaker environment 或 repo。
 - 請勿將 HF token 寫入任何檔案或提交至版本控制。

@@ -19,7 +19,7 @@ OpenTofu 驗證後 `.terraform.lock.hcl` 已恢復為 Terraform registry/hash。
   不宣稱是台灣口音。若台灣華語模型未核准，允許設定選用 Zhiyu。
 - TTS 全數失敗時保留文字 turn並回 `reply_audio_url=null`；不可用中文語音錯念客語。
 - Flutter 本案只完成 API/DTO 契約與測試，不實作對話畫面或播放迴圈。
-- 不設計或新增 Colab 工作流；核准證據改由 staging/runtime、授權、容量與延遲驗證提供。
+- 模型核准證據由 staging/runtime、授權、容量與延遲驗證提供。
 
 ## 實作範圍
 
@@ -34,6 +34,8 @@ OpenTofu 驗證後 `.terraform.lock.hcl` 已恢復為 Terraform registry/hash。
 5. 新增預設關閉的 TTS SageMaker、最小 IAM、`TTS_CONFIG_JSON` 與 Terraform fail-closed validation。
 6. 建立 TTS framework、config schema、model catalog、container contract、PII、安全 ADR、領域 README
    與專案 skill，並同步根 README、整體 framework、API、PII、user journey 與 backend README。
+7. OmniVoice、VoxHakka、BreezyVoice 使用獨立 endpoint enable／approval gate，允許同時建立；
+   前兩者各固定一台 `ml.g4dn.xlarge`，BreezyVoice 固定一台 `ml.g4dn.4xlarge`，不建立 autoscaling。
 
 ## 驗收
 

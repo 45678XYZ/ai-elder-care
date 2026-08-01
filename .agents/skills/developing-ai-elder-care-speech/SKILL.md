@@ -10,12 +10,16 @@ description: "ASR/TTS 與 Chat 語音串接的薄型維護指引。修改 backen
 
 ## 不變量
 
-- ASR 與開源 TTS 模型只在 SageMaker 執行；Lambda 不載入推論框架或模型。
+- 自託管 ASR 與開源 TTS 模型只在 SageMaker 執行；Lambda 不載入推論框架或模型。
+  `amazon_transcribe_zh_tw` 是唯一受控 ASR managed provider，固定 Streaming、`zh-TW`、
+  16 kHz、PCM 與 final transcripts。
 - `ASR_CONFIG_JSON`、`TTS_CONFIG_JSON` 分別是唯一設定來源；AWS Region 除外。
-- `lang` 只信任 API；客語六腔只信任 elder profile。ASR 不傳 Formo prompt ID。
+- `lang` 只信任 API；客語六腔只信任 elder profile。ASR 中文固定 Transcribe → CE，
+  客語六腔固定 Formo → CE；Formo prompt 與 `Chinese` generation language 都固定在 endpoint，
+  Lambda request 不傳。
 - 未核准、能力不符或設定矛盾一律 fail closed。客語 TTS 不得 fallback 到中文。
 - 不記錄音訊、逐字稿／合成文字、長者個資、token、endpoint、原始 provider 回應或原始例外。
-- TTS 模型核准使用 staging/runtime evidence，不建立 Colab 驗證流程。
+- ASR/TTS 自託管模型核准只使用指定 SageMaker instance 的 staging/runtime evidence。
 - 公開 request/response 或錯誤有變更時，同步 `docs/api.md` 與 Flutter DTO/tests。
 
 ## 按需閱讀
@@ -24,7 +28,7 @@ description: "ASR/TTS 與 Chat 語音串接的薄型維護指引。修改 backen
 |---|---|
 | ASR router／facade／composition／Chat bridge | `docs/asr/framework.md`、`backend/src/shared/asr/README.md` |
 | ASR config 或 `terraform/asr_lambda_config.tf` | `docs/asr/config-schema.md` |
-| ASR provider／container I/O | `docs/asr/sagemaker-inference-contract.md` |
+| ASR managed/SageMaker provider／container I/O | `docs/asr/sagemaker-inference-contract.md` |
 | ASR telemetry／logging／audio lifecycle | `docs/asr/security-and-pii.md` |
 | TTS router／facade／composition／Chat bridge | `docs/tts/framework.md`、`backend/src/shared/tts/README.md` |
 | TTS config 或 `terraform/tts_lambda_config.tf` | `docs/tts/config-schema.md` |

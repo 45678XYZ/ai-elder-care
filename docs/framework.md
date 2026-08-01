@@ -18,7 +18,7 @@
 ```mermaid
 flowchart TB
     subgraph app["Flutter App（長者／照護者模式）"]
-        elder["長者模式<br/>免手持語音迴圈<br/>裝置端 ASR + 音訊播放"]
+        elder["長者模式<br/>免手持語音迴圈<br/>錄音上傳 + 音訊播放"]
         caregiver["照護者模式<br/>行程、事件、摘要、統計"]
     end
 
@@ -38,7 +38,7 @@ flowchart TB
         summary["daily summary generator Lambda"]
         apis["資料 API Lambda<br/>elders / summaries / events<br/>routines / stats"]
         asr["後端 ASR 模組<br/>Canonical Audio + 路由 + 備援鏈<br/>backend/src/shared/asr"]
-        asrmodels["ASR 推論端點<br/>CE + Formo 六腔固定 prompt<br/>預設未啟用"]
+        asrproviders["AWS ASR providers<br/>Transcribe zh-TW Streaming<br/>CE 備援 + Formo 六腔固定 prompt"]
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
         embed["Bedrock embedding model<br/>concept retrieval + turn segmentation"]
         vectors[("S3 Vectors<br/>UCO concept index")]
@@ -58,7 +58,8 @@ flowchart TB
     periodic -->|idle sweep / batch recovery sweep| closer
     chat -->|audio| asr
     asr -->|transcript| chat
-    asr -.->|僅在模型通過核准後| asrmodels
+    asr -->|中文主力| asrproviders
+    asr -.->|CE/Formo 僅在模型通過核准後| asrproviders
     chat -->|structured output| model
     model -->|RAG retrieval| kb
     model -->|tool calling| tools
@@ -87,7 +88,7 @@ flowchart TB
 
 - **語音對話迴圈**：App 錄音 → `POST /chat` 後端 ASR 辨識 → 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
-- **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論，只將正規化音訊傳送到 SageMaker Endpoint、驗證回應並將文字交給聊天流程。模型上線需通過逐項人工核准，未核准時一律 fail closed。ASR 子系統完整架構見 [`docs/asr/framework.md`](asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
+- **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論。`zh-TW` 以 Amazon Transcribe Streaming 為主力、Taiwan-Tongues CE 為備援；`hak:<六腔>` 以對應 Formo 固定-prompt SageMaker endpoint 為主力、共用 CE 為備援。CE/Formo 必須逐模型通過 staging/runtime、授權、存取、配額與容量核准，未核准時一律 fail closed；Transcribe 全程 memory-only，不使用 batch/S3。ASR 子系統完整架構見 [`docs/asr/framework.md`](asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
 - **後端 TTS** 同樣採 remote-only 與設定驅動 route。`lang` 明確決定中文或客語；客語六腔只讀 elder profile 並保存 turn 快照。客語失敗不得改用中文 voice；所有 TTS provider 失敗時仍提交文字 turn，`reply_audio_url=null`。完整規格見 [`docs/tts/framework.md`](tts/framework.md)。
 - Bedrock Agent tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：Agent 在 `InvokeAgent` 回應前自動呼叫 tools Lambda 寫入 completion event 或發送安全通知。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
 - batch extractor 的分類前先做候選概念檢索：以 Bedrock embedding 取查詢向量，向 S3 Vectors 的概念索引取 Top-K 候選後才呼叫分類模型；同一個 embedding 供應者也用於 turn 切分。索引維度在建立時固定，因此 index 名稱帶模型與維度，模型抽換以新索引並存、切換環境變數完成。
@@ -486,9 +487,8 @@ ai-elder-care/
 ├── .kiro/          # Kiro 設定與 specs
 ├── app/            # Flutter
 ├── asr-lambda/     # SageMaker inference container 開發文件與本機 conda 環境
-├── backend/        # Python Lambda handlers、ASR 領域模組與 extraction pipeline
-│   ├── src/shared/asr/   # ASR 領域模組（見該目錄 README）
-│   └── asr_colab/        # 兩個模型的人工 Colab 驗證包
+├── backend/        # Python Lambda handlers、ASR/TTS 領域模組與 extraction pipeline
+│   └── src/shared/       # ASR/TTS 與其他跨 handler 共用模組
 ├── terraform/      # AWS IaC
 ├── data/           # 模擬 persona、腳本、知識文件
 ├── docs/           # 架構、API、ASR、ADR、旅程、PII

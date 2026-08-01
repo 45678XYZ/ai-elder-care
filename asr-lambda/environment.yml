@@ -1,5 +1,5 @@
 # ASR 模型整合 — conda 環境設定
-# 用途：本機開發、ASR 模型驗證（Taiwan-Tongues-ASR-CE / FormoSpeech Whisper-v3）
+# 用途：本機 container 開發與相容性預檢（production gate 以 SageMaker staging/runtime 為準）
 # 建立：conda env create -f environment.yml
 # 啟用：conda activate asr-model
 # 更新：conda env update -f environment.yml --prune

@@ -32,4 +32,7 @@ Not spelled out in the docs above, or worth emphasizing:
 - **API contract**: `docs/api.md` is the frontend/backend contract — whenever you change API behavior, update it in the same change.
 - **Keep docs in sync**: when you change a doc's content, or add/move a doc or top-level file/dir, update whatever references it — the README structure tree and its doc list, and cross-links in related docs — so nothing goes stale.
 - **Before committing**: run the checks for the area you touched (e.g. `python -m pytest` in `backend/`), per `docs/conventions.md`.
+- **Speech remote-only**: Lambda 不載入 ASR／TTS 模型；受控 Amazon Transcribe Streaming
+  `zh-TW` 與 Polly 是允許的 AWS managed providers。CE/Formo 與自託管 TTS production
+  核准只接受指定 SageMaker instance 的 staging/runtime evidence；未核准一律 fail closed。
 - **Talk with the user in Traditional Chinese.**
