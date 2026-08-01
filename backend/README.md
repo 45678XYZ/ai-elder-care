@@ -1,41 +1,102 @@
-# backend/ — Python Lambda
+# backend/ — 雲端後端模組
 
-每個 handler 對應一組 API 資源，由 API Gateway（Cognito JWT authorizer）觸發；`summary_generator` 由 EventBridge Scheduler 每晚觸發。API 規格見 [docs/api.md](../docs/api.md)。
+本模組為系統的核心大腦與資料處理中樞，採用 **Python** 實作，以無伺服器 (Serverless) 架構部署至 AWS Lambda 與 Bedrock AgentCore Runtime。
+
+## 模組功能
+
+1. **對話大腦 (AgentCore Runtime)** — 基於 LangGraph 狀態機的對話 AI，取代 Bedrock Classic Agent，提供長期記憶、tool calling 與高可控性推理
+2. **RESTful API 服務 (Handlers)** — 提供 App 端所需的全部 API（對話、長者資料、行程、事件、摘要、統計）
+3. **生活記錄萃取 (Extraction Pipeline)** — 從自然對話中自動萃取結構化生活事件（飲食/活動/睡眠/用藥/安全等）
+4. **排程任務** — EventBridge 驅動的每日摘要生成、晚報推播、idle session 收斂
+
+## 目錄結構
 
 ```
-src/
-├── handlers/     # chat / elders / summaries / events / routines / stats / summary_generator / pre_token_generation（Cognito trigger）
-├── agentcore_runtime/  # 對話大腦：LangGraph 狀態機、工具包裝、人設；部署到 AgentCore Runtime 而非 Lambda
-├── extraction/   # 生活記錄（Module B）萃取 pipeline：分類體系、分塊、分類、萃取、canonical identity、去重
-│   └── assets/   # 隨部署包發佈的資產：taxonomy/ 分類體系、retrieval/ 概念檢索 sub-chunks
-└── shared/       # auth（token 授權）、db（DynamoDB 六表）、models（Pydantic schema）、
-                  # responses（統一回應格式）、routines（例行公事版本與 occurrence 推導）、
-                  # bedrock（模型呼叫）、sessions（session 生命週期）、
-                  # turns（turn 請求狀態機與冪等）、metrics（觀測指標）
-scripts/          # 離線工具（資產檢視、索引建置、模型導出、分塊模型工作流）
-training/         # 分塊模型 pairwise_v2 的離線訓練與評測（語料、特徵、指標）
-tests/            # pytest
+backend/
+├── src/                          # 核心原始碼（詳見 src/README.md）
+│   ├── handlers/                 # AWS Lambda Handlers（14 個 API/背景工作進入點）
+│   ├── agentcore_runtime/        # 對話大腦（LangGraph + LangChain 工具鏈）
+│   ├── extraction/               # 端到端事件萃取 Pipeline（9 個處理階段）
+│   │   └── assets/               # 分類體系 / 分塊模型 / 概念索引靜態資料
+│   └── shared/                   # 共用模組（DB / Auth / Models / Bedrock / TTS）
+├── scripts/                      # 開發輔助與離線執行腳本
+├── training/                     # 分塊模型離線訓練（不進部署包）
+├── tests/                        # Pytest 單元測試與整合測試
+├── pyproject.toml                # Python 專案配置（含 [dev] / [training] extras）
+├── requirements.txt              # Lambda 執行期依賴（Terraform 打包用）
+├── agentcore_requirements.txt    # 對話大腦專用依賴（langgraph / langchain_aws）
+└── README.md
 ```
 
-離線工具以 module 形式執行，例如 `python -m scripts.dump_taxonomy` 印出節點與高階類別對照表。
+詳細的逐檔說明請見 **[src/README.md](src/README.md)**。
 
-`training/` 與 `scripts/segmenter_v2_*.py` 是離線工作流，不進 Lambda 部署包（`pyproject.toml` 的 packages 只收 `src*`）；操作步驟見 [docs/feature_segmenter-pairwise-v2.md](../docs/feature_segmenter-pairwise-v2.md)。
+## scripts/ — 開發輔助腳本
 
-`extraction/` 只由 batch 相關 Lambda 使用，不進 realtime `/chat` 路徑；設計與移植步驟見 [docs/feature_events-extraction.md](../docs/feature_events-extraction.md)。
+| 檔案 | 功能 |
+|------|------|
+| `build_concept_vector_index.py` | 建構概念向量索引（供 Extraction Retriever 使用） |
+| `draft_predicate_lexicon.py` | 草擬謂語辭典（canonical key 正規化用） |
+| `dump_taxonomy.py` | 匯出/檢視分類體系（除錯用） |
+| `resolve_event_identity.py` | 事件身分解析工具（驗證 canonical key 產生邏輯） |
+| `segmenter_v2_prepare_corpora.py` | 準備 V2 分塊模型訓練語料 |
+| `segmenter_v2_prepare_annotation.py` | 準備分塊標註資料 |
+| `segmenter_v2_embed.py` | 產生分塊模型所需的 embedding |
+| `segmenter_v2_train.py` | 訓練 Pairwise V2 分塊模型 |
+| `segmenter_v2_evaluate.py` | 評估分塊模型效能（F1 / Precision / Recall） |
+| `segmenter_v2_translate.py` | 翻譯分塊訓練資料 |
+| `segmenter_v2_smoke.py` | 分塊模型冒煙測試 |
 
-`agentcore_runtime/` 是唯一不跑在 Lambda 上的部分：它以 zip 部署到 Bedrock AgentCore Runtime（見 `terraform/agentcore.tf`），由 `chat.py` 以 `invoke_agent_runtime` 呼叫，再由它回頭呼叫 tools Lambda。依賴另立 `agentcore_requirements.txt`（langgraph 那一串只有大腦用得到，混進 `requirements.txt` 會讓其餘 Lambda 的部署包一起變大）；本機要跑它的測試時裝 `pip install -r agentcore_requirements.txt`。工具契約見 [docs/llm_tools.md](../docs/llm_tools.md)。
+## training/segmenter_v2/ — 分塊模型訓練模組
 
-## 開發
+| 檔案 | 功能 |
+|------|------|
+| `contract.py` | 訓練/推理介面契約定義 |
+| `corpora.py` | 語料載入與預處理 |
+| `embeddings.py` | Embedding 特徵萃取 |
+| `baselines.py` | 基線模型（用於效能比較） |
+| `metrics.py` | 評估指標計算（F1 / Precision / Recall） |
+| `export.py` | 模型導出（產生 `assets/segmenter/pairwise_v2.json`） |
+| `paths.py` | 訓練資料路徑管理 |
+
+## tests/ — 測試
+
+涵蓋所有核心模組的單元測試與整合測試，基於 pytest：
+
+| 測試檔案 | 測試範圍 |
+|----------|----------|
+| `test_chat.py` | POST /chat 完整流程 |
+| `test_elders.py` | 長者 CRUD API |
+| `test_routines_api.py` / `test_routines_domain.py` | 行程 API + 推導邏輯 |
+| `test_events_handler.py` / `test_events_data_layer.py` | 事件 API + 資料層 |
+| `test_summaries_handler.py` / `test_summaries_end_to_end.py` | 摘要 API + E2E |
+| `test_stats_handler.py` | 統計 API |
+| `test_session_closer.py` / `test_sessions.py` | Session 關閉與管理 |
+| `test_batch_extractor.py` | 批次萃取器 |
+| `test_extraction_*.py` | Extraction Pipeline 各階段（pipeline / chunking / classifier / pruner / retriever / schema_composer / segmenter / taxonomy / temporal / canonical / extractor） |
+| `test_summarizer.py` / `test_summary_generator.py` | 摘要生成邏輯 |
+| `test_auth.py` | 認證與授權 |
+| `test_db.py` | DynamoDB 存取層 |
+| `test_bedrock_client.py` | Bedrock 呼叫層 |
+| `test_tools.py` | Tools Lambda 工具箱 |
+| `test_models.py` | Pydantic 模型驗證 |
+| `test_metrics.py` | CloudWatch 指標 |
+| `test_turns.py` | Turn 生命週期 |
+
+## 開發指南
 
 ```bash
 cd backend
-python3 -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 python -m pytest
 ```
 
-依賴管理在 `pyproject.toml` 與 `requirements.txt`：`requirements.txt` 為 Lambda 執行期依賴（由 Terraform 社群模組 `terraform-aws-modules/lambda/aws` 的 `pip_requirements` 自動安裝打包），`[dev]` 為開發期工具，`[training]` 為離線訓練工作流所需（scikit-learn、numpy）。handlers 以 `from src.shared import ...` 匯入，editable install 後即可解析。
+若需測試 AgentCore Runtime：
+```bash
+pip install -r agentcore_requirements.txt
+```
 
-## RAG PoC（衛教知識庫問答）
-
-已移至 [experiments/rag-poc/](../experiments/rag-poc/)——與此 Lambda 骨架分開維護（在本機用 Chroma 跑通檢索；生成層待接 Bedrock）。正式版由 `chat.py` 接 Bedrock Knowledge Base 實作。
+若需訓練/評估分塊模型：
+```bash
+pip install -e ".[training]"
+```
