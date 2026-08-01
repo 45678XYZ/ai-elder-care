@@ -172,3 +172,10 @@ cp .env.example .env
 |------|------|
 | `build_kb_upload.py` | 將 `data/knowledge/` 衛教文件轉換為 Bedrock KB 上傳格式（正文 + metadata sidecar） |
 | `sync_kb.sh` | 同步知識庫文件至 S3 並觸發 Bedrock KB 重新索引 |
+
+## 資料來源
+
+| 用途 | 來源 |
+|------|------|
+| 中文→客語漢字翻譯 | [客語語音翻譯系統](https://speech.hakka.gov.tw/Translation/Online)（客委會） |
+| App 字體 | [全字庫宋體字型檔](https://data.gov.tw/dataset/5961)（政府資料開放平臺） |
