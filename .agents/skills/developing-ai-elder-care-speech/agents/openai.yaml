@@ -1,4 +1,0 @@
-interface:
-  display_name: "AI Elder-Care Speech"
-  short_description: "安全維護 ASR/TTS、客語六腔路由與語音資料邊界"
-  default_prompt: "Use $developing-ai-elder-care-speech to implement or review the ASR/TTS subsystem safely."
