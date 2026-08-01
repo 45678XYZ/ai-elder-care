@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai-elder-care-backend"
+name = "e-hakka-care-backend"
 version = "0.1.0"
-description = "智慧長照陪伴 App — Python Lambda 後端"
+description = "客照e點通 App — Python Lambda 後端"
 requires-python = ">=3.11"
 # 執行期依賴（Lambda 部署包依此安裝；boto3 為 Lambda 執行環境內建，本機開發需要）
 dependencies = [
