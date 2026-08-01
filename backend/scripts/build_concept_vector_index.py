@@ -8,7 +8,7 @@
 
     # 實際建立索引並寫入向量
     python -m scripts.build_concept_vector_index \
-        --bucket ai-elder-care-vectors \
+        --bucket e-hakka-care-vectors \
         --model amazon.titan-embed-text-v2:0 --dim 1024
 
 需要 `s3vectors:CreateIndex`、`s3vectors:PutVectors` 與 `bedrock:InvokeModel` 權限。

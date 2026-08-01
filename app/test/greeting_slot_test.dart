@@ -1,4 +1,4 @@
-import 'package:ai_elder_care/elder/widgets/greeting_slot.dart';
+import 'package:e_hakka_care/elder/widgets/greeting_slot.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// 時段問候的分界。
