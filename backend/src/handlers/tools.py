@@ -1075,6 +1075,40 @@ def handle_get_events_by_time(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"查詢事件失敗: {str(e)}"}
 
 
+# -----------------------------------------------------------------------------
+# 工具十五：將已完成的例行公事退回待辦狀態
+# -----------------------------------------------------------------------------
+
+def handle_uncomplete_routine(params: Dict[str, Any]) -> Dict[str, Any]:
+    """工具十五：將已完成的例行公事退回待辦（pending）狀態，用於長者誤觸完成時撤銷。"""
+    elder_id = params.get("elder_id")
+    routine_id = params.get("routine_id")
+    date_str = params.get("date", routines.today())
+
+    if not elder_id or not routine_id:
+        return {"status": "error", "message": "缺少必要參數 elder_id 或 routine_id"}
+
+    try:
+        deleted = db.delete_routine_completion(elder_id, routine_id, date_str)
+        if deleted:
+            return {
+                "status": "success",
+                "routine_id": routine_id,
+                "routine_date": date_str,
+                "message": "已將行程退回待辦狀態",
+            }
+        else:
+            return {
+                "status": "not_found",
+                "routine_id": routine_id,
+                "routine_date": date_str,
+                "message": "該行程今日尚未完成，無需退回",
+            }
+    except Exception as e:
+        print(f"[Error] handle_uncomplete_routine 失敗: {e}")
+        return {"status": "error", "message": f"退回待辦失敗: {str(e)}"}
+
+
 # 工具分流映射字典 (Function Name -> Handler Function)
 # -----------------------------------------------------------------------------
 
@@ -1093,6 +1127,7 @@ TOOL_HANDLERS = {
     "get_recent_conversations": handle_get_recent_conversations,
     "get_weather_forecast": handle_get_weather_forecast,
     "get_events_by_time": handle_get_events_by_time,
+    "uncomplete_routine": handle_uncomplete_routine,
 }
 
 
