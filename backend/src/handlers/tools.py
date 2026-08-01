@@ -32,6 +32,44 @@ from src.shared import db, sessions, routines
 from src.shared.models import health_note_texts
 from src.extraction.canonical import safety_alert_key, event_id_for
 
+import boto3
+
+_USER_POOL_ID = os.environ.get("USER_POOL_ID", "")
+_cognito_client = None
+
+
+def _get_cognito_client():
+    global _cognito_client
+    if _cognito_client is None:
+        _cognito_client = boto3.client("cognito-idp")
+    return _cognito_client
+
+
+def _get_caregiver_emails(elder_id: str) -> list[str]:
+    """從 elder 的 caregiver_ids 查 Cognito 取得每位照護者的 email。"""
+    elder = db.get_elder(elder_id)
+    if not elder:
+        return []
+    caregiver_ids = elder.get("caregiver_ids", [])
+    if not caregiver_ids or not _USER_POOL_ID:
+        return []
+
+    emails = []
+    client = _get_cognito_client()
+    for sub in caregiver_ids:
+        try:
+            resp = client.admin_get_user(
+                UserPoolId=_USER_POOL_ID,
+                Username=sub,
+            )
+            for attr in resp.get("UserAttributes", []):
+                if attr["Name"] == "email":
+                    emails.append(attr["Value"])
+                    break
+        except Exception as e:
+            print(f"[Warn] 查詢照護者 {sub} email 失敗: {e}")
+    return emails
+
 
 # -----------------------------------------------------------------------------
 # Lambda Warm Start In-Memory 緊急狀態鎖
@@ -561,8 +599,6 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
     message_id = None
 
     try:
-        topic_arn = os.environ.get("CAREGIVER_NOTIFY_TOPIC_ARN")
-
         # ------------------------------------------------------------------
         # 分流：依 category 執行不同安全邏輯
         # ------------------------------------------------------------------
@@ -597,7 +633,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
 
             subject = "🚨【智慧長照緊急警報】長者可能需要即時關懷與協助"
             email_body = _build_emergency_email(elder_id, message_content, rag_content)
-            message_id = _publish_sns(topic_arn, subject, email_body)
+            message_id = _publish_to_caregivers(elder_id, subject, email_body)
             print(f"[Emergency] elder={elder_id} alert_id={alert_id} event_id={event['event_id']}")
 
         elif category == "critical_escalation":
@@ -627,7 +663,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
 
             subject = "🚨🚨【智慧長照緊急警報】長者狀況急遽惡化，請立即處置"
             email_body = _build_escalation_email(elder_id, message_content)
-            message_id = _publish_sns(topic_arn, subject, email_body)
+            message_id = _publish_to_caregivers(elder_id, subject, email_body)
             print(f"[Escalation] elder={elder_id} alert_id={alert_id} event_id={active_event_id}")
 
         elif category == "mitigation":
@@ -659,7 +695,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
 
             subject = "⚠️【智慧長照通知】長者自述緩解 - 請家屬仍需親自確認"
             email_body = _build_mitigation_email(elder_id, message_content)
-            message_id = _publish_sns(topic_arn, subject, email_body)
+            message_id = _publish_to_caregivers(elder_id, subject, email_body)
             print(f"[Mitigation] elder={elder_id} alert_id={alert_id} event_id={event['event_id']}")
 
         elif category in ("routine", "summary"):
@@ -674,7 +710,7 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
                 f"長者編號: {elder_id}\n通知類別: {category}\n"
                 f"時間: {now_str}\n\n{message_content}"
             )
-            message_id = _publish_sns(topic_arn, subject, email_body)
+            message_id = _publish_to_caregivers(elder_id, subject, email_body)
             print(f"[{category.capitalize()}] elder={elder_id} 日常通知發送成功")
 
         else:
@@ -693,21 +729,70 @@ def handle_notify_caregiver(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "message": f"發送照護者通知失敗: {str(e)}"}
 
 
-def _publish_sns(topic_arn: Optional[str], subject: str, message: str) -> str:
-    """發送 SNS 通知；若 topic_arn 未設定則使用 Mock 模式（開發環境）。"""
-    if topic_arn:
-        import boto3
-        sns_client = boto3.client("sns")
-        resp = sns_client.publish(
-            TopicArn=topic_arn,
-            Subject=subject,
-            Message=message
-        )
-        return resp.get("MessageId", "")
-    else:
+_SNS_TOPIC_PREFIX = os.environ.get("SNS_TOPIC_PREFIX", "")
+_sns_client = None
+
+
+def _get_sns_client():
+    global _sns_client
+    if _sns_client is None:
+        _sns_client = boto3.client("sns")
+    return _sns_client
+
+
+def _get_or_create_elder_topic(elder_id: str) -> str | None:
+    """取得或建立 per-elder SNS topic，回傳 topic ARN。"""
+    if not _SNS_TOPIC_PREFIX:
+        return None
+    topic_name = f"{_SNS_TOPIC_PREFIX}-{elder_id.replace('_', '-')}"
+    sns = _get_sns_client()
+    try:
+        resp = sns.create_topic(Name=topic_name)
+        return resp["TopicArn"]
+    except Exception as e:
+        print(f"[Error] 建立 elder topic 失敗: {e}")
+        return None
+
+
+def _ensure_caregivers_subscribed(topic_arn: str, elder_id: str) -> None:
+    """確保該長者的所有照護者已訂閱其 SNS topic（冪等）。"""
+    emails = _get_caregiver_emails(elder_id)
+    sns = _get_sns_client()
+    for email in emails:
+        try:
+            sns.subscribe(
+                TopicArn=topic_arn,
+                Protocol="email",
+                Endpoint=email,
+                ReturnSubscriptionArn=True,
+            )
+        except Exception as e:
+            print(f"[Warn] SNS subscribe {email} 失敗: {e}")
+
+
+def _publish_to_caregivers(elder_id: str, subject: str, message: str) -> str:
+    """發送通知到 per-elder SNS topic，只有綁定的照護者會收到。
+
+    流程：
+    1. 取得或建立該長者專屬的 SNS topic
+    2. 確保照護者 email 已訂閱（首次會收確認信，點一次即永久有效）
+    3. Publish 到 per-elder topic
+    """
+    topic_arn = _get_or_create_elder_topic(elder_id)
+    if not topic_arn:
         mock_id = f"mock-msg-{int(time.time())}"
         print(f"[Mock SNS] Subject: {subject}\n{message[:200]}...")
         return mock_id
+
+    _ensure_caregivers_subscribed(topic_arn, elder_id)
+
+    sns = _get_sns_client()
+    resp = sns.publish(
+        TopicArn=topic_arn,
+        Subject=subject,
+        Message=message,
+    )
+    return resp.get("MessageId", "")
 
 
 # -----------------------------------------------------------------------------
