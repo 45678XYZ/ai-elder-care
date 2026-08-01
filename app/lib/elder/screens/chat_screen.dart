@@ -358,12 +358,25 @@ class _ChatScreenState extends State<ChatScreen>
     _silenceTimer?.cancel();
     _bestHeard = '';
     _turnConsumed = false;
+    _sawPartialThisTurn = false;
     setState(() {
       _setPhase(_Phase.listening);
       _question = '';
     });
 
     if (AppSession.instance.isHakka) return _recordTurn();
+
+    // 開新的一輪之前把上一個 session 徹底丟掉。
+    //
+    // 用 cancel 不用 stop：stop **保留**已辨識的內容，於是上一輪那份最終結果會晚一步
+    // 送進來——而那時新的一輪已經裝好自己的回呼，它收到的是上一句話。畫面上就是同一句
+    // 話隔了一輪又出現一顆泡泡。cancel 才會丟棄。
+    try {
+      await _speech.cancel();
+    } catch (_) {
+      // 沒在聽或平台不支援，照樣往下開新的一輪
+    }
+    if (!mounted || !_conversationActive) return;
 
     // 從這裡到收到最終結果之間，若語音服務悄悄收工，要靠 [_onSpeechStatus] 接住。
     _awaitingFinal = true;
@@ -391,7 +404,26 @@ class _ChatScreenState extends State<ChatScreen>
         _scrollToBottom(animate: false);
 
         // 有文字了才開始算靜音。還沒開口就算的話，會在長輩想詞的時候切掉他。
-        if (!isFinal && heard.isNotEmpty) _armSilenceCutoff();
+        if (!isFinal) {
+          _sawPartialThisTurn = true;
+          if (heard.isNotEmpty) _armSilenceCutoff();
+        }
+
+        // 上一輪的最終結果遲到了。
+        //
+        // 特徵是「這一輪一個部分結果都沒有，內容卻跟剛送出去的那一句一模一樣」——
+        // 真的在講話一定先有部分結果（`partialResults: true`）。照收的話就是同一句話
+        // 隔了一輪又送一次，畫面兩顆一樣的泡泡、後端也多記一筆。
+        //
+        // 上面的 cancel 應該已經擋掉大部分，這裡是最後一道：丟掉它，這一輪繼續聽。
+        if (isFinal &&
+            !_sawPartialThisTurn &&
+            heard.trim().isNotEmpty &&
+            heard.trim() == _lastSentText) {
+          _bestHeard = '';
+          setState(() => _question = '');
+          return;
+        }
 
         if (isFinal && !_turnConsumed) {
           _turnConsumed = true;
@@ -488,6 +520,12 @@ class _ChatScreenState extends State<ChatScreen>
   /// 還在飛的那一輪的序號；null = 沒有。見 [_handleQuestion] 的說明。
   int? _inFlightTurn;
 
+  /// 這一輪收過部分結果沒有。用來認出「上一輪遲到的最終結果」，見 [_listenTurn]。
+  bool _sawPartialThisTurn = false;
+
+  /// 最近一次真的送出去的辨識文字。同上，用來認出遲到的重複。
+  String _lastSentText = '';
+
   Future<void> _runTurn({
     required int seq,
     String? text,
@@ -501,6 +539,9 @@ class _ChatScreenState extends State<ChatScreen>
     // transcript 回來再補。先放一顆空泡泡而不是什麼都不放，是為了讓長輩看得到
     // 「我剛才那句進去了」，畫面不會在思考期間完全空著。
     final bubbleIndex = _messages.length;
+    // 記下來給下一輪比對：外掛把上一個 session 的最終結果延後送進新一輪時，
+    // 靠這個認出來（見 [_listenTurn] 的 cancel 與 onResult 裡的說明）。
+    if (text != null) _lastSentText = text.trim();
     setState(() {
       _setPhase(_Phase.thinking);
       _messages.add(_Message(isElder: true, text: text ?? _pendingElderBubble));
