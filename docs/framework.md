@@ -18,7 +18,7 @@
 ```mermaid
 flowchart TB
     subgraph app["Flutter App（長者／照護者模式）"]
-        elder["長者模式<br/>免手持語音迴圈<br/>裝置端 ASR + 音訊播放"]
+        elder["長者模式<br/>免手持語音迴圈<br/>錄音上傳 + 音訊播放"]
         caregiver["照護者模式<br/>行程、事件、摘要、統計"]
     end
 
@@ -37,13 +37,15 @@ flowchart TB
         summaryschedule["EventBridge summary schedule"]
         summary["daily summary generator Lambda"]
         apis["資料 API Lambda<br/>elders / summaries / events<br/>routines / stats"]
-        asr["後端 ASR"]
+        asr["後端 ASR 模組<br/>Canonical Audio + 路由 + 備援鏈<br/>backend/src/shared/asr"]
+        asrproviders["AWS ASR providers<br/>Transcribe zh-TW Streaming<br/>CE 備援 + Formo 六腔固定 prompt"]
         brain["AgentCore Runtime<br/>LangGraph 對話大腦 + 託管長期記憶"]
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
         embed["Bedrock embedding model<br/>concept retrieval + turn segmentation"]
         vectors[("S3 Vectors<br/>UCO concept index")]
         rules["deterministic safety rules"]
-        polly["Polly TTS"]
+        tts["後端 TTS 模組<br/>語言/六腔路由 + 同語言備援"]
+        ttsmodels["TTS providers<br/>OmniVoice / VoxHakka / BreezyVoice / Polly"]
         ddb[("DynamoDB<br/>conversations / events / summaries / routines")]
         s3[("S3<br/>TTS 音檔、衛教文件")]
         kb["Bedrock Knowledge Bases"]
@@ -57,14 +59,17 @@ flowchart TB
     periodic -->|idle sweep / batch recovery sweep| closer
     chat -->|audio| asr
     asr -->|transcript| chat
+    asr -->|中文主力| asrproviders
+    asr -.->|CE/Formo 僅在模型通過核准後| asrproviders
     chat -->|invoke agent runtime| brain
     brain -->|converse| model
     brain -->|RAG retrieval| kb
     brain -->|tool calling| tools
     tools -->|routines + safety events| ddb
     chat -->|turn + session| ddb
-    chat -->|reply text| polly
-    polly --> s3
+    chat -->|reply text + lang + profile 腔調| tts
+    tts -.->|僅已核准 route| ttsmodels
+    ttsmodels --> s3
     closer -->|freeze snapshot, then closed| ddb
     closer -->|enqueue after closed| queue
     queue --> batch
@@ -83,8 +88,10 @@ flowchart TB
     apis --> ddb
 ```
 
-- **語音對話迴圈**：裝置端辨識（zh-TW）→ `POST /chat` 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
+- **語音對話迴圈**：App 錄音 → `POST /chat` 後端 ASR 辨識 → 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
+- **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論。`zh-TW` 以 Amazon Transcribe Streaming 為主力、Taiwan-Tongues CE 為備援；`hak:<六腔>` 以對應 Formo 固定-prompt SageMaker endpoint 為主力、共用 CE 為備援。CE/Formo 必須逐模型通過 staging/runtime、授權、存取、配額與容量核准，未核准時一律 fail closed；Transcribe 全程 memory-only，不使用 batch/S3。ASR 子系統完整架構見 [`docs/asr/framework.md`](asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
+- **後端 TTS** 同樣採 remote-only 與設定驅動 route。`lang` 明確決定中文或客語；客語六腔只讀 elder profile 並保存 turn 快照。客語失敗不得改用中文 voice；所有 TTS provider 失敗時仍提交文字 turn，`reply_audio_url=null`。完整規格見 [`docs/tts/framework.md`](tts/framework.md)。
 - AgentCore Runtime 的 tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：大腦在回應 chat Lambda 之前先呼叫 tools Lambda 寫入 completion event 或發送安全通知，並在回應 payload 明確回報 `routines_updated` 與 `safety_alert_triggered`。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
 - batch extractor 的分類前先做候選概念檢索：以 Bedrock embedding 取查詢向量，向 S3 Vectors 的概念索引取 Top-K 候選後才呼叫分類模型；同一個 embedding 供應者也用於 turn 切分。索引維度在建立時固定，因此 index 名稱帶模型與維度，模型抽換以新索引並存、切換環境變數完成。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
@@ -141,6 +148,7 @@ Base table：PK `elder_id` (String)。
 | `birth_year` | Number | 否 | 出生年份 |
 | `gender` | String | 否 | `male` \| `female` \| `other` |
 | `lang_preference` | String | 是 | `zh-TW` \| `hak` |
+| `hakka_dialect` | String | 是 | ASR/TTS 共用；六腔之一，預設 `htia_sixian` |
 | `address_region` | String | 否 | 居住區域 |
 | `health_notes` | List[String] | 是 | 預設 `[]` |
 | `family` | List[Object] | 是 | 預設 `[]`；元素含 `relation`, `name`, `note` |
@@ -158,6 +166,7 @@ Base table：PK `elder_id` (String)。
   "birth_year": 1948,
   "gender": "female",
   "lang_preference": "zh-TW",
+  "hakka_dialect": "htia_sixian",
   "address_region": "台北市大安區",
   "health_notes": ["高血壓", "膝關節退化"],
   "family": [
@@ -218,6 +227,7 @@ GSI 只用來找候選，不能當成 freeze、snapshot 或 ownership 判斷的�
 
 | `created_at` | String | 是 | 固定毫秒、`+08:00` |
 | `lang` | String | 是 | `zh-TW` \| `hak` |
+| `hakka_dialect` | String | 否 | `lang=hak` 時 reserve 保存的 elder profile 腔調快照 |
 | `input_type` | String | 是 | `text` \| `audio` |
 | `elder_transcript`, `ai_respond_text` | String | 是 | 長者內容、AI 回覆內容 |
 | `ai_respond_audio_s3_key` | String | 否 | 只存 S3 object key (不存公開 URL) |
@@ -486,10 +496,12 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 ai-elder-care/
 ├── .kiro/          # Kiro 設定與 specs
 ├── app/            # Flutter
-├── backend/        # Python Lambda handlers 與 extraction pipeline
+├── asr-lambda/     # SageMaker inference container 開發文件與本機 conda 環境
+├── backend/        # Python Lambda handlers、ASR/TTS 領域模組與 extraction pipeline
+│   └── src/shared/       # ASR/TTS 與其他跨 handler 共用模組
 ├── terraform/      # AWS IaC
 ├── data/           # 模擬 persona、腳本、知識文件
-├── docs/           # 架構、API、旅程、PII
+├── docs/           # 架構、API、ASR、ADR、旅程、PII
 └── README.md
 ```
 

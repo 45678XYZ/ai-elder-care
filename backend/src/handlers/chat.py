@@ -10,10 +10,11 @@
    仍在飛且租約未到期回 409 REQUEST_IN_PROGRESS，租約到期才接管。
 4. 全新請求才做 session 選擇（沿用可接納的 session 或建立新的），
    並以 transaction 建立 `processing` turn 並佔用 session 的 inflight 名額。
-5. 若傳入音檔 (audio)，調用 CE ASR 將音訊轉成文字 transcript。
+5. 若傳入音檔 (audio)，透過 remote-only ASR facade 將音訊轉成文字 transcript；
+   未核准路由一律 fail closed，不回落到假逐字稿。
 6. 調用 AgentCore Runtime 上的對話大腦推導，帶入以 elder_id 推出的穩定 runtimeSessionId
    以載入/更新託管 Memory；工具呼叫與知識庫檢索都在 runtime 內完成（見 backend/src/agentcore_runtime/）。
-7. 依據 lang (zh-TW 或 hak) 調用 TTSFactory 生成語音 (中文 Polly / 客語 OmniVoice 帶 Fallback 降級防護)，並把 MP3 上傳至 S3。
+7. 依 lang 與 elder profile 腔調呼叫受控 TTS route；只允許同語言備援，成功才上傳 MP3。
 8. 以 transaction 提交 `completed` 結果、解除 inflight 名額並把本輪追加進 session，
    再回傳符合 api.md 規範的 Response 200（音訊每次動態簽發 15 分鐘 presigned URL）。
 
@@ -36,9 +37,33 @@ from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
 from src.shared import auth, db, responses, sessions, turns
+from src.shared.asr.composition import get_asr_facade
+from src.shared.asr.config import ConfigParseError
+from src.shared.asr.types import (
+    AsrErrorCategory,
+    CancellationSignal,
+    CorrelationContext,
+    Deadline,
+    HakkaDialect as AsrHakkaDialect,
+    InputFormat,
+    Language,
+    Transcript,
+    TypedAsrError,
+)
+from src.shared.asr_http import SERVER_SIDE_CATEGORIES, map_asr_error
 from src.shared.models import ChatRequest
-
-from src.shared.tts import TTSFactory
+from src.shared.tts import (
+    CancellationSignal as TtsCancellationSignal,
+    ConfigParseError as TtsConfigParseError,
+    CorrelationContext as TtsCorrelationContext,
+    Deadline as TtsDeadline,
+    HakkaDialect,
+    Language as TtsLanguage,
+    SynthesizedAudio,
+    TtsErrorCategory,
+    TypedTtsError,
+    get_tts_facade,
+)
 from src.shared.validation import RequestValidationError, validate
 
 
@@ -46,6 +71,11 @@ logger = logging.getLogger(__name__)
 
 # 單句語音長度上限的防禦邊界（約 60 秒）
 MAX_AUDIO_BYTES = 5 * 1024 * 1024
+ASR_RESERVED_TAIL_SECONDS = float(os.environ.get("ASR_RESERVED_TAIL_SECONDS", "8"))
+ASR_DEFAULT_BUDGET_SECONDS = float(os.environ.get("ASR_DEFAULT_BUDGET_SECONDS", "20"))
+TTS_RESERVED_TAIL_SECONDS = float(os.environ.get("TTS_RESERVED_TAIL_SECONDS", "2"))
+TTS_DEFAULT_BUDGET_SECONDS = float(os.environ.get("TTS_DEFAULT_BUDGET_SECONDS", "8"))
+DEFAULT_HAKKA_DIALECT = HakkaDialect.SIXIAN
 
 
 # 環境變數自訂名稱
@@ -53,8 +83,6 @@ S3_BUCKET_NAME = os.environ.get("S3_AUDIO_BUCKET", "ai-elder-care-audio")
 AGENTCORE_RUNTIME_ARN = os.environ.get("AGENTCORE_RUNTIME_ARN", "")
 AGENTCORE_ENDPOINT_NAME = os.environ.get("AGENTCORE_ENDPOINT_NAME", "live")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
-SAGEMAKER_CE_ENDPOINT_NAME = os.environ.get("SAGEMAKER_CE_ENDPOINT_NAME", "")
-CE_ASR_API_URL = os.environ.get("CE_ASR_API_URL", "https://api.ce-asr.example.com/v1/transcribe")
 
 # AgentCore 的 runtimeSessionId 長度限制：短於 33 或長於 256 一律 ValidationException
 _RUNTIME_SESSION_ID_MIN_LEN = 33
@@ -63,7 +91,6 @@ _RUNTIME_SESSION_ID_MAX_LEN = 256
 # 全域 Boto3 Clients (Warm Start 重用連線)
 _s3_client = None
 _agentcore_client = None
-_sagemaker_runtime = None
 
 
 def get_s3_client():
@@ -82,14 +109,6 @@ def get_agentcore_client():
     return _agentcore_client
 
 
-def get_sagemaker_runtime():
-    """取得 SageMaker Runtime Client 實例。"""
-    global _sagemaker_runtime
-    if _sagemaker_runtime is None:
-        _sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=AWS_REGION)
-    return _sagemaker_runtime
-
-
 def parse_event_body(event: Dict[str, Any]) -> Dict[str, Any]:
     """解析 API Gateway event 中的 body 內容。"""
     body = event.get("body")
@@ -103,36 +122,70 @@ def parse_event_body(event: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("INVALID_JSON")
 
 
-def transcribe_audio(audio_bytes: bytes, audio_format: str, lang: str) -> str:
-    """呼叫 SageMaker CE 模型 Endpoint 或 CE ASR API 將語音轉寫為文字。
-
-    優先檢查 SAGEMAKER_CE_ENDPOINT_NAME，若有設定則透過 boto3 呼叫 SageMaker；
-    若未設定 Endpoint，則回傳 Mock 轉譯文字供測試。
-    """
-    # 檢查長度是否超過約 60 秒（以 5MB 音檔大小為防禦邊界）
-    if len(audio_bytes) > MAX_AUDIO_BYTES:
-        raise ValueError("AUDIO_TOO_LONG")
-
-    # 1. 若配置了 SageMaker Endpoint，透過 boto3 原生呼叫 SageMaker 上的 CE 模型
-    if SAGEMAKER_CE_ENDPOINT_NAME:
+def resolve_asr_budget_seconds(context: Any) -> float:
+    """保留 Bedrock／TTS／S3 所需尾端時間後，計算本次 ASR 的可用秒數。"""
+    remaining_ms = None
+    getter = getattr(context, "get_remaining_time_in_millis", None)
+    if callable(getter):
         try:
-            sm_client = get_sagemaker_runtime()
-            response = sm_client.invoke_endpoint(
-                EndpointName=SAGEMAKER_CE_ENDPOINT_NAME,
-                ContentType=f"audio/{audio_format}",
-                Body=audio_bytes,
-                CustomAttributes=f"lang={lang}"
-            )
-            result = json.loads(response["Body"].read().decode("utf-8"))
-            return result.get("text", "")
-        except Exception as e:
-            print(f"[Error] SageMaker ASR invoke failed: {e}")
-            raise RuntimeError(f"SageMaker ASR error: {e}")
+            remaining_ms = getter()
+        except Exception:
+            remaining_ms = None
 
-    # 2. 未設定 Endpoint 時的保底 / Mock 文字（供開發測試期使用）
-    if lang == "hak":
-        return "阿頭仔，𠊎今晡日有食藥仔囉。"
-    return "小助手，我今天已經吃過血壓藥了。"
+    if not isinstance(remaining_ms, (int, float)):
+        return ASR_DEFAULT_BUDGET_SECONDS
+
+    budget = remaining_ms / 1000.0 - ASR_RESERVED_TAIL_SECONDS
+    return max(0.0, min(budget, ASR_DEFAULT_BUDGET_SECONDS))
+
+
+def resolve_tts_budget_seconds(context: Any) -> float:
+    """保留 S3 與 commit 時間後，限制同步 TTS 最多使用八秒。"""
+    remaining_ms = None
+    getter = getattr(context, "get_remaining_time_in_millis", None)
+    if callable(getter):
+        try:
+            remaining_ms = getter()
+        except Exception:
+            remaining_ms = None
+    if not isinstance(remaining_ms, (int, float)):
+        return TTS_DEFAULT_BUDGET_SECONDS
+    budget = remaining_ms / 1000.0 - TTS_RESERVED_TAIL_SECONDS
+    return max(0.0, min(budget, TTS_DEFAULT_BUDGET_SECONDS))
+
+
+def transcribe_audio(
+    audio_bytes: bytes,
+    audio_format: str,
+    lang: str,
+    correlation_id: str,
+    budget_seconds: float,
+    hakka_dialect: HakkaDialect | None = None,
+) -> Transcript | TypedAsrError:
+    """透過 ASR 領域 facade 辨識音訊，不在 handler 選擇或直接呼叫 endpoint。"""
+    try:
+        input_format = InputFormat.from_str(audio_format)
+        language = Language.from_str(lang)
+    except ValueError:
+        return TypedAsrError(
+            category=AsrErrorCategory.UNSUPPORTED_AUDIO_FORMAT,
+            message="Unsupported audio input metadata.",
+            retryable=False,
+        )
+
+    return get_asr_facade().recognize(
+        audio_bytes=audio_bytes,
+        input_format=input_format,
+        language=language,
+        deadline=Deadline.after(budget_seconds, time.monotonic),
+        cancellation=CancellationSignal(),
+        context=CorrelationContext(correlation_id=correlation_id),
+        hakka_dialect=(
+            AsrHakkaDialect.from_str(hakka_dialect.value)
+            if hakka_dialect is not None
+            else None
+        ),
+    )
 
 
 def taiwan_now() -> str:
@@ -179,6 +232,12 @@ def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> T
     """
     if not AGENTCORE_RUNTIME_ARN:
         # 本地開發與未配置 Runtime 時的保底回覆
+        if lang == "hak":
+            return (
+                f"【模擬回覆】𠊎有收到「{transcript}」。愛記得啉水、照時間歇睏喔！",
+                False,
+                False,
+            )
         return (
             f"【模擬大腦回覆】收到您的訊息：「{transcript}」。已經幫您確認紀錄囉，請記得多喝水、按時休息！",
             False,
@@ -284,23 +343,29 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         try:
             body = parse_event_body(event)
         except ValueError:
-            return responses.error(400, "INVALID_JSON", "請求內文不是有效的 JSON 格式")
+            return responses.error(400, "INVALID_PARAMETER", "請求內文不是有效的 JSON 格式")
 
         req = validate(ChatRequest, body)
 
         # 2. 身份與存取權限驗證
         auth.assert_can_access_elder(event, req.elder_id)
+        # 純輸入驗證先完成，無效或超大音檔不應觸發 profile／session I/O。
+        audio_bytes = decode_audio(req)
 
         # 3. 冪等判定：同一個 client_request_id 永遠對應同一個 turn
-        audio_bytes = decode_audio(req)
         owner = lease_owner(context)
         conversation_id = turns.conversation_id_for(req.elder_id, req.client_request_id)
-        session_id = resume_or_accept(req, conversation_id, request_hash(req, audio_bytes), owner)
+        session_id, turn_dialect = resume_or_accept(
+            req,
+            conversation_id,
+            request_hash(req, audio_bytes),
+            owner,
+        )
 
         # 4. 副作用區：turn 已是 processing，之後每一條路徑都必須把它收成終態
         try:
             transcript, reply_text, routines_updated, safety_alert_triggered, audio_key = run_turn(
-                req, audio_bytes, conversation_id
+                req, audio_bytes, conversation_id, turn_dialect, context
             )
         except TurnFailure as failure:
             return fail_turn(req.elder_id, conversation_id, session_id, owner, failure)
@@ -372,7 +437,7 @@ def decode_audio(req: ChatRequest) -> bytes:
             responses.error(400, "INVALID_PARAMETER", "audio.data 不可為空")
         )
     try:
-        audio_bytes = base64.b64decode(req.audio.data)
+        audio_bytes = base64.b64decode(req.audio.data, validate=True)
     except Exception:
         raise RequestValidationError(
             responses.error(400, "INVALID_PARAMETER", "audio.data 解碼失敗，非有效 base64 字串")
@@ -382,6 +447,19 @@ def decode_audio(req: ChatRequest) -> bytes:
             responses.error(400, "AUDIO_TOO_LONG", "單句語音長度超過 60 秒限制")
         )
     return audio_bytes
+
+
+def resolve_profile_dialect(elder: Dict[str, Any]) -> HakkaDialect:
+    """從 elder profile 讀取六腔；舊資料沒有欄位時相容為四縣腔。"""
+    try:
+        return HakkaDialect.from_str(
+            elder.get("hakka_dialect") or DEFAULT_HAKKA_DIALECT.value
+        )
+    except ValueError:
+        logger.error("elder profile contains an unsupported Hakka dialect")
+        raise RequestValidationError(
+            responses.error(500, "INTERNAL_ERROR", "長者客語腔調設定無效")
+        )
 
 
 def request_hash(req: ChatRequest, audio_bytes: bytes) -> str:
@@ -401,12 +479,25 @@ def request_hash(req: ChatRequest, audio_bytes: bytes) -> str:
 
 
 def resume_or_accept(
-    req: ChatRequest, conversation_id: str, payload_hash: str, owner: str
-) -> str:
+    req: ChatRequest,
+    conversation_id: str,
+    payload_hash: str,
+    owner: str,
+) -> tuple[str, HakkaDialect | None]:
     """回傳本 turn 所屬的 session ID；已終態或仍在飛的請求在此直接結束流程。"""
     existing = turns.get_turn(req.elder_id, conversation_id)
     if existing is None:
-        return accept_new_turn(req, conversation_id, payload_hash, owner)
+        # profile 只在接納全新 turn 時讀取；terminal replay／lease takeover 沿用 turn
+        # 快照，不受 profile 後續更新或刪除影響。
+        elder = db.get_elder(req.elder_id)
+        if elder is None:
+            raise auth.AuthError(
+                responses.error(404, "ELDER_NOT_FOUND", "找不到指定的長者")
+            )
+        profile_dialect = resolve_profile_dialect(elder)
+        return accept_new_turn(
+            req, conversation_id, payload_hash, owner, profile_dialect
+        )
 
     try:
         turns.assert_same_request(existing, payload_hash)
@@ -420,7 +511,8 @@ def resume_or_accept(
 
     try:
         # 租約到期代表前一個 invocation 已死；接管原 turn 與原 reservation，不重做 routing
-        return turns.take_over(req.elder_id, conversation_id, owner=owner)["session_id"]
+        taken_over = turns.take_over(req.elder_id, conversation_id, owner=owner)
+        return taken_over["session_id"], dialect_from_turn(taken_over)
     except turns.TurnTransitionRejectedError:
         current = turns.get_turn(req.elder_id, conversation_id) or {}
         if current.get("request_status") in turns.TERMINAL_STATUSES:
@@ -429,8 +521,12 @@ def resume_or_accept(
 
 
 def accept_new_turn(
-    req: ChatRequest, conversation_id: str, payload_hash: str, owner: str
-) -> str:
+    req: ChatRequest,
+    conversation_id: str,
+    payload_hash: str,
+    owner: str,
+    profile_dialect: HakkaDialect,
+) -> tuple[str, HakkaDialect | None]:
     """全新請求才走 session 選擇與 reserve。"""
     session = requested_session(req)
     turn = {
@@ -438,6 +534,7 @@ def accept_new_turn(
         "client_request_id": req.client_request_id,
         "request_hash": payload_hash,
         "lang": req.lang,
+        "hakka_dialect": profile_dialect.value if req.lang == "hak" else None,
         "input_type": "audio" if req.audio else "text",
         "source": "elder_initiated",
     }
@@ -449,7 +546,9 @@ def accept_new_turn(
             session = sessions.create_session(req.elder_id)
         try:
             turns.reserve(req.elder_id, session["session_id"], turn=turn, owner=owner)
-            return session["session_id"]
+            return session["session_id"], (
+                profile_dialect if req.lang == "hak" else None
+            )
         except turns.TurnReserveRejectedError:
             session = None
         except turns.TurnInProgressError:
@@ -458,6 +557,20 @@ def accept_new_turn(
 
     logger.error("無法接納新的 turn：conversation_id=%s", conversation_id)
     raise ImmediateResponse(responses.error(500, "INTERNAL_ERROR", "無法建立對話 session"))
+
+
+def dialect_from_turn(turn: Dict[str, Any]) -> HakkaDialect | None:
+    """接管時沿用 reserve 當下快照，避免 profile 更新改變同一冪等 turn。"""
+    if turn.get("lang") != "hak":
+        return None
+    try:
+        return HakkaDialect.from_str(
+            turn.get("hakka_dialect") or DEFAULT_HAKKA_DIALECT.value
+        )
+    except ValueError:
+        raise ImmediateResponse(
+            responses.error(500, "INTERNAL_ERROR", "對話客語腔調快照無效")
+        )
 
 
 def requested_session(req: ChatRequest) -> Dict[str, Any] | None:
@@ -474,7 +587,11 @@ def requested_session(req: ChatRequest) -> Dict[str, Any] | None:
 
 
 def run_turn(
-    req: ChatRequest, audio_bytes: bytes, conversation_id: str
+    req: ChatRequest,
+    audio_bytes: bytes,
+    conversation_id: str,
+    hakka_dialect: HakkaDialect | None,
+    context: Any = None,
 ) -> Tuple[str, str, bool, bool, str | None]:
     """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, safety_alert_triggered, audio key)。
 
@@ -485,28 +602,83 @@ def run_turn(
         transcript = req.text
     else:
         audio_format = req.audio.format if req.audio else "m4a"
+        correlation_id = str(uuid.uuid4())
         try:
-            transcript = transcribe_audio(audio_bytes, audio_format, req.lang)
-        except ValueError:
-            raise TurnFailure(400, "TRANSCRIPTION_FAILED", "語音轉寫失敗")
-        except Exception:
-            raise TurnFailure(500, "TRANSCRIPTION_FAILED", "語音轉寫服務暫時無法使用")
+            asr_result = transcribe_audio(
+                audio_bytes=audio_bytes,
+                audio_format=audio_format,
+                lang=req.lang,
+                correlation_id=correlation_id,
+                budget_seconds=resolve_asr_budget_seconds(context),
+                hakka_dialect=hakka_dialect,
+            )
+        except ConfigParseError:
+            logger.error(
+                "ASR configuration rejected: correlation_id=%s", correlation_id
+            )
+            raise TurnFailure(500, "INTERNAL_ERROR", "語音辨識服務目前無法使用")
+
+        if isinstance(asr_result, TypedAsrError):
+            mapped = map_asr_error(asr_result.category)
+            if asr_result.category in SERVER_SIDE_CATEGORIES:
+                logger.error(
+                    "ASR failed: category=%s correlation_id=%s",
+                    asr_result.category.value,
+                    correlation_id,
+                )
+            raise TurnFailure(mapped.status_code, mapped.code, mapped.message)
+
+        transcript = asr_result.text
 
     try:
         reply_text, routines_updated, safety_alert_triggered = invoke_agent_brain(
             req.elder_id, transcript, req.lang
         )
     except Exception:
-        raise TurnFailure(500, "BEDROCK_ERROR", "呼叫對話大腦失敗")
+        raise TurnFailure(500, "INTERNAL_ERROR", "對話服務目前無法使用")
 
+    tts_correlation_id = str(uuid.uuid4())
     try:
-        audio_reply = TTSFactory.get_tts_engine(req.lang).synthesize(reply_text)
+        tts_result = get_tts_facade().synthesize(
+            text=reply_text,
+            language=TtsLanguage.from_str(req.lang),
+            dialect=hakka_dialect,
+            deadline=TtsDeadline.after(
+                resolve_tts_budget_seconds(context), time.monotonic
+            ),
+            cancellation=TtsCancellationSignal(),
+            context=TtsCorrelationContext(correlation_id=tts_correlation_id),
+        )
+    except (TtsConfigParseError, ValueError):
+        logger.error(
+            "TTS configuration rejected: correlation_id=%s", tts_correlation_id
+        )
+        tts_result = TypedTtsError(
+            category=TtsErrorCategory.ROUTE_NOT_APPROVED,
+            message="TTS configuration rejected.",
+            retryable=False,
+        )
     except Exception:
-        raise TurnFailure(500, "TTS_FAILED", "語音合成失敗")
+        # 不記錄 raw exception：可能含 endpoint、文字或 SDK response。
+        logger.error("TTS invocation failed: correlation_id=%s", tts_correlation_id)
+        tts_result = TypedTtsError(
+            category=TtsErrorCategory.PROVIDER_FAILURE,
+            message="TTS invocation failed.",
+            retryable=False,
+        )
 
-    return transcript, reply_text, routines_updated, safety_alert_triggered, upload_audio_to_s3(
-        audio_reply, conversation_id
-    )
+    audio_key = None
+    if isinstance(tts_result, SynthesizedAudio):
+        audio_key = upload_audio_to_s3(tts_result.data, conversation_id)
+    else:
+        category = getattr(tts_result.category, "value", "internal_error")
+        logger.warning(
+            "TTS unavailable; completing text turn: category=%s correlation_id=%s",
+            category,
+            tts_correlation_id,
+        )
+
+    return transcript, reply_text, routines_updated, safety_alert_triggered, audio_key
 
 
 def fail_turn(
@@ -567,4 +739,3 @@ def chat_response(turn: Dict[str, Any]) -> Dict[str, Any]:
             "routines_updated": bool(turn.get("routines_updated")),
         },
     )
-

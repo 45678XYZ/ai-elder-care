@@ -1,5 +1,9 @@
 # Lambda 執行期依賴（由 Terraform 社群模組 terraform-aws-modules/lambda/aws 的 pip_requirements 自動打包進 zip）
+amazon-transcribe==0.6.4
+av>=14
+numpy>=2.0
 pydantic>=2.0
+soundfile>=0.13
 
 # boto3 雖是 Lambda 執行環境內建，仍要自己帶：chat.py 用的 bedrock-agentcore client 是新服務，
 # 執行環境內建的版本不一定含它的 service model，缺了就會在 boto3.client() 當場拋 UnknownServiceError。
