@@ -14,6 +14,7 @@ import '../../shared/services/notification_service.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
+import '../../shared/widgets/auto_refresh.dart';
 import '../../shared/widgets/care_header.dart';
 import '../../shared/widgets/sign_out_button.dart';
 import '../../theme/app_theme.dart';
@@ -32,7 +33,8 @@ class EldersScreen extends StatefulWidget {
   State<EldersScreen> createState() => _EldersScreenState();
 }
 
-class _EldersScreenState extends State<EldersScreen> {
+class _EldersScreenState extends State<EldersScreen>
+    with AutoRefreshState<EldersScreen> {
   static const _uuid = Uuid();
 
   late Future<List<Routine>> _future;
@@ -42,6 +44,18 @@ class _EldersScreenState extends State<EldersScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  /// 長輩用講的也能新增行程、改健康狀況，照護者這一頁得跟得上。
+  @override
+  Future<void> autoRefresh() async {
+    try {
+      final list = await _fetch();
+      if (!mounted) return;
+      setState(() => _future = Future.value(list));
+    } catch (_) {
+      // 靜默：畫面維持上一份成功的資料
+    }
   }
 
   void _load() {
