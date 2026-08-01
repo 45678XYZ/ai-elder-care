@@ -14,7 +14,6 @@ from src.extraction.canonical import (
     routine_completion_key,
     safety_alert_key,
     slot_label,
-    validate_lexicon,
 )
 from src.extraction.taxonomy import load_taxonomy
 
@@ -137,9 +136,6 @@ def test_other_token_is_not_matched(lexicon, taxonomy):
     assert resolved.value == "__other__"
 
 
-def test_lexicon_covers_every_leaf_concept(lexicon, taxonomy):
-    """詞彙覆蓋率不足會直接反映成重複事件，所以在測試層鎖住。"""
-    assert validate_lexicon(lexicon, taxonomy) == []
 
 
 def test_lexicon_candidates_for_prompt(lexicon):

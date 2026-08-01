@@ -194,46 +194,10 @@ variable "bedrock_model_id" {
   default     = "global.anthropic.claude-opus-5"
 }
 
-variable "bedrock_classifier_model_id" {
-  description = "RAC 分類階段的模型；留空沿用 bedrock_model_id。schema 固定、輸出短，可換便宜模型"
-  type        = string
-  default     = ""
-}
-
 variable "bedrock_extractor_model_id" {
-  description = "single-pass 萃取階段的模型；留空沿用 bedrock_model_id。品質瓶頸在這一段，不建議降級"
+  description = "萃取階段的模型；留空沿用 bedrock_model_id"
   type        = string
   default     = ""
-}
-
-variable "bedrock_chunker_model_id" {
-  description = "llm_prompt 分塊模式的模型；留空沿用 bedrock_model_id"
-  type        = string
-  default     = ""
-}
-
-variable "embedding_model_id" {
-  description = "概念檢索與 turn 切分使用的 embedding 模型"
-  type        = string
-  default     = "amazon.titan-embed-text-v2:0"
-}
-
-variable "embedding_dim" {
-  description = "embedding 維度；必須與向量索引建立時的維度一致"
-  type        = number
-  default     = 1024
-}
-
-variable "concept_vector_bucket" {
-  description = "S3 Vectors vector bucket 名稱（由 build_concept_vector_index.py 建立）"
-  type        = string
-  default     = "e-hakka-care-vectors"
-}
-
-variable "concept_vector_index" {
-  description = "概念向量索引名稱；帶模型與維度，換模型即換索引"
-  type        = string
-  default     = "uco-concepts-titan-v2-1024"
 }
 
 variable "event_slot_minutes" {
@@ -248,22 +212,16 @@ variable "routine_grace_minutes" {
   default     = 120
 }
 
-variable "chunker_type" {
-  description = "分塊策略：llm_prompt | embedding_depth | pairwise_v2"
-  type        = string
-  default     = "llm_prompt"
-}
-
 variable "extraction_mode" {
   description = "萃取階段是否啟用硬約束 schema：prompt_guided | structured_output"
   type        = string
   default     = "prompt_guided"
 }
 
-variable "rac_top_k" {
-  description = "概念檢索回傳的候選節點數"
+variable "seven_batch_char_limit" {
+  description = "direct_seven pipeline 的 turn 分批字元上限"
   type        = number
-  default     = 14
+  default     = 12000
 }
 
 variable "batch_lambda_timeout" {

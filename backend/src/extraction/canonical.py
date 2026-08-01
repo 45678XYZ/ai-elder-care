@@ -133,19 +133,6 @@ def _load_predicate_lexicon_cached(assets_dir: str) -> PredicateLexicon:
     )
 
 
-def validate_lexicon(lexicon: PredicateLexicon, taxonomy: Taxonomy) -> list[str]:
-    """雙向校驗受控詞彙庫與概念樹 (Taxonomy) 之涵蓋一致性。
-
-    確保所有的謂語概念均落在概念樹中，且所有的葉節點概念都有對應的謂語候選，防止部署缺失。
-    """
-    problems: list[str] = []
-    for concept_id in lexicon.concepts:
-        if taxonomy.get(concept_id) is None:
-            problems.append(f"謂語詞彙指向不存在的節點：{concept_id}")
-    for concept_id in taxonomy.leaf_ids():
-        if concept_id not in lexicon.concepts:
-            problems.append(f"葉節點缺少謂語候選：{concept_id}")
-    return problems
 
 
 def normalize_text(value: str) -> str:

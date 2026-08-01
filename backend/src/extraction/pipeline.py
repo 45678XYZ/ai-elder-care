@@ -189,8 +189,6 @@ _MARKER_FIELDS: frozenset[str] = frozenset(
     {"classification_confidence", "raw_predicate", "suspected_routine_id"}
 )
 
-_EXCLUDED_GLOBAL_PROPERTIES: frozenset[str] = frozenset({"source_utterance"})
-
 SuspectedRoutineLookup = Callable[[str, str, str], str | None]
 
 
@@ -339,40 +337,6 @@ class _SharedTail:
         )
 
 
-def _global_property_names(taxonomy: Taxonomy) -> frozenset[str]:
-    names = {
-        name
-        for prop in (taxonomy.property_registry.get("global_properties") or [])
-        if (name := prop.get("name")) and name not in _EXCLUDED_GLOBAL_PROPERTIES
-    }
-    return frozenset(names)
-
-
-def _node_own_property_names(taxonomy: Taxonomy, concept_id: str) -> frozenset[str]:
-    node_properties = taxonomy.property_registry.get("node_properties") or {}
-    props = node_properties.get(concept_id)
-    if not isinstance(props, list):
-        return frozenset()
-    return frozenset(name for prop in props if (name := prop.get("name")))
-
-
-def _ancestor_chain_including_self(taxonomy: Taxonomy, concept_id: str) -> tuple[str, ...]:
-    chain = [concept_id, *taxonomy.ancestors(concept_id)]
-    ordered = tuple(reversed([cid for cid in chain if taxonomy.get(cid) is not None]))
-    if ordered and taxonomy.nodes[ordered[0]].level == 0:
-        return ordered[1:]
-    return ordered
-
-
-def _allowed_structured_detail_keys(taxonomy: Taxonomy, concept_id: str) -> frozenset[str]:
-    if taxonomy.is_pseudo_concept(concept_id):
-        return _MARKER_FIELDS
-    allowed = set(_MARKER_FIELDS) | _global_property_names(taxonomy)
-    for node_id in _ancestor_chain_including_self(taxonomy, concept_id):
-        allowed |= _node_own_property_names(taxonomy, node_id)
-    return frozenset(allowed)
-
-
 def _validate_event(event: CanonicalEvent, taxonomy: Taxonomy) -> bool:
     if taxonomy.get(event.concept_id) is None:
         return False
@@ -380,10 +344,6 @@ def _validate_event(event: CanonicalEvent, taxonomy: Taxonomy) -> bool:
         return False
     if not (event.ts and event.subject and event.predicate and event.detail):
         return False
-    allowed = _allowed_structured_detail_keys(taxonomy, event.concept_id)
-    for key in event.structured_detail or {}:
-        if key not in allowed:
-            return False
     return True
 
 
