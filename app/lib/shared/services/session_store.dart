@@ -102,6 +102,12 @@ class AppSession {
   /// 選過就不能再退（否則長者選華語、照護者那邊是客語時，永遠切不回華語）。
   bool _langChosen = false;
 
+  /// 上一次已經跟後端對過帳的 `lang_preference`。
+  ///
+  /// 判斷「後端那邊有沒有被改掉」必須有一個穩定的基準，不能拿重讀前後的值互比——
+  /// 理由見 [refreshSelectedElder]。屬於帳號，換帳號要清掉。
+  String? _syncedLangPreference;
+
   /// 語言變動的廣播，用法同 [RoutineSync.revision]。
   ///
   /// 需要它的理由也一樣：長者模式兩個 tab 掛在 `StatefulNavigationShell` 底下，
@@ -175,15 +181,30 @@ class AppSession {
   /// 失敗一律吞掉：這是背景同步，取不到就維持現狀，不該打斷對話或讓畫面跳錯誤。
   Future<void> refreshSelectedElder() async {
     if (selectedElderId == null) return;
-    final before = selectedElder?.langPreference;
     try {
       await loadElders();
     } catch (_) {
       return;
     }
     final after = selectedElder?.langPreference;
-    if (after != null && after.isNotEmpty && after != before && after != lang) {
-      await setLang(after); // 內含持久化與 langRevision++
+    // 判準是「跟上次**已經對過帳的**後端值不一樣」，不是「這次重讀前後不一樣」。
+    //
+    // 前後比對有兩個要命的破綻，而且都會讓變更**永久**消失，不是延遲：
+    //   1. 後端的讀取不保證讀得到剛寫進去的值。長輩講完「我要講客話」，工具當下就
+    //      改了，但我們緊接著那次重讀可能還是拿到舊值——前後一樣，於是判定「沒變」。
+    //      而下一次重讀拿到新值時，「前」也已經是新值了，一樣判定沒變。從此再也不會
+    //      套用，鈕永遠停在中文。
+    //   2. 任何別的地方呼叫 loadElders（畫面各自載入、背景同步）都會先把 elders 換成
+    //      新值，同樣把「前」洗成新的。
+    //
+    // 記住自己上次對過帳的那個值就沒有這個問題：只要後端跟它不同就套用，不管中間
+    // 重讀過幾次、順序如何。長者按鈕選的那份也不會被反覆蓋掉——按鈕不動這個值，
+    // 所以後端維持原樣時永遠比對相等。
+    if (after != null && after.isNotEmpty && after != _syncedLangPreference) {
+      _syncedLangPreference = after;
+      if (after != lang) {
+        await setLang(after); // 內含持久化與 langRevision++
+      }
     }
     // 腔調鈕讀的是 selectedElder，資料換過就要讓它重畫。
     // 借用 textLangRevision：那三顆鈕都訂閱它（它們在今日頁上是 const，
@@ -303,6 +324,7 @@ class AppSession {
       elderGender = null;
       lang = 'zh-TW';
       _langChosen = false;
+      _syncedLangPreference = null;
       textLang = 'zh-TW';
       selectedElderId = null;
       linkedCaregivers = const [];
@@ -389,6 +411,10 @@ class AppSession {
       return;
     }
     if (selectedElder == null) await selectElder(elders.first.elderId);
+    // 第一次看到後端的語言偏好時只記下來、不套用：那是「本來就這樣」，不是長輩
+    // 剛剛用講的改掉。套用的話會順手把 `_langChosen` 設成 true，等於替長者宣告
+    // 他選過了，之後照護者改的值就再也蓋不過來。見 [refreshSelectedElder]。
+    _syncedLangPreference ??= selectedElder?.langPreference;
   }
 
   /// 建立一位長輩（`POST /elders`），加進清單並切換過去。
@@ -631,6 +657,7 @@ class AppSession {
     elderGender = null;
     lang = 'zh-TW';
     _langChosen = false;
+    _syncedLangPreference = null;
     textLang = 'zh-TW';
     me = null;
     elders = const [];

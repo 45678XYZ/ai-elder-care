@@ -78,6 +78,16 @@ class _TodayScreenState extends State<TodayScreen>
   /// 照護者剛新增的行程要等 App 整個重啟才看得到。
   @override
   Future<void> autoRefresh() async {
+    // 三顆語言鈕就在這一頁上，而長輩可以**用講的**改語言與腔調（後端的
+    // `update_elder_profile`）。那條路只在對話當下同步一次，萬一那一次沒對上
+    // （後端讀不到剛寫進去的值、網路斷一下），鈕就會一直跟他實際在用的語言對不上。
+    // 這一頁本來就在背景同步，順手把長者檔案也重讀一次，讓它自己修正回來。
+    // 失敗吞掉——refreshSelectedElder 自己已經吞過一層，這裡只是保險。
+    try {
+      await AppSession.instance.refreshSelectedElder();
+    } catch (_) {
+      // 靜默
+    }
     try {
       final view = await _fetch();
       if (!mounted) return;
