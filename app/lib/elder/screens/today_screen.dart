@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../shared/i18n/strings.dart';
 import '../../shared/models/routine.dart';
@@ -43,6 +46,8 @@ class TodayScreen extends StatefulWidget {
 
 class _TodayScreenState extends State<TodayScreen>
     with AutoRefreshState<TodayScreen> {
+  static const _uuid = Uuid();
+
   late Future<DailyRoutineView> _future;
 
   /// 本地已確認完成的 routine——按下去立刻反映，不等重新拉整份清單。
@@ -162,6 +167,56 @@ class _TodayScreenState extends State<TodayScreen>
     }
   }
 
+  /// 長輩自己在對話裡加的行程才給刪。照護者排的對長輩唯讀——那是家人替他安排的
+  /// 用藥與回診，誤刪的代價是從此收不到提醒，而且他不會知道自己刪過。
+  /// 後端同樣擋一次（`DELETE /routines/{id}` 對長者限 `created_by=conversation`），
+  /// 這裡只是不把按鈕畫出來，不是唯一的防線。
+  bool _canDelete(RoutineOccurrence o) => o.createdBy == 'conversation';
+
+  /// 刪除一筆長輩自建的行程。先問一次再刪——長者模式不做 undo：
+  /// 提示條上再放一顆「復原」等於在畫面上多一個限時的可互動元素，
+  /// 長輩沒讀完它就消失了，反而更糟。改成刪之前問清楚。
+  Future<void> _delete(RoutineOccurrence o) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => _DeleteConfirmDialog(title: o.title),
+    );
+    if (confirmed != true || !mounted) return;
+
+    HapticFeedback.mediumImpact();
+    try {
+      // 每按一次產一個新的冪等鍵。失敗不自動重試：沿用同一顆才是對的，但重試路徑
+      // 會踩到「不同 id 打已刪除的回 409」那條，理由見 care_repository 的註解。
+      await CareRepo.instance
+          .deleteRoutine(o.routineId, clientRequestId: _uuid.v4());
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack(t('刪不掉，等一下再試一次'));
+      return;
+    }
+    if (!mounted) return;
+    _showSnack(t1('「{}」已經刪掉了', o.title));
+    // 刪掉之後手機上那個提醒還排著，不重整照樣會響。RoutineSync 會重拉定義並重排，
+    // 也會通知這一頁重畫，所以這裡不自己動 _future。
+    unawaited(RoutineSync.refresh());
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.barDark,
+        duration: const Duration(seconds: 3),
+        content: Text(
+          message,
+          style: Theme.of(context)
+              .textTheme
+              .headlineSmall
+              ?.copyWith(color: AppColors.onDark),
+        ),
+      ),
+    );
+  }
+
   String _statusOf(RoutineOccurrence o) =>
       _justCompleted.contains(o.routineId) ? 'done' : o.status;
 
@@ -212,6 +267,7 @@ class _TodayScreenState extends State<TodayScreen>
                         occurrence: o,
                         status: _statusOf(o),
                         onComplete: () => _complete(o),
+                        onDelete: _canDelete(o) ? () => _delete(o) : null,
                       ),
                       const SizedBox(height: AppSpacing.md),
                     ],
@@ -519,17 +575,25 @@ class _LinkCaregiverEntry extends StatelessWidget {
 ///
 /// 輕重由狀態承擔：逾期給紅框加整寬大按鈕，還沒到的只給右側一顆安靜的圓形勾，
 /// 已完成的沒有按鈕。
+///
+/// 刪除是這張卡上**第二種**動作，所以額度的放寬到它為止：只有長輩自己加的那幾列
+/// 才有（[onDelete] 為 null 就整個不畫），而且擺在最底下自成一列、用最輕的樣式，
+/// 不跟打勾搶。不做 swipe 刪除——長者規格禁止隱藏手勢。
 class _RoutineRow extends StatelessWidget {
   const _RoutineRow({
     super.key,
     required this.occurrence,
     required this.status,
     required this.onComplete,
+    this.onDelete,
   });
 
   final RoutineOccurrence occurrence;
   final String status;
   final VoidCallback onComplete;
+
+  /// null 代表這筆不是長輩自己加的，不給刪（判斷在 [_TodayScreenState._canDelete]）。
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -543,7 +607,8 @@ class _RoutineRow extends StatelessWidget {
       border: missed ? Border.all(color: AppColors.accent, width: 2) : null,
       semanticLabel: '${occurrence.title}，'
           '${_timeLabel(occurrence.scheduledAt)}，'
-          '${RoutineStatusStyle.from(status).label}',
+          '${RoutineStatusStyle.from(status).label}，'
+          '${_sourceLabel()}',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -564,6 +629,28 @@ class _RoutineRow extends StatelessWidget {
               Text(_timeLabel(occurrence.scheduledAt),
                   style: text.headlineSmall
                       ?.copyWith(color: AppColors.inkSecondary)),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          // 來源自成一列：跟狀態膠囊擠在一起的話，textScaler 2.0 下換行會把
+          // 打勾鈕推到看不見的地方。不用顏色區分兩種來源（§狀態不可只靠顏色），
+          // 圖示加文字各自說完整。
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                onDelete != null ? Icons.person_outline : Icons.people_outline,
+                size: 24,
+                color: AppColors.inkSecondary,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  _sourceLabel(),
+                  style: text.headlineSmall
+                      ?.copyWith(color: AppColors.inkSecondary),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -605,8 +692,96 @@ class _RoutineRow extends StatelessWidget {
               ),
             ),
           ],
+          // 刪除排在最後、樣式最輕：它不是長輩每天要做的事，只是偶爾講錯話多了
+          // 一筆要收掉，不該跟「我完成了」搶。已完成的那幾筆也留著——長輩
+          // 「加錯了」跟「做完了」是兩回事。
+          if (onDelete != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline, size: 28),
+                label: Text(t('刪掉這一項'), style: text.headlineSmall),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.accentText,
+                  // 60dp 觸控下限；水平留白讓它不緊貼卡片邊。
+                  minimumSize: const Size(0, 60),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  /// 這筆是誰排的。長輩要分得出「我自己講的」跟「家人幫我排的」——後者刪不掉，
+  /// 沒有標示的話那顆刪除鈕時有時無會像壞掉。
+  ///
+  /// 判斷跟著 [onDelete] 走而不是自己再讀一次 `createdBy`：能不能刪與標示什麼
+  /// 必須是同一個答案，分兩處算遲早會各說各話。
+  String _sourceLabel() => onDelete != null ? t('我自己加的') : t('家人幫我排的');
+}
+
+/// 刪除前的確認。長者模式不用 Material 預設尺寸的 dialog：那組字級與 48dp 的鈕
+/// 是照護者規格，長輩讀不清楚也按不準。
+///
+/// 「不刪」放右邊、樣式重，「刪掉」放左邊、樣式輕：兩顆一樣顯眼的話，長輩傾向
+/// 按右下角那顆，而按錯的成本是不對稱的——少刪一次再按一次就好，多刪一次那筆
+/// 就沒了。
+class _DeleteConfirmDialog extends StatelessWidget {
+  const _DeleteConfirmDialog({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return AlertDialog(
+      backgroundColor: AppColors.card,
+      insetPadding: const EdgeInsets.all(AppSpacing.lg),
+      contentPadding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.md),
+      content: Text(
+        t1('要刪掉「{}」嗎？\n刪掉以後就不會再提醒你了。', title),
+        style: text.headlineSmall,
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+      // 直向排列：textScaler 2.0 下兩顆並排會被壓到讀不出來，
+      // 而且長輩由上往下讀比左右掃描穩。
+      actionsOverflowDirection: VerticalDirection.down,
+      actions: [
+        SizedBox(
+          width: double.infinity,
+          height: 72,
+          child: FilledButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.accentText,
+              foregroundColor: Colors.white,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(AppRadius.field),
+              ),
+            ),
+            child: Text(t('不要刪'),
+                style: text.headlineSmall?.copyWith(color: Colors.white)),
+          ),
+        ),
+        SizedBox(
+          width: double.infinity,
+          height: 72,
+          child: TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style:
+                TextButton.styleFrom(foregroundColor: AppColors.inkSecondary),
+            child: Text(t('刪掉'), style: text.headlineSmall),
+          ),
+        ),
+      ],
     );
   }
 }
