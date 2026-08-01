@@ -6,7 +6,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:ai_elder_care/main.dart';
+import 'package:e_hakka_care/main.dart';
 
 void main() {
   setUp(() {
