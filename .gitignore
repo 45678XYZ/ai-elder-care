@@ -32,6 +32,9 @@ tfplan
 *.tfplan
 
 # --- AI tool configs (local, per-developer) ---
+# 給自己看的交接筆記與 AI 助手約束檔，不進版控。
+HANDOFF.md
+CLAUDE.md
 .claude/
 .codex/
 .cursor/
@@ -67,3 +70,6 @@ backend/local_runner/data/
 backend/local_runner/outputs/
 backend/local_runner/storage/
 .env.local
+
+#claude
+app/CLAUDE.md
