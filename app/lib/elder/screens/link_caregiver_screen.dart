@@ -59,7 +59,7 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
   }
 
   Future<void> _submit() async {
-    final id = _ctrl.text.trim();
+    final id = _normalizeCaregiverId(_ctrl.text);
     if (id.isEmpty) {
       setState(() => _feedback = _Feedback.error(t('請先輸入 ID')));
       return;
@@ -79,11 +79,15 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
           ? _Feedback.success(t1('已經連結 {}', link.caregiver.name))
           : _Feedback.error(t1('{} 已經連結過了', link.caregiver.name));
     } on ApiException catch (e) {
+      // 兩種錯都是「這組 ID 有問題」，長輩自己修得好，所以要講得具體。
+      //
+      // 400 INVALID_PARAMETER 也算進來：後端要求 `cg_` 前綴，長輩若只抄了後半段
+      // 而 [_normalizeCaregiverId] 又補不出來（例如抄成 7 碼），拿到的就是 400。
+      // 那時說「請稍後再試」等於叫他重試一個永遠不會成功的動作。
+      final wrongId = e.code == ApiErrorCodes.caregiverNotFound ||
+          e.code == ApiErrorCodes.invalidParameter;
       result = _Feedback.error(
-        e.code == ApiErrorCodes.caregiverNotFound
-            // 這是最可能發生的錯，而且長輩自己修得好，所以要講得具體。
-            ? t('找不到這個 ID，請再確認一次')
-            : t('連結沒有成功，請稍後再試一次'),
+        wrongId ? t('找不到這個 ID，請再確認一次') : t('連結沒有成功，請稍後再試一次'),
       );
     }
 
@@ -216,6 +220,25 @@ class _LinkedRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 把長輩打進去的內容整理成後端認得的 `caregiver_id`。
+///
+/// 兩件事：
+///
+/// 1. **統一小寫、去頭尾空白**。後端自己也會做（`.strip().lower()`），這裡先做是為了
+///    讓補前綴的判斷拿到乾淨的輸入。
+/// 2. **缺 `cg_` 前綴時補上**。後端要求前綴，沒有就回 400 `INVALID_PARAMETER`
+///    ——而長輩看著照護者手機上的 `cg_7f3a91c2` 抄，很容易只抄後半段。
+///
+/// 補前綴的條件很嚴：剩下的部分必須**正好是 8 個十六進位字元**，也就是 ID 的實際
+/// 格式（api.md）。條件成立才代表他抄的是後半段；否則一律原樣送出，讓後端照常回
+/// 404 `CAREGIVER_NOT_FOUND`。**猜錯而自動補出一個看似合法的 ID，會把「打錯字」
+/// 變成「查無此人」，反而更難查。**
+String _normalizeCaregiverId(String raw) {
+  final id = raw.trim().toLowerCase();
+  if (id.isEmpty || id.startsWith('cg_')) return id;
+  return RegExp(r'^[0-9a-f]{8}$').hasMatch(id) ? 'cg_$id' : id;
 }
 
 /// 會被當成底線處理的字元：半形連字號、Unicode 的各種破折號、全形連字號、全形底線。
