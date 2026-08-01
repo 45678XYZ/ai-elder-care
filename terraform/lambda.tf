@@ -255,6 +255,10 @@ module "chat" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -306,6 +310,10 @@ module "tools" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -340,6 +348,10 @@ module "elders" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -372,6 +384,10 @@ module "post_confirmation" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -532,6 +548,10 @@ module "batch_extractor" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -568,6 +588,10 @@ module "session_closer" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -595,6 +619,10 @@ module "dlq_reconciler" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -630,6 +658,10 @@ module "api_events" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -676,6 +708,10 @@ module "api_summaries" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -702,6 +738,10 @@ module "summary_generator" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -730,6 +770,10 @@ module "api_stats" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -836,6 +880,10 @@ module "api_routines" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
