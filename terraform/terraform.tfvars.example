@@ -36,3 +36,35 @@ cwa_api_key = "CWA-請填入實際授權碼"
 # staging 音質、繁體輸入、容量與 P95 驗收（見 docs/tts/model-catalog.md）。
 # 維持 false 時 endpoint 會建起來但 Lambda 仍走 Polly，可用於先驗證再切換。
 # tts_breezyvoice_approved = false
+
+# --- 客語 TTS（OmniVoice）---
+#
+# 依 eval/MODEL_SELECTION.md，客語 TTS 用 OmniVoice（MOS 4.31）而非 VoxHakka（1.79）。
+# 單一 endpoint 服務六腔，建置步驟見 tts-container/omnivoice/README.md。
+#
+# ⚠️ 開啟後會常駐一台 ml.g4dn.xlarge（無 autoscaling），約 US$0.74/hr。
+#
+# tts_omnivoice_image_uri       = "<account>.dkr.ecr.us-west-2.amazonaws.com/e-hakka-care-tts-omnivoice:<tag>"
+# tts_omnivoice_model_data_url  = "s3://e-hakka-care-tts-artifacts-<account>/tts/omnivoice/model.tar.gz"
+# tts_enable_omnivoice_endpoint = true
+#
+# 授權為 CC BY-NC 4.0（限非商業）。專案若轉商用，這個 gate 不得設為 true。
+# tts_omnivoice_approved = false
+
+# --- 客語 ASR（FormoSpeech Whisper-v3）---
+#
+# 六腔各一個 endpoint，但共用同一個映像與同一份 model artifact——build 與 package
+# 各跑一次即可，步驟見 asr-container/formospeech/README.md。
+#
+# ⚠️ 開啟後會常駐六台（g5.2xlarge×2、g5.xlarge×2、g4dn.2xlarge×2），
+# 約 US$7.73/hr（約 US$5,640/月）。這是整個專案最貴的一項，不用時務必改回 false。
+#
+# asr_model_artifact_bucket = "e-hakka-care-asr-artifacts-<account>"
+# asr_formo_image_uri       = "<account>.dkr.ecr.us-west-2.amazonaws.com/e-hakka-care-asr-formospeech:<tag>"
+# asr_formo_model_data_url  = "s3://e-hakka-care-asr-artifacts-<account>/asr/formospeech/model.tar.gz"
+# asr_enable_endpoints      = true
+#
+# Taiwan-Tongues-ASR-CE 備援。依 eval/MODEL_SELECTION.md，中文改用 Amazon Transcribe、
+# 客語用 FormoSpeech，CE 兩邊都不是首選，而它固定佔一台 ml.g5.4xlarge（約 US$2.03/hr），
+# 因此預設關閉。開啟時才需要填 asr_ce_image_uri 與 asr_ce_model_data_url。
+# asr_enable_ce_endpoint = false
