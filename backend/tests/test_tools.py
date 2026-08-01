@@ -350,7 +350,7 @@ def _mock_create_event(monkeypatch):
         return item, True
 
     monkeypatch.setattr(db, "put_event_if_absent", _fake_put)
-    monkeypatch.setattr(tools, "_publish_sns", lambda topic, sub, body: "msg_mock_123")
+    monkeypatch.setattr(tools, "_publish_to_caregivers", lambda eid, sub, body: "msg_mock_123")
     return created_events
 
 

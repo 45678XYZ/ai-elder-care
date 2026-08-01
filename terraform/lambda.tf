@@ -214,8 +214,13 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["sns:Publish", "sns:Subscribe"]
+        Action   = ["sns:Publish", "sns:Subscribe", "sns:CreateTopic"]
         Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cognito-idp:AdminGetUser"]
+        Resource = aws_cognito_user_pool.accounts.arn
       },
       {
         Effect = "Allow"
@@ -349,6 +354,8 @@ module "tools" {
     TABLE_ROUTINES             = aws_dynamodb_table.routines.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
     CWA_API_KEY                = var.cwa_api_key
+    USER_POOL_ID               = aws_cognito_user_pool.accounts.id
+    SNS_TOPIC_PREFIX           = "${var.project_name}-elder-notify"
   }
 }
 
