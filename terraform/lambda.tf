@@ -243,6 +243,8 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
           "${aws_dynamodb_table.daily_summaries.arn}/index/*",
           aws_dynamodb_table.routines.arn,
           "${aws_dynamodb_table.routines.arn}/index/*",
+          aws_dynamodb_table.caregiver_lookup.arn,
+          "${aws_dynamodb_table.caregiver_lookup.arn}/index/*",
         ]
       }
     ]
@@ -380,7 +382,8 @@ module "elders" {
   cloudwatch_logs_retention_in_days = 30
 
   environment_variables = {
-    TABLE_ELDERS               = aws_dynamodb_table.elders.name
+    TABLE_ELDERS            = aws_dynamodb_table.elders.name
+    TABLE_CAREGIVER_LOOKUP  = aws_dynamodb_table.caregiver_lookup.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
   }
 }

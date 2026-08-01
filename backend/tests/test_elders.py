@@ -290,3 +290,135 @@ def test_delete_health_note_not_found_404(monkeypatch):
     assert resp["statusCode"] == 404
     assert json.loads(resp["body"])["error"]["code"] == "HEALTH_NOTE_NOT_FOUND"
 
+
+# -----------------------------------------------------------------------------
+# GET /me
+# -----------------------------------------------------------------------------
+
+
+def _me_event(sub="usr_c1", email="test@example.com"):
+    return {
+        "httpMethod": "GET",
+        "resource": "/me",
+        "path": "/v1/me",
+        "pathParameters": None,
+        "body": None,
+        "requestContext": {"authorizer": {"claims": {"sub": sub, "email": email}}},
+    }
+
+
+def test_get_me_caregiver(monkeypatch):
+    """照護者可取得 cg_ 短 ID。"""
+    monkeypatch.setattr(db, "get_caregiver_by_sub", lambda sub: None)
+    monkeypatch.setattr(db, "put_caregiver_lookup", lambda sid, sub, name: None)
+
+    resp = elders.handler(_me_event(sub="abc-123", email="alice@mail.com"), None)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["caregiver_id"].startswith("cg_")
+    assert len(body["caregiver_id"]) == 11  # cg_ + 8 hex
+    assert body["name"] == "alice"
+
+
+def test_get_me_elder_forbidden(monkeypatch):
+    """長者呼叫 GET /me 回 403。"""
+    event = {
+        "httpMethod": "GET",
+        "resource": "/me",
+        "path": "/v1/me",
+        "pathParameters": None,
+        "body": None,
+        "requestContext": {"authorizer": {"claims": {"sub": "usr_e1", "elder_id": "eld_001"}}},
+    }
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 403
+
+
+# -----------------------------------------------------------------------------
+# POST /elders/{elder_id}/caregivers
+# -----------------------------------------------------------------------------
+
+
+def test_post_caregiver_link_success(monkeypatch):
+    """長者成功綁定照護者。"""
+    monkeypatch.setattr(db, "get_caregiver_by_short_id", lambda sid: {"short_id": sid, "sub": "cg-sub-1", "name": "志明"})
+    monkeypatch.setattr(db, "get_elder", lambda eid: {"elder_id": "eld_001", "caregiver_ids": []})
+    monkeypatch.setattr(db, "link_caregiver_to_elder", lambda eid, sub: {"elder_id": eid, "caregiver_ids": [sub]})
+
+    event = {
+        "httpMethod": "POST",
+        "resource": "/elders/{elder_id}/caregivers",
+        "path": "/v1/elders/eld_001/caregivers",
+        "pathParameters": {"elder_id": "eld_001"},
+        "body": json.dumps({"caregiver_id": "cg_7f3a91c2"}),
+        "requestContext": {"authorizer": {"claims": {"sub": "usr_e1", "elder_id": "eld_001"}}},
+    }
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 201
+    body = json.loads(resp["body"])
+    assert body["caregiver_id"] == "cg_7f3a91c2"
+    assert body["name"] == "志明"
+
+
+def test_post_caregiver_link_already_linked(monkeypatch):
+    """已綁定的照護者回 200。"""
+    monkeypatch.setattr(db, "get_caregiver_by_short_id", lambda sid: {"short_id": sid, "sub": "cg-sub-1", "name": "志明"})
+    monkeypatch.setattr(db, "get_elder", lambda eid: {"elder_id": "eld_001", "caregiver_ids": ["cg-sub-1"], "updated_at": "2026-07-14T09:00:00+08:00"})
+
+    event = {
+        "httpMethod": "POST",
+        "resource": "/elders/{elder_id}/caregivers",
+        "path": "/v1/elders/eld_001/caregivers",
+        "pathParameters": {"elder_id": "eld_001"},
+        "body": json.dumps({"caregiver_id": "cg_7f3a91c2"}),
+        "requestContext": {"authorizer": {"claims": {"sub": "usr_e1", "elder_id": "eld_001"}}},
+    }
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 200
+
+
+def test_post_caregiver_link_not_found(monkeypatch):
+    """cg_ ID 不存在回 404。"""
+    monkeypatch.setattr(db, "get_caregiver_by_short_id", lambda sid: None)
+    monkeypatch.setattr(db, "get_elder", lambda eid: {"elder_id": "eld_001", "caregiver_ids": []})
+
+    event = {
+        "httpMethod": "POST",
+        "resource": "/elders/{elder_id}/caregivers",
+        "path": "/v1/elders/eld_001/caregivers",
+        "pathParameters": {"elder_id": "eld_001"},
+        "body": json.dumps({"caregiver_id": "cg_notexist"}),
+        "requestContext": {"authorizer": {"claims": {"sub": "usr_e1", "elder_id": "eld_001"}}},
+    }
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 404
+    assert json.loads(resp["body"])["error"]["code"] == "CAREGIVER_NOT_FOUND"
+
+
+# -----------------------------------------------------------------------------
+# GET /elders/{elder_id}/caregivers
+# -----------------------------------------------------------------------------
+
+
+def test_get_caregivers_list(monkeypatch):
+    """列出已綁定照護者。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+    monkeypatch.setattr(db, "get_elder", lambda eid: {"elder_id": "eld_001", "caregiver_ids": ["sub-1"]})
+    monkeypatch.setattr(db, "batch_get_caregivers_by_subs", lambda subs: {
+        "sub-1": {"short_id": "cg_aabbccdd", "name": "志明", "created_at": "2026-07-14T09:00:00+08:00"}
+    })
+
+    event = {
+        "httpMethod": "GET",
+        "resource": "/elders/{elder_id}/caregivers",
+        "path": "/v1/elders/eld_001/caregivers",
+        "pathParameters": {"elder_id": "eld_001"},
+        "body": None,
+        "requestContext": {"authorizer": {"claims": {"sub": "sub-1"}}},
+    }
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert len(body["items"]) == 1
+    assert body["items"][0]["caregiver_id"] == "cg_aabbccdd"
+
