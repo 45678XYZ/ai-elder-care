@@ -50,18 +50,6 @@ class CollectingSink:
 # ─────────────────────────────────────────────────────────────────
 # Shared fixtures
 # ─────────────────────────────────────────────────────────────────
-_FORMO_ALLOWLIST = frozenset(
-    {
-        "htia_sixian",
-        "htia_hailu",
-        "htia_dapu",
-        "htia_raoping",
-        "htia_zhaoan",
-        "htia_nansixian",
-    }
-)
-
-
 def _make_hak_config() -> AsrConfig:
     """建立啟用 hak mock 的設定。"""
     return AsrConfig(
@@ -76,7 +64,6 @@ def _make_hak_config() -> AsrConfig:
             ),
         },
         model_metadata={},
-        formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
 
@@ -317,7 +304,6 @@ class TestAsrFacadeRouteNotApproved:
                 ),
             },
             model_metadata={},
-            formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         facade, sink, _ = _make_facade(config)
         context = CorrelationContext(correlation_id="test-8")

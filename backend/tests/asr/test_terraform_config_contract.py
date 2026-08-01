@@ -55,7 +55,6 @@ def _terraform_asr_config_json(
                 "kind": "remote_model",
                 "metadata_ref": "taiwan_tongues_ce",
                 "endpoint_name": ce_endpoint,
-                "max_concurrent": 4,
             },
             "formo_remote": {
                 "identifier": "formo_remote",
@@ -63,7 +62,6 @@ def _terraform_asr_config_json(
                 "kind": "remote_model",
                 "metadata_ref": "formospeech_whisper_v3",
                 "endpoint_name": formo_endpoint,
-                "max_concurrent": 2,
             },
         },
         "model_metadata": {
@@ -99,17 +97,6 @@ def _terraform_asr_config_json(
                     "approval_record_ref": None,
                 },
             },
-        },
-        "formo_prompt_id_allowlist": [
-            "htia_sixian",
-            "htia_hailu",
-            "htia_dapu",
-            "htia_raoping",
-            "htia_zhaoan",
-            "htia_nansixian",
-        ],
-        "concurrency": {
-            "spill_wait_ms": 250,
         },
     })
 
@@ -179,11 +166,14 @@ class TestTerraformConfigContract:
         assert metadata.usage_restriction.value == "colab_validation_only"
         assert metadata.approval_state.value == "not_approved"
 
-    def test_concurrency_policy_is_respected(self) -> None:
-        """spill_wait_ms 從 JSON 正確解析。"""
+    def test_removed_local_concurrency_fields_are_absent(self) -> None:
+        """Lambda 不再配置程序內模型槽與等待佇列。"""
         data = json.loads(_terraform_asr_config_json())
-        config = parse_asr_config(data)
-        assert config.concurrency.spill_wait_ms == 250
+        assert "concurrency" not in data
+        assert all(
+            "max_concurrent" not in provider
+            for provider in data["providers"].values()
+        )
 
     def test_empty_string_uses_default_config(self) -> None:
         """空字串（未啟用時 Terraform 輸出）等同不注入 — 用預設設定。"""

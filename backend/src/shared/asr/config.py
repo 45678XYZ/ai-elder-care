@@ -1,7 +1,7 @@
 """
-ASR 後端受控設定：route、provider、model metadata、AWS capability gate 與 Formo Prompt ID validator。
+ASR 後端受控設定：route、provider 與 model production gate。
 
-解析失敗、未知 schema version、缺必填鍵或相互矛盾的狀態一律 fail closed。
+解析失敗、缺必填鍵或相互矛盾的狀態一律 fail closed。
 
 禁止依賴：handlers、HTTP、DB、AWS SDK、環境自動選服務/Region。
 """
@@ -9,49 +9,9 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from typing import Any, FrozenSet
+from typing import Any
 
 from .types import AsrErrorCategory, TypedAsrError
-
-
-# ─────────────────────────────────────────────────────────────────
-# Formo Prompt ID — 精確 allowlist
-# ─────────────────────────────────────────────────────────────────
-_FORMO_PROMPT_ID_ALLOWLIST: FrozenSet[str] = frozenset(
-    {
-        "htia_sixian",
-        "htia_hailu",
-        "htia_dapu",
-        "htia_raoping",
-        "htia_zhaoan",
-        "htia_nansixian",
-    }
-)
-
-
-def validate_formo_prompt_id(candidate: str) -> str:
-    """
-    驗證 Formo Prompt ID。
-
-    僅接受精確等於六個允許值的字串。
-    拒絕空白、大小寫變形、前後空白與 Unicode lookalike。
-    不做任何正規化或猜測。
-
-    Returns:
-        精確匹配的 prompt ID 值。
-
-    Raises:
-        ValueError: 如果 candidate 不在 allowlist。
-    """
-    if not isinstance(candidate, str):
-        raise ValueError(f"Formo Prompt ID must be a string, got {type(candidate).__name__}.")
-    # 不做 strip、lower、NFKC 或任何正規化 — 精確比對
-    if candidate not in _FORMO_PROMPT_ID_ALLOWLIST:
-        raise ValueError(
-            f"Formo Prompt ID rejected: {candidate!r}. "
-            f"Must be exactly one of: {sorted(_FORMO_PROMPT_ID_ALLOWLIST)}."
-        )
-    return candidate
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -262,7 +222,7 @@ FORMO_MODEL_METADATA = ModelMetadata(
 
 # CE/Formo 的 model id 集合——router 與 parser 用它辨識「需要 production gate
 # 才可上線的候選模型」。
-COLAB_CANDIDATE_MODEL_IDS: FrozenSet[str] = frozenset(
+COLAB_CANDIDATE_MODEL_IDS: frozenset[str] = frozenset(
     {CE_MODEL_METADATA.model_id, FORMO_MODEL_METADATA.model_id}
 )
 
@@ -275,14 +235,12 @@ class ProviderConfig:
     """
     Provider 設定。
 
-    `max_concurrent` 是這個 provider 允許的同時推論數。實體模型 handle 不可重入，
-    預設 1 代表序列化執行；提高這個值前必須確認執行環境真的能同時容納。
+    遠端 provider 只保存 endpoint 與模型 metadata reference；容量由 SageMaker 管理。
     """
 
     identifier: str
     status: ProviderStatus
     metadata_ref: str | None = None
-    max_concurrent: int = 1
     kind: ProviderKind = ProviderKind.MOCK
     endpoint_name: str | None = None
 
@@ -291,8 +249,6 @@ class ProviderConfig:
             raise ValueError("ProviderConfig.identifier must be non-blank.")
         if not isinstance(self.status, ProviderStatus):
             raise TypeError("ProviderConfig.status must be ProviderStatus.")
-        if not isinstance(self.max_concurrent, int) or self.max_concurrent < 1:
-            raise ValueError("ProviderConfig.max_concurrent must be an integer >= 1.")
         if not isinstance(self.kind, ProviderKind):
             raise TypeError("ProviderConfig.kind must be ProviderKind.")
         if self.endpoint_name is not None and not self.endpoint_name.strip():
@@ -310,8 +266,8 @@ class RouteConfig:
     單一語言的路由設定。
 
     `provider_identifier` 是主 provider；`fallback_chain` 是它之後依序嘗試的備援
-    provider。備援只在主 provider 判定為「provider 自身有問題」或「已飽和」時才
-    啟用，語言、音訊、核准類錯誤不會觸發備援。
+    provider。備援只在主 provider 發生可重試的遠端錯誤時啟用；語言、音訊、
+    核准類錯誤不會觸發備援。
     """
 
     route: str
@@ -349,45 +305,6 @@ class RouteConfig:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Concurrency Policy — 併發等待與溢流上限
-# ─────────────────────────────────────────────────────────────────
-@dataclass(frozen=True)
-class ConcurrencyPolicy:
-    """
-    併發等待政策。
-
-    `spill_wait_ms` 是主 provider 飽和時願意排隊的時間；超過就溢流到備援
-    provider，而不是無界排隊把呼叫端的 deadline 吃光。
-    `model_load_wait_ms` 是等待其他請求完成模型載入的上限。
-    所有等待都會再被呼叫端 deadline 的剩餘時間夾住，取兩者較小值。
-    """
-
-    spill_wait_ms: int = 250
-    model_load_wait_ms: int = 15_000
-    load_retry_cooldown_seconds: float = 60.0
-
-    def __post_init__(self) -> None:
-        if self.spill_wait_ms < 0:
-            raise ValueError("ConcurrencyPolicy.spill_wait_ms must be non-negative.")
-        if self.model_load_wait_ms < 0:
-            raise ValueError(
-                "ConcurrencyPolicy.model_load_wait_ms must be non-negative."
-            )
-        if self.load_retry_cooldown_seconds < 0:
-            raise ValueError(
-                "ConcurrencyPolicy.load_retry_cooldown_seconds must be non-negative."
-            )
-
-    @property
-    def spill_wait_seconds(self) -> float:
-        return self.spill_wait_ms / 1000.0
-
-    @property
-    def model_load_wait_seconds(self) -> float:
-        return self.model_load_wait_ms / 1000.0
-
-
-# ─────────────────────────────────────────────────────────────────
 # ASR Config — 頂層受控設定
 # ─────────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
@@ -395,8 +312,7 @@ class AsrConfig:
     """
     後端 ASR 設定（remote-only 架構）。
 
-    包含 language routes、providers、model metadata、併發政策與
-    Formo Prompt ID allowlist。
+    包含 language routes、providers 與 model metadata。
 
     ASR_CONFIG_JSON 是 Lambda 唯一的 ASR 設定來源。
     """
@@ -404,18 +320,6 @@ class AsrConfig:
     routes: dict[str, RouteConfig]
     providers: dict[str, ProviderConfig]
     model_metadata: dict[str, ModelMetadata]
-    formo_prompt_id_allowlist: FrozenSet[str]
-    concurrency: ConcurrencyPolicy = ConcurrencyPolicy()
-
-    def __post_init__(self) -> None:
-        # 確認 formo allowlist 精確
-        if self.formo_prompt_id_allowlist != _FORMO_PROMPT_ID_ALLOWLIST:
-            raise ValueError(
-                "AsrConfig.formo_prompt_id_allowlist must contain exactly the "
-                "six allowed Formo Prompt IDs."
-            )
-        if not isinstance(self.concurrency, ConcurrencyPolicy):
-            raise TypeError("AsrConfig.concurrency must be ConcurrencyPolicy.")
 
     def metadata_for_provider(self, provider_id: str) -> ModelMetadata | None:
         """取得 provider 綁定的 model metadata；未綁定或查不到回 None。"""
@@ -491,13 +395,6 @@ def _parse_provider_config(data: Any, context: str) -> ProviderConfig:
         )
     metadata_ref = data.get("metadata_ref")
 
-    # max_concurrent 為選填；非正整數一律 fail closed，不靜默降為 1。
-    raw_max_concurrent = data.get("max_concurrent", 1)
-    if isinstance(raw_max_concurrent, bool) or not isinstance(raw_max_concurrent, int):
-        raise ConfigParseError(
-            f"'max_concurrent' must be an integer in {context}. Fail closed."
-        )
-
     # kind 為選填；未知值一律 fail closed，不預設放行成 mock。
     raw_kind = data.get("kind", ProviderKind.MOCK.value)
     try:
@@ -518,7 +415,6 @@ def _parse_provider_config(data: Any, context: str) -> ProviderConfig:
             identifier=identifier,
             status=status,
             metadata_ref=metadata_ref,
-            max_concurrent=raw_max_concurrent,
             kind=kind,
             endpoint_name=endpoint_name,
         )
@@ -607,12 +503,11 @@ def parse_asr_config(data: Any) -> AsrConfig:
     """
     從 dict-like 資料解析 ASR 設定（remote-only 架構）。
 
-    缺欄位、未知 schema、矛盾狀態或不可讀 approval record 一律 fail closed。
+    缺欄位、矛盾狀態或不可讀 approval record 一律 fail closed。
     ASR_CONFIG_JSON 是 Lambda 唯一的 ASR 設定來源。
 
     Args:
-        data: dict-like 結構，包含 routes、providers、model_metadata
-              與 formo_prompt_id_allowlist。
+        data: dict-like 結構，包含 routes、providers 與 model_metadata。
 
     Returns:
         驗證通過的 AsrConfig。
@@ -657,26 +552,6 @@ def parse_asr_config(data: Any) -> AsrConfig:
             meta_data, f"model_metadata[{mid}]"
         )
 
-    # Formo Prompt ID allowlist
-    formo_data = _require_key(data, "formo_prompt_id_allowlist", "asr_config")
-    if not isinstance(formo_data, (list, set, frozenset)):
-        raise ConfigParseError(
-            "'formo_prompt_id_allowlist' must be a list/set in asr_config. Fail closed."
-        )
-    formo_allowlist = frozenset(formo_data)
-
-    # 驗證 allowlist 精確
-    if formo_allowlist != _FORMO_PROMPT_ID_ALLOWLIST:
-        raise ConfigParseError(
-            "formo_prompt_id_allowlist must contain exactly the six allowed values. "
-            "Fail closed."
-        )
-
-    # 併發政策（選填；缺區塊用預設值）
-    concurrency = _parse_concurrency_policy(
-        data.get("concurrency"), "concurrency"
-    )
-
     # 驗證矛盾狀態：宣告 production 的模型必須同時具備 approved 的 approval_state
     # 與逐項核准的 production gate。少任何一半就是自相矛盾的設定，fail closed，
     # 避免「標成 production 但其實沒人核准」的組合悄悄上線。
@@ -711,50 +586,7 @@ def parse_asr_config(data: Any) -> AsrConfig:
         routes=routes,
         providers=providers,
         model_metadata=model_metadata,
-        formo_prompt_id_allowlist=formo_allowlist,
-        concurrency=concurrency,
     )
-
-
-def _parse_concurrency_policy(data: Any, context: str) -> ConcurrencyPolicy:
-    """解析併發政策；缺區塊用預設值，型別或數值不合一律 fail closed。"""
-    if data is None:
-        return ConcurrencyPolicy()
-    if not isinstance(data, dict):
-        raise ConfigParseError(
-            f"Concurrency policy must be a dict or null in {context}. Fail closed."
-        )
-
-    defaults = ConcurrencyPolicy()
-    spill_wait_ms = data.get("spill_wait_ms", defaults.spill_wait_ms)
-    model_load_wait_ms = data.get("model_load_wait_ms", defaults.model_load_wait_ms)
-    cooldown = data.get(
-        "load_retry_cooldown_seconds", defaults.load_retry_cooldown_seconds
-    )
-
-    for name, value in (
-        ("spill_wait_ms", spill_wait_ms),
-        ("model_load_wait_ms", model_load_wait_ms),
-    ):
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ConfigParseError(
-                f"'{name}' must be an integer in {context}. Fail closed."
-            )
-    if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)):
-        raise ConfigParseError(
-            f"'load_retry_cooldown_seconds' must be a number in {context}. Fail closed."
-        )
-
-    try:
-        return ConcurrencyPolicy(
-            spill_wait_ms=spill_wait_ms,
-            model_load_wait_ms=model_load_wait_ms,
-            load_retry_cooldown_seconds=float(cooldown),
-        )
-    except (TypeError, ValueError) as exc:
-        raise ConfigParseError(
-            f"Invalid concurrency policy in {context}: {exc} Fail closed."
-        )
 
 
 # ─────────────────────────────────────────────────────────────────

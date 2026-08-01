@@ -15,7 +15,6 @@ from src.shared.asr.config import (
     ApprovalState,
     AsrConfig,
        CE_MODEL_METADATA,
-    ConcurrencyPolicy,
     ModelMetadata,
     ModelProductionGate,
     ProviderConfig,
@@ -115,8 +114,6 @@ def build_config(
         },
         providers=providers,
         model_metadata=metadata or {},
-        formo_prompt_id_allowlist=FORMO_ALLOWLIST,
-        concurrency=ConcurrencyPolicy(spill_wait_ms=10),
     )
 
 

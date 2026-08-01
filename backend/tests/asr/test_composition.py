@@ -33,7 +33,7 @@ from src.shared.asr.config import (
     ProviderStatus,
     UsageRestriction,
 )
-from src.shared.asr.remote_endpoints import SageMakerAsrProvider
+from src.shared.asr.providers import SageMakerAsrProvider
 from src.shared.asr.types import (
     AsrErrorCategory,
     CancellationSignal,
@@ -129,7 +129,7 @@ def test_disabled_provider_is_not_instantiated() -> None:
 # ─────────────────────────────────────────────────────────────────
 # 核准後才建立實例
 # ─────────────────────────────────────────────────────────────────
-def test_approved_ce_model_is_instantiated_with_configured_capacity() -> None:
+def test_approved_ce_model_builds_remote_provider() -> None:
     config = default_config()
     config.model_metadata["taiwan_tongues_ce"] = approve(
         config.model_metadata["taiwan_tongues_ce"]
@@ -138,9 +138,7 @@ def test_approved_ce_model_is_instantiated_with_configured_capacity() -> None:
     registry = build_provider_registry(config)
 
     assert isinstance(registry["ce_remote"], SageMakerAsrProvider)
-    assert registry["ce_remote"].slot_stats.capacity == 4
-    # 建立實例不等於載入模型：handle 必須維持延遲載入。
-    assert registry["ce_remote"].is_loaded is False
+    assert registry["ce_remote"].endpoint_name == "ai-elder-care-asr-ce"
 
 
 def test_approved_formo_model_is_instantiated() -> None:
@@ -152,7 +150,7 @@ def test_approved_formo_model_is_instantiated() -> None:
 
     registry = build_provider_registry(config)
     assert isinstance(registry["formo_remote"], SageMakerAsrProvider)
-    assert registry["formo_remote"].slot_stats.capacity == 2
+    assert registry["formo_remote"].endpoint_name == "ai-elder-care-asr-formo"
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -180,22 +178,13 @@ def test_load_config_parses_env_json(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         },
         "model_metadata": {},
-        "formo_prompt_id_allowlist": [
-            "htia_sixian",
-            "htia_hailu",
-            "htia_dapu",
-            "htia_raoping",
-            "htia_zhaoan",
-            "htia_nansixian",
-        ],
-        "concurrency": {"spill_wait_ms": 42},
     }
     monkeypatch.setenv(ENV_CONFIG_JSON, json.dumps(payload))
 
     config = load_config()
 
     assert set(config.routes) == {"hak"}
-    assert config.concurrency.spill_wait_ms == 42
+    assert config.routes["hak"].provider_identifier == "hak_mock"
 
 
 def test_malformed_env_json_fails_closed_instead_of_silently_defaulting(
@@ -220,14 +209,6 @@ def test_env_json_with_unknown_provider_reference_fails_closed(
         },
         "providers": {},
         "model_metadata": {},
-        "formo_prompt_id_allowlist": [
-            "htia_sixian",
-            "htia_hailu",
-            "htia_dapu",
-            "htia_raoping",
-            "htia_zhaoan",
-            "htia_nansixian",
-        ],
     }
     monkeypatch.setenv(ENV_CONFIG_JSON, json.dumps(payload))
     with pytest.raises(ConfigParseError):
@@ -337,7 +318,6 @@ def test_telemetry_reports_failover_and_served_provider() -> None:
     """
     from src.shared.asr.config import (
         AsrConfig,
-               ConcurrencyPolicy,
         ProviderConfig,
         ProviderKind,
         RouteConfig,
@@ -381,8 +361,6 @@ def test_telemetry_reports_failover_and_served_provider() -> None:
             ),
         },
         model_metadata={},
-        formo_prompt_id_allowlist=default_config().formo_prompt_id_allowlist,
-        concurrency=ConcurrencyPolicy(spill_wait_ms=10),
     )
 
     broken = FailingProvider()
@@ -413,7 +391,6 @@ def test_telemetry_reports_failover_and_served_provider() -> None:
     assert record.provider_id == "hak_mock"
     assert record.route == "hak_primary"
     assert record.terminal_outcome == "success"
-    assert record.queue_wait_ms >= 0
     assert set(record.to_dict()) <= TELEMETRY_ALLOWLIST_KEYS
 
 
@@ -426,10 +403,10 @@ def test_registry_contains_exactly_the_two_known_models() -> None:
 
     確保「支援哪些模型」永遠有一份可讀、可追溯的清單，不會被默默改掉。
     """
-    from src.shared.asr.composition import MODEL_PROVIDER_REGISTRY
+    from src.shared.asr.composition import REMOTE_MODEL_LANGUAGES
     from src.shared.asr.config import CE_MODEL_METADATA, FORMO_MODEL_METADATA
 
-    assert set(MODEL_PROVIDER_REGISTRY) == {
+    assert set(REMOTE_MODEL_LANGUAGES) == {
         CE_MODEL_METADATA.model_id,
         FORMO_MODEL_METADATA.model_id,
     }
@@ -462,34 +439,20 @@ def test_unregistered_model_id_does_not_get_a_remote_instance() -> None:
     assert "ce_remote" not in build_provider_registry(config)
 
 
-def test_third_model_can_be_added_by_registering_it_without_touching_router() -> None:
+def test_third_model_can_be_added_to_allowlist_without_touching_router() -> None:
     """
     示範新增第三個開源模型的最小改動：只需一筆註冊，其餘管線不變。
 
-    這裡直接把假模型登記進 MODEL_PROVIDER_REGISTRY，證明 composition 之外
-    （router 的核准判定、備援鏈、併發控制）完全不需要修改。
+    這裡直接把假模型加入受控語言表，證明 router 不需要模型專屬 class。
     """
     from src.shared.asr.composition import (
-        MODEL_PROVIDER_REGISTRY,
-        ModelProviderRegistration,
+        REMOTE_MODEL_LANGUAGES,
         build_provider_registry,
     )
     from src.shared.asr.config import ProviderKind
 
-    class ThirdPartyProvider:
-        provider_id = "third_party_remote"
-
-        def transcribe(self, audio, language, deadline, cancellation, context):
-            return Transcript(text="第三方模型的假辨識結果")
-
-    def build_third_party(provider_id, spec, slot_pool):
-        return ThirdPartyProvider()
-
     fake_model_id = "someone/third-party-asr"
-    MODEL_PROVIDER_REGISTRY[fake_model_id] = ModelProviderRegistration(
-        languages=frozenset({Language.ZH_TW}),
-        build_remote=build_third_party,
-    )
+    REMOTE_MODEL_LANGUAGES[fake_model_id] = frozenset({Language.ZH_TW})
     try:
         config = default_config()
         config.model_metadata["third_party"] = approve(
@@ -512,7 +475,6 @@ def test_third_model_can_be_added_by_registering_it_without_touching_router() ->
 
         registry = build_provider_registry(config)
 
-        assert isinstance(registry["third_party_remote"], ThirdPartyProvider)
+        assert isinstance(registry["third_party_remote"], SageMakerAsrProvider)
     finally:
-        # 不污染其他測試：註冊表是模組級可變狀態。
-        del MODEL_PROVIDER_REGISTRY[fake_model_id]
+        del REMOTE_MODEL_LANGUAGES[fake_model_id]

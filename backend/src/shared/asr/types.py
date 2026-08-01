@@ -216,15 +216,6 @@ class Deadline:
         """檢查 deadline 是否已到期。"""
         return self._clock() >= self.expiry
 
-    def remaining_seconds(self) -> float:
-        """
-        距離到期還剩幾秒；已到期回 0.0。
-
-        併發控制的 bounded wait（取用模型 slot、等待模型載入）需要這個值，
-        才能保證等待不會超出呼叫端給的 deadline。
-        """
-        return max(0.0, self.expiry - self._clock())
-
     @classmethod
     def create(
         cls, expiry: float, clock: Callable[[], float]

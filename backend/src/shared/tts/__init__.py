@@ -2,7 +2,7 @@
 
 from .composition import build_facade, get_tts_facade
 from .config import ConfigParseError, parse_tts_config
-from .facade import TtsFacade
+from .router import TtsFacade
 from .types import (
     CancellationSignal,
     CorrelationContext,

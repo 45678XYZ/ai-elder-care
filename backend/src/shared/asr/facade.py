@@ -45,9 +45,7 @@ class AsrFacade:
     每個 recognize 呼叫產生恰一筆 terminal telemetry，不理解 HTTP、資料庫
     或對話工作流。
 
-    **可被多執行緒同時呼叫**：facade 只持有 router、telemetry sink 與 clock
-    三個唯讀依賴，每次呼叫自建 emitter；實體模型的併發上限由各 provider
-    自己的 slot pool 把關。
+    Facade 只持有 router、telemetry sink 與 clock；每次呼叫自建 emitter。
     """
 
     def __init__(
@@ -142,11 +140,10 @@ class AsrFacade:
             hakka_dialect=hakka_dialect,
         )
 
-        if outcome.attempts:
+        if outcome.attempted_provider_ids:
             emitter.set_provider_id(outcome.served_provider_id)
         emitter.set_chain_metrics(
             attempt_count=outcome.attempt_count,
-            queue_wait_ms=outcome.total_queue_wait_ms,
             failover_occurred=outcome.failover_occurred,
         )
 

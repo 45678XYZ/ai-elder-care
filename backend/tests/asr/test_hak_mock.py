@@ -1,5 +1,5 @@
 """
-Tests for HakMockProvider — hak_mock.py。
+Tests for providers.HakMockProvider。
 
 驗證：
 - Deterministic output（same input → same output）
@@ -9,7 +9,7 @@ Tests for HakMockProvider — hak_mock.py。
 """
 from __future__ import annotations
 
-from src.shared.asr.hak_mock import HakMockProvider
+from src.shared.asr.providers import HakMockProvider
 from src.shared.asr.types import (
     CancellationSignal,
     CanonicalAudio,

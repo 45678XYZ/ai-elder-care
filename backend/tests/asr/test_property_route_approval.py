@@ -42,18 +42,6 @@ from src.shared.asr.types import (
 # ─────────────────────────────────────────────────────────────────
 # Shared constants and helpers
 # ─────────────────────────────────────────────────────────────────
-_FORMO_ALLOWLIST = frozenset(
-    {
-        "htia_sixian",
-        "htia_hailu",
-        "htia_dapu",
-        "htia_raoping",
-        "htia_zhaoan",
-        "htia_nansixian",
-    }
-)
-
-
 def _make_canonical_audio() -> CanonicalAudio:
     return CanonicalAudio(
         pcm_s16le=b"\x00\x00" * 160,
@@ -132,7 +120,6 @@ def ce_or_formo_route_config(draw: st.DrawFn) -> AsrConfig:
         model_metadata={
             metadata_ref: metadata,
         },
-        formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
 
@@ -212,7 +199,6 @@ class TestPropertyRouteApproval:
             model_metadata={
                 "ce_meta": CE_MODEL_METADATA,
             },
-            formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
 
         spy = ProviderCallSpy(provider_id="ce_remote")

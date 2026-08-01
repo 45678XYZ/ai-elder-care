@@ -47,18 +47,6 @@ from src.shared.asr.types import (
 # ─────────────────────────────────────────────────────────────────
 # Shared helpers
 # ─────────────────────────────────────────────────────────────────
-_FORMO_ALLOWLIST = frozenset(
-    {
-        "htia_sixian",
-        "htia_hailu",
-        "htia_dapu",
-        "htia_raoping",
-        "htia_zhaoan",
-        "htia_nansixian",
-    }
-)
-
-
 def _make_canonical_audio() -> CanonicalAudio:
     """Minimal valid CanonicalAudio for testing."""
     return CanonicalAudio(
@@ -107,7 +95,6 @@ def _make_hak_enabled_config() -> AsrConfig:
             ),
         },
         model_metadata={},
-        formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
 
@@ -131,7 +118,6 @@ def _make_zh_tw_config_gate_incomplete() -> AsrConfig:
         model_metadata={
             "ce_meta": CE_MODEL_METADATA,  # 未核准
         },
-        formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
 
@@ -173,7 +159,6 @@ def _make_zh_tw_config_gate_complete() -> AsrConfig:
         model_metadata={
             "ce_meta": approved_ce,
         },
-        formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
     )
 
 
@@ -235,7 +220,6 @@ class TestRouterHakRoute:
                 ),
             },
             model_metadata={},
-            formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
 
@@ -264,7 +248,6 @@ class TestRouterHakRoute:
                 ),
             },
             model_metadata={},
-            formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
 
@@ -289,7 +272,6 @@ class TestRouterHakRoute:
                 ),
             },
             model_metadata={},
-            formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
 
@@ -331,7 +313,6 @@ class TestRouterCeFormoProhibition:
             model_metadata={
                 "ce_meta": CE_MODEL_METADATA,
             },
-            formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
 
@@ -366,7 +347,6 @@ class TestRouterCeFormoProhibition:
             model_metadata={
                 "formo_meta": FORMO_MODEL_METADATA,
             },
-            formo_prompt_id_allowlist=_FORMO_ALLOWLIST,
         )
         router = AsrRouter(config)
 

@@ -13,9 +13,8 @@ from .config import (
     disabled_config,
     parse_tts_config,
 )
-from .facade import TtsFacade
 from .providers import MockTtsProvider, PollyTtsProvider, SageMakerTtsProvider
-from .router import TtsRouter
+from .router import TtsFacade, TtsRouter
 
 ENV_CONFIG_JSON = "TTS_CONFIG_JSON"
 

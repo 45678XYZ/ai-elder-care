@@ -4,9 +4,8 @@
 # 一個固定 prompt 的端點。Lambda 只選 endpoint，絕不在 request 傳 prompt ID。
 #
 # 對應的程式側規則見 backend/src/shared/asr/README.md：
-#   - 「為了錯誤而備援」由 failover.py 的錯誤分類決定要不要換下一棒
-#   - 「根據流量而備援」由下方的 target tracking autoscaling 與程式側 slot pool
-#     的飽和溢流共同處理
+#   - router.py 只在可重試的 provider 錯誤時依序改用下一棒
+#   - 流量容量與擴縮由下方的 target tracking autoscaling 處理
 #
 # Container contract 見 docs/asr/sagemaker-inference-contract.md。
 #

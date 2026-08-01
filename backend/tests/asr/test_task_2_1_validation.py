@@ -27,7 +27,6 @@ from src.shared.asr import (
     make_route_not_approved_error,
     make_unsupported_language_error,
     parse_asr_config,
-    validate_formo_prompt_id,
 )
 
 
@@ -214,45 +213,6 @@ class TestCancellationSignal:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Formo Prompt ID Validator
-# ─────────────────────────────────────────────────────────────────
-class TestFormoPromptIdValidator:
-    VALID_IDS = [
-        "htia_sixian",
-        "htia_hailu",
-        "htia_dapu",
-        "htia_raoping",
-        "htia_zhaoan",
-        "htia_nansixian",
-    ]
-
-    def test_valid_ids(self) -> None:
-        for pid in self.VALID_IDS:
-            assert validate_formo_prompt_id(pid) == pid
-
-    def test_empty_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            validate_formo_prompt_id("")
-
-    def test_whitespace_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            validate_formo_prompt_id("  htia_sixian  ")
-
-    def test_case_variant_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            validate_formo_prompt_id("HTIA_SIXIAN")
-
-    def test_unicode_lookalike_rejected(self) -> None:
-        # Replace 'a' with full-width 'ａ' (U+FF41)
-        with pytest.raises(ValueError):
-            validate_formo_prompt_id("htiａ_sixian")
-
-    def test_unknown_value_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            validate_formo_prompt_id("htia_unknown")
-
-
-# ─────────────────────────────────────────────────────────────────
 # Model Metadata Constants
 # ─────────────────────────────────────────────────────────────────
 class TestModelMetadataConstants:
@@ -318,14 +278,6 @@ class TestConfigParser:
                     "approval_state": "not_approved",
                 },
             },
-            "formo_prompt_id_allowlist": [
-                "htia_sixian",
-                "htia_hailu",
-                "htia_dapu",
-                "htia_raoping",
-                "htia_zhaoan",
-                "htia_nansixian",
-            ],
         }
 
     def test_valid_config_parses(self) -> None:
@@ -356,12 +308,6 @@ class TestConfigParser:
         data = self._valid_config_data()
         data["model_metadata"]["formo"]["usage_restriction"] = "production"
         with pytest.raises(ConfigParseError, match="Contradictory state"):
-            parse_asr_config(data)
-
-    def test_wrong_formo_allowlist_fail_closed(self) -> None:
-        data = self._valid_config_data()
-        data["formo_prompt_id_allowlist"] = ["htia_sixian"]
-        with pytest.raises(ConfigParseError, match="six allowed values"):
             parse_asr_config(data)
 
     def test_non_dict_input_fail_closed(self) -> None:

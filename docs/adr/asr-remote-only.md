@@ -63,7 +63,7 @@ container 使用哪個腔調；這也避免了 prompt ID 在 request 流經的�
 - Lambda 部署包更小（無 torch、transformers、faster-whisper 依賴）
 - 冷啟動更快
 - 設定錯誤在 parse 階段就能攔截
-- 程式碼更少：移除了 `local_models.py`、`aws_zh_adapter.py` 與相關測試
+- 程式碼更少：移除了本機模型、程序內模型槽／併發排隊與重複 failover 抽象
 - Terraform 的 fail-closed validation 防止不完整部署
 
 ### 負面
@@ -74,7 +74,8 @@ container 使用哪個腔調；這也避免了 prompt ID 在 request 流經的�
 ### 保留
 
 - `asr-lambda/environment.yml` 與 `asr-model` Conda 環境保留為容器開發與驗證用途
-- `provider_base.py`、`concurrency.py`、`ModelSlotPool`、`LazyModelHandle` 保留供遠端 provider 使用
+- 遠端呼叫由 `providers.py` 直接封裝；fallback 只在 `router.py` 實作一次
+- endpoint 容量與擴縮交由 SageMaker，不在 Lambda 設模型槽或等待佇列
 - `docs/api.md` 不變（已隱藏內部 provider/endpoint 細節）
 
 ## 相關文件

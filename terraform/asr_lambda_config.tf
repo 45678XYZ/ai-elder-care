@@ -30,22 +30,20 @@ locals {
     })
     providers = merge({
       ce_remote = {
-        identifier     = "ce_remote"
-        status         = "enabled"
-        kind           = "remote_model"
-        metadata_ref   = "taiwan_tongues_ce"
-        endpoint_name  = local.asr_ce_endpoint_name
-        max_concurrent = 4
+        identifier    = "ce_remote"
+        status        = "enabled"
+        kind          = "remote_model"
+        metadata_ref  = "taiwan_tongues_ce"
+        endpoint_name = local.asr_ce_endpoint_name
       }
       }, {
       for dialect, endpoint_name in local.asr_formo_endpoint_names :
       "formo_remote_${dialect}" => {
-        identifier     = "formo_remote_${dialect}"
-        status         = "enabled"
-        kind           = "remote_model"
-        metadata_ref   = "formospeech_whisper_v3"
-        endpoint_name  = endpoint_name
-        max_concurrent = 2
+        identifier    = "formo_remote_${dialect}"
+        status        = "enabled"
+        kind          = "remote_model"
+        metadata_ref  = "formospeech_whisper_v3"
+        endpoint_name = endpoint_name
       }
     })
     model_metadata = {
@@ -82,17 +80,6 @@ locals {
         }
       }
     }
-    formo_prompt_id_allowlist = [
-      "htia_sixian",
-      "htia_hailu",
-      "htia_dapu",
-      "htia_raoping",
-      "htia_zhaoan",
-      "htia_nansixian",
-    ]
-    concurrency = {
-      spill_wait_ms = 250
-    }
     }) : jsonencode({
     routes = merge({
       "zh-TW" = {
@@ -118,16 +105,5 @@ locals {
       }
     }
     model_metadata = {}
-    formo_prompt_id_allowlist = [
-      "htia_sixian",
-      "htia_hailu",
-      "htia_dapu",
-      "htia_raoping",
-      "htia_zhaoan",
-      "htia_nansixian",
-    ]
-    concurrency = {
-      spill_wait_ms = 250
-    }
   })
 }
