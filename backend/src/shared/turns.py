@@ -41,7 +41,7 @@ TERMINAL_STATUSES = (STATUS_COMPLETED, STATUS_FAILED)
 
 # request lease 長度。必須大於 /chat Lambda 的 timeout，否則同一個請求還在跑就被判定為
 # 「前一個 invocation 已死」而被接管，兩邊會同時做副作用。
-REQUEST_LEASE_SECONDS = int(os.environ.get("REQUEST_LEASE_SECONDS", "60"))
+REQUEST_LEASE_SECONDS = int(os.environ.get("REQUEST_LEASE_SECONDS", "40"))
 
 # 計入 session `input_bytes` 的欄位；與 session close 的 snapshot 驗證共用同一份定義，
 # 兩處算法不同會讓 close 永遠對不上 session 上累計的數字。
