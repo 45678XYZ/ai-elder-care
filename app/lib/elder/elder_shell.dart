@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../shared/i18n/strings.dart';
+import '../shared/services/session_store.dart';
 import '../theme/app_theme.dart';
 
 /// 長者模式外殼：底部 2 tab（聊天／今日）。
@@ -28,23 +30,28 @@ class ElderShell extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
-            child: Row(
-              children: [
-                _ElderTab(
-                  icon: Icons.chat_bubble_outline,
-                  selectedIcon: Icons.chat_bubble,
-                  label: '聊天',
-                  selected: navigationShell.currentIndex == 0,
-                  onTap: () => navigationShell.goBranch(0),
-                ),
-                _ElderTab(
-                  icon: Icons.event_note_outlined,
-                  selectedIcon: Icons.event_note,
-                  label: '今日行程',
-                  selected: navigationShell.currentIndex == 1,
-                  onTap: () => navigationShell.goBranch(1),
-                ),
-              ],
+            // 分頁列自己聽 textLangRevision：長輩在今日頁換了書寫語言，這一列在
+            // 畫面外側、不屬於任何一頁，不主動聽就會一直停在切換前那兩個字。
+            child: ValueListenableBuilder<int>(
+              valueListenable: AppSession.textLangRevision,
+              builder: (context, _, __) => Row(
+                children: [
+                  _ElderTab(
+                    icon: Icons.chat_bubble_outline,
+                    selectedIcon: Icons.chat_bubble,
+                    label: t('聊天'),
+                    selected: navigationShell.currentIndex == 0,
+                    onTap: () => navigationShell.goBranch(0),
+                  ),
+                  _ElderTab(
+                    icon: Icons.event_note_outlined,
+                    selectedIcon: Icons.event_note,
+                    label: t('今日行程'),
+                    selected: navigationShell.currentIndex == 1,
+                    onTap: () => navigationShell.goBranch(1),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

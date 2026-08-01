@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../shared/i18n/strings.dart';
 import '../../shared/models/chat_reply.dart';
 import '../../shared/services/api_exception.dart';
 import '../../shared/services/audio_recorder_service.dart';
@@ -67,7 +68,10 @@ class _ChatScreenState extends State<ChatScreen>
   /// 正在辨識中、還沒定案的那一句。定案後移進 [_messages]，這裡清空。
   String _question = '';
 
-  /// 沒聽懂時給長者的提示。內容固定，方便去重（連續失敗不重複洗版）。
+  /// 沒聽懂時給長者的提示。
+  ///
+  /// 存的是**華語原文**（i18n 對照表的 key），由 [_appendHint] 在顯示前換成長輩選的
+  /// 書寫語言。連續失敗時不重複加，否則長輩會被同一句洗版。
   static const _notHeardHint = '我剛剛沒聽清楚，可以再說一次，或用打字。';
 
   /// 客語那條在 transcript 回來之前，長輩泡泡先放這個。
@@ -89,6 +93,23 @@ class _ChatScreenState extends State<ChatScreen>
     )..repeat(reverse: true);
     _initSpeech();
     _loadElder();
+    // 長輩在今日頁換了語言之後切回來，要重問一次權限：這一頁掛在
+    // StatefulNavigationShell 底下，切走再切回來 State 是留著的、initState 不會
+    // 重跑，而 [_initSpeech] 華語問的是裝置端辨識、客語問的是錄音，不是同一件事。
+    AppSession.langRevision.addListener(_onLangChanged);
+    // 書寫語言則單純重畫就好，不必動麥克風。
+    AppSession.textLangRevision.addListener(_onTextLangChanged);
+  }
+
+  void _onTextLangChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onLangChanged() {
+    if (!mounted) return;
+    // 講到一半換語言：先把在飛的那一輪收乾淨，否則新的輸入路徑會跟舊的搶麥克風。
+    unawaited(_stopConversation());
+    _initSpeech();
   }
 
   /// 載入長輩資料後重畫，問候語才叫得出名字而不是「阿公／阿嬤」。
@@ -99,6 +120,8 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    AppSession.langRevision.removeListener(_onLangChanged);
+    AppSession.textLangRevision.removeListener(_onTextLangChanged);
     _listenTimer?.cancel();
     _scrollCtrl.dispose();
     _pulse.dispose();
@@ -345,10 +368,10 @@ class _ChatScreenState extends State<ChatScreen>
   // ---- 狀態文字 ----
 
   String _statusText(_Phase p) => switch (p) {
-        _Phase.listening => '我在聽，說完停一下',
-        _Phase.thinking => '聽到了，正在想…',
-        _Phase.speaking => '我正在說',
-        _Phase.idle => _conversationActive ? '準備中…' : '按一下就可以說話',
+        _Phase.listening => t('我在聽，說完停一下'),
+        _Phase.thinking => t('聽到了，正在想…'),
+        _Phase.speaking => t('我正在說'),
+        _Phase.idle => _conversationActive ? t('準備中…') : t('按一下就可以說話'),
       };
 
   // ---- UI ----
@@ -386,7 +409,7 @@ class _ChatScreenState extends State<ChatScreen>
           // 空間比喻，長輩熟的是「聊天」不是「聊天室」；「助手」則把定位偏成工具，
           // 讓人覺得要有事情才能找它——但這個畫面最重要的情境正是「沒什麼事，
           // 就想講講話」。「夥伴」是日常詞，也守住陪伴而非任務的定位。
-          child: Text('${AppSession.instance.displayName}的聊天夥伴',
+          child: Text(t1('{}的聊天夥伴', AppSession.instance.displayName),
               style: text.headlineLarge),
         ),
         // 橫線把標題與對話區切開，讓下方看得出來是另一段內容。
@@ -399,7 +422,11 @@ class _ChatScreenState extends State<ChatScreen>
   void _appendNotHeardHint() => _appendHint(_notHeardHint);
 
   /// 加一則 AI 側的提示訊息；與上一則相同就不重複加。
-  void _appendHint(String message) {
+  ///
+  /// [zh] 傳華語原文，這裡才換成長輩選的書寫語言。**提示訊息是 App 自己講的話，
+  /// 跟泡泡裡後端回的內容不同**——後者一律原樣顯示，不經過 [t]。
+  void _appendHint(String zh) {
+    final message = t(zh);
     if (_messages.isNotEmpty && _messages.last.text == message) return;
     setState(() => _messages.add(_Message(isElder: false, text: message)));
     _scrollToBottom();
@@ -464,7 +491,7 @@ class _ChatScreenState extends State<ChatScreen>
         mainAxisSize: MainAxisSize.min,
         children: [
           if (!_micAvailable)
-            Text('這台裝置沒有麥克風，請用下方打字',
+            Text(t('這台裝置沒有麥克風，請用下方打字'),
                 textAlign: TextAlign.center,
                 style:
                     text.headlineSmall?.copyWith(color: AppColors.inkSecondary))
@@ -491,7 +518,7 @@ class _ChatScreenState extends State<ChatScreen>
               liveRegion: true,
               child: Text(
                 _phase == _Phase.listening
-                    ? '${_statusText(_phase)}（$_listenSeconds 秒）'
+                    ? t2('{}（{} 秒）', _statusText(_phase), _listenSeconds)
                     : _statusText(_phase),
                 textAlign: TextAlign.center,
                 style: text.headlineMedium,
@@ -505,7 +532,7 @@ class _ChatScreenState extends State<ChatScreen>
             child: OutlinedButton.icon(
               onPressed: _phase == _Phase.idle ? _openTextInput : null,
               icon: const Icon(Icons.keyboard, size: 28),
-              label: Text('改用打字', style: text.headlineSmall),
+              label: Text(t('改用打字'), style: text.headlineSmall),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.ink,
                 side: const BorderSide(color: AppColors.border, width: 2),
@@ -522,7 +549,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   /// 開場問候。分界與今日頁的早安圖共用一份（見 [GreetingSlot]）——
   /// 同一個時間點，撕曆上寫「晚安」而聊天室說「早安」是不能發生的。
-  String _greeting() => GreetingSlot.of(DateTime.now()).label;
+  String _greeting() => GreetingSlot.of(DateTime.now()).text;
 }
 
 /// 對話中的一則訊息。
@@ -570,7 +597,7 @@ class _ConversationHint extends StatelessWidget {
                 // 講「看醫生」而不是「非醫療診斷之參酌」：長輩要看得懂才有意義，
                 // 法律用語留在政策頁。字級仍守長者下限 24sp。
                 Text(
-                  '我說的健康資訊只能參考，\n身體不舒服要看醫生喔',
+                  t('我說的健康資訊只能參考，\n身體不舒服要看醫生喔'),
                   textAlign: TextAlign.center,
                   style: text.headlineSmall?.copyWith(
                     fontWeight: FontWeight.w500,
@@ -678,10 +705,10 @@ class _MicOrb extends StatelessWidget {
       button: onTap != null,
       enabled: onTap != null,
       label: switch (phase) {
-        _Phase.idle => '開始說話',
-        _Phase.listening => '聆聽中，點一下結束',
-        _Phase.thinking => '思考中，請稍等',
-        _Phase.speaking => '回覆中，點一下停止',
+        _Phase.idle => t('開始說話'),
+        _Phase.listening => t('聆聽中，點一下結束'),
+        _Phase.thinking => t('思考中，請稍等'),
+        _Phase.speaking => t('回覆中，點一下停止'),
       },
       child: GestureDetector(
         onTap: onTap,
@@ -735,8 +762,8 @@ class _MicOrb extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
           ),
           alignment: Alignment.center,
-          child: const Text('想',
-              style: TextStyle(
+          child: Text(t('想'),
+              style: const TextStyle(
                   color: Colors.white,
                   fontSize: 24,
                   fontWeight: FontWeight.w900)),
@@ -848,11 +875,11 @@ class _TextInputSheetState extends State<_TextInputSheet> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('打字給我', style: text.headlineSmall),
+              Text(t('打字給我'), style: text.headlineSmall),
               IconButton(
                 onPressed: () => Navigator.of(context).pop(),
                 iconSize: 32,
-                tooltip: '關閉',
+                tooltip: t('關閉'),
                 icon: const Icon(Icons.close, color: AppColors.ink),
               ),
             ],
@@ -864,14 +891,14 @@ class _TextInputSheetState extends State<_TextInputSheet> {
             minLines: 1,
             maxLines: 4,
             style: text.headlineSmall,
-            decoration: const InputDecoration(
-              hintText: '想問什麼都可以',
-              hintStyle: TextStyle(color: AppColors.hint),
+            decoration: InputDecoration(
+              hintText: t('想問什麼都可以'),
+              hintStyle: const TextStyle(color: AppColors.hint),
               filled: true,
               fillColor: AppColors.cardAlt,
               // 不畫框，與其他輸入欄一致；框只在聚焦時出現。
               enabledBorder: InputBorder.none,
-              focusedBorder: OutlineInputBorder(
+              focusedBorder: const OutlineInputBorder(
                 borderRadius: BorderRadius.all(AppRadius.field),
                 borderSide: BorderSide(color: AppColors.accent, width: 2),
               ),
@@ -893,7 +920,7 @@ class _TextInputSheetState extends State<_TextInputSheet> {
                 Navigator.of(context).pop();
                 widget.onSubmit(q);
               },
-              child: Text('送出', style: text.headlineSmall),
+              child: Text(t('送出'), style: text.headlineSmall),
             ),
           ),
         ],

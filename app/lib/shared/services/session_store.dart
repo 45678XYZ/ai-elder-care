@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/caregiver.dart';
@@ -60,6 +61,7 @@ class AppSession {
   static String _nameKey(String a) => 'elder_name_$a';
   static String _nicknameKey(String a) => 'elder_nickname_$a';
   static String _langKey(String a) => 'elder_lang_$a';
+  static String _textLangKey(String a) => 'elder_text_lang_$a';
   static String _selectedElderKey(String a) => 'selected_elder_id_$a';
 
   String elderName = '';
@@ -67,6 +69,70 @@ class AppSession {
 
   /// 語言偏好，對齊 api.md：'zh-TW' | 'hak'。決定長者端輸入路徑。
   String lang = 'zh-TW';
+
+  /// [lang] 是不是這個帳號**自己選過**的（首次設定填的，或長者按過語言鈕）。
+  ///
+  /// 需要跟「沒選過」分得出來，是因為 [lang] 沒有值時預設 `'zh-TW'`——那跟長者
+  /// 明確選了華語長得一模一樣。[isHakka] 在沒選過時要退回 [selectedElder]，
+  /// 選過就不能再退（否則長者選華語、照護者那邊是客語時，永遠切不回華語）。
+  bool _langChosen = false;
+
+  /// 語言變動的廣播，用法同 [RoutineSync.revision]。
+  ///
+  /// 需要它的理由也一樣：長者模式兩個 tab 掛在 `StatefulNavigationShell` 底下，
+  /// 切走再切回來 State 是留著的、`initState` 不會重跑。而聊天頁開場問的權限
+  /// 兩種語言並不同（華語問裝置端辨識、客語問錄音），不重問就會一直拿著
+  /// 切換前那個答案。
+  static final ValueNotifier<int> langRevision = ValueNotifier<int>(0);
+
+  /// 畫面文字的書寫語言（`'zh-TW'` ｜ `'hak'`）。**跟 [lang] 是兩件事。**
+  ///
+  /// 講客語的長輩不一定讀得懂客語漢字——有人講客語但只認得一般漢字。兩者共用一個
+  /// 值等於逼這種人在「聽不懂語音」和「看不懂畫面」之間二選一，所以各存各的。
+  ///
+  /// 純本機、不對應 api.md 任何欄位：`lang_preference` 講的是語音，後端沒有「畫面
+  /// 用哪種字」這個概念，也不需要知道。
+  String textLang = 'zh-TW';
+
+  /// 畫面文字是不是客語漢字。沒有 [lang] 那種退回照護者設定的問題——這個值只有
+  /// 長輩自己設得了，沒設就是華語。
+  bool get isHakkaText => textLang == 'hak';
+
+  /// 畫面文字語言變動的廣播。長者端各畫面監聽它重畫。
+  static final ValueNotifier<int> textLangRevision = ValueNotifier<int>(0);
+
+  /// 長者自己切換畫面文字的書寫語言。
+  Future<void> setTextLang(String lang) async {
+    if (textLang == lang) return;
+    textLang = lang;
+    final account = _accountId;
+    if (account != null) {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_textLangKey(account), lang);
+    }
+    textLangRevision.value++;
+  }
+
+  /// 長者自己切換語音語言（`'zh-TW'` ｜ `'hak'`），立刻生效並記到下次啟動。
+  ///
+  /// **只寫本機、不送後端**：canonical 的 `lang_preference` 是照護者專屬欄位
+  /// （`PATCH /elders/{id}`，見 api.md 端點總覽），長者帳號改不動它。所以照護者
+  /// 設的值仍在後端，長者這一份蓋在它上面——見 [isHakka] 的優先序，實際在說話的
+  /// 人贏，這是刻意的。
+  ///
+  /// TODO(backend): 若後端開放長者本人 PATCH 自己的 `lang_preference`，這裡要一併
+  ///   送上去。在那之前換裝置或重裝會退回照護者設的值。
+  Future<void> setLang(String lang) async {
+    if (_langChosen && this.lang == lang) return;
+    this.lang = lang;
+    _langChosen = true;
+    final account = _accountId;
+    if (account != null) {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_langKey(account), lang);
+    }
+    langRevision.value++;
+  }
 
   /// 是否已完成首次設定；決定登入後的落點（見 app_router 的 redirect）。
   ///
@@ -120,8 +186,12 @@ class AppSession {
   ///
   /// 目前還看不出後果：客語分流尚未實作（chat_screen 仍一律走華語迴圈），所以這是
   /// 「等客語接上就會立刻踩到、屆時很難聯想到這裡」的那種問題，先修掉。
+  ///
+  /// 判斷的是 [_langChosen] 而不是 `lang == 'hak'`：長者按語言鈕選華語時，
+  /// 只比對 `'hak'` 會讓它落到 [selectedElder]，而照護者那邊設的若是客語就會把
+  /// 長者的選擇蓋掉——鈕按了沒反應。選過就以選的為準，兩個方向都要成立。
   bool get isHakka {
-    if (lang == 'hak') return true;
+    if (_langChosen) return lang == 'hak';
     return selectedElder?.langPreference == 'hak';
   }
 
@@ -171,6 +241,8 @@ class AppSession {
       elderName = '';
       elderNickname = '';
       lang = 'zh-TW';
+      _langChosen = false;
+      textLang = 'zh-TW';
       selectedElderId = null;
       linkedCaregivers = const [];
       return;
@@ -178,7 +250,11 @@ class AppSession {
     setupDone = p.getBool(_setupDoneKey(accountId)) ?? false;
     elderName = p.getString(_nameKey(accountId)) ?? '';
     elderNickname = p.getString(_nicknameKey(accountId)) ?? '';
-    lang = p.getString(_langKey(accountId)) ?? 'zh-TW';
+    // key 存不存在就是「選過沒有」——寫進去的只可能是 /setup 或語言鈕。
+    final savedLang = p.getString(_langKey(accountId));
+    _langChosen = savedLang != null;
+    lang = savedLang ?? 'zh-TW';
+    textLang = p.getString(_textLangKey(accountId)) ?? 'zh-TW';
     selectedElderId = p.getString(_selectedElderKey(accountId));
     // 已連結的家人不從本機讀：那份資料的真實來源是後端，見 [ensureCaregiversLoaded]。
     // 換帳號時一律清空，等畫面自己去載——留著上一個帳號的家人清單是資料外洩。
@@ -278,6 +354,7 @@ class AppSession {
     elderName = name;
     elderNickname = nickname;
     this.lang = lang;
+    _langChosen = true;
     setupDone = true;
     // 未登入時只留在記憶體：沒有 sub 就沒有帳號可以掛，寫成裝置層級的資料正是
     // 先前修掉的問題。註冊流程裡的 /setup（尚未登入）不走這裡，走
@@ -373,6 +450,8 @@ class AppSession {
     elderName = '';
     elderNickname = '';
     lang = 'zh-TW';
+    _langChosen = false;
+    textLang = 'zh-TW';
     me = null;
     elders = const [];
     selectedElderId = null;

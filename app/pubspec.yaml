@@ -74,3 +74,8 @@ flutter:
           weight: 700
         - asset: assets/fonts/NotoSansTC-Black.otf
           weight: 900
+    # 客語缺字遞補（𠊎 U+2028E、吂 U+5402），只有這兩個字，2.4 KB。
+    # 來源與重建指令見 AppTypography.hakkaFallback。
+    - family: TWSungHakka
+      fonts:
+        - asset: assets/fonts/TWSungHakka.ttf

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
+import '../i18n/strings.dart';
 import '../services/api_exception.dart';
 
 /// 非同步資料的四態外殼：loading／error／empty／success。
@@ -49,7 +50,7 @@ class AsyncView<T> extends StatelessWidget {
               children: [
                 const CircularProgressIndicator(color: AppColors.accent),
                 const SizedBox(height: AppSpacing.lg),
-                Text('載入中…', style: _bodyStyle(context)),
+                Text(t('載入中…'), style: _bodyStyle(context)),
               ],
             ),
           );
@@ -57,7 +58,7 @@ class AsyncView<T> extends StatelessWidget {
 
         if (snap.hasError) {
           final e = snap.error;
-          final message = e is ApiException ? e.message : '載入失敗，請稍後再試。';
+          final message = e is ApiException ? e.message : t('載入失敗，請稍後再試。');
           return _Centered(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -74,7 +75,7 @@ class AsyncView<T> extends StatelessWidget {
                   child: OutlinedButton.icon(
                     onPressed: onRetry,
                     icon: const Icon(Icons.refresh),
-                    label: Text('重新載入', style: _labelStyle(context)),
+                    label: Text(t('重新載入'), style: _labelStyle(context)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.ink,
                       side: const BorderSide(color: AppColors.border, width: 2),
@@ -97,7 +98,7 @@ class AsyncView<T> extends StatelessWidget {
               children: [
                 Icon(emptyIcon, size: 44, color: AppColors.chevron),
                 const SizedBox(height: AppSpacing.md),
-                Text(emptyText,
+                Text(t(emptyText),
                     textAlign: TextAlign.center,
                     style: _bodyStyle(context)
                         ?.copyWith(color: AppColors.inkSecondary)),

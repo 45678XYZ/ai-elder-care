@@ -23,6 +23,7 @@ app/
 │   └── shared/           # 共用模組
 ├── assets/               # 靜態資源
 ├── design-system/        # 設計規範文件
+├── i18n/                 # 客語漢字待翻／待確認的句子（翻完收進 lib/shared/i18n/）
 ├── test/                 # 測試
 ├── android/              # Android 平台設定
 ├── web/                  # Web 平台設定
@@ -59,6 +60,7 @@ app/
 | `widgets/almanac_face.dart` | 農民曆牌面 Widget：顯示國曆/農曆日期與節氣 |
 | `widgets/calendar_tear.dart` | 撕頁日曆 Widget：模擬日曆撕頁效果的日期顯示 |
 | `widgets/greeting_slot.dart` | 時段問候語 Widget：依早/午/晚顯示不同問候語與背景圖 |
+| `widgets/lang_toggle.dart` | 長者自行切換語言的兩顆鈕：`ElderLangToggle`（說話：華語／客語）與 `ElderTextLangToggle`（畫面文字：一般漢字／客語漢字）。兩者獨立，講客語不等於讀得懂客語漢字 |
 
 ### caregiver/ — 照護者模式
 
@@ -109,7 +111,7 @@ app/
 | `demo_data.dart` | Demo 模式假資料定義 |
 | `care_repository.dart` | 照護資料倉庫：根據模式切換真實 API 或 Demo 資料來源 |
 | `chat_session.dart` | 對話 Session 管理：維護與後端的 session 狀態、send/close 操作 |
-| `session_store.dart` | App 本地 Session 持久化：首次設定狀態、角色選擇、已選長者 |
+| `session_store.dart` | App 本地 Session 持久化：首次設定狀態、角色選擇、已選長者、說話語言與畫面文字語言（全部綁帳號 `sub`） |
 | `audio_service.dart` | 音訊播放服務：播放後端回傳的 AI 語音回覆（just_audio） |
 | `audio_recorder_service.dart` | 錄音服務：客語模式錄製音訊送後端 ASR |
 | `speech_service.dart` | 語音辨識服務：裝置端 ASR（speech_to_text）將語音轉文字 |
@@ -119,6 +121,12 @@ app/
 | `health_note_ack_store.dart` | 健康提醒已讀狀態管理 |
 | `lunar_date.dart` | 農曆日期計算：國曆轉農曆、節氣判定 |
 | `taiwan_holiday.dart` | 台灣假日判定：公眾假期與補班日查詢 |
+
+#### shared/i18n/
+
+| 檔案 | 功能 |
+|------|------|
+| `strings.dart` | 長者端介面文字的客語漢字對照表與 `t()`／`t1()`／`t2()`。key 是華語原文，缺譯原樣回華語不會變空白。**對話內容不經過它**——後端回什麼就顯示什麼 |
 
 #### shared/screens/
 
@@ -149,6 +157,7 @@ app/
 |-------------|------|
 | `fonts/NotoSansTC-*.otf` | 思源黑體 TC（Black / Bold / Medium） |
 | `fonts/NotoSerifTC-Black.otf` | 思源宋體 TC（農民曆等重點文字） |
+| `fonts/TWSungHakka.ttf` | 客語缺字遞補（2.4 KB）：`𠊎` U+2028E、`吂` U+5402 兩字不在 Noto TC 的收字範圍，缺了會變豆腐方塊。從全字庫正宋體裁出，重建指令見 `AppTypography.hakkaFallback` |
 | `images/greeting_morning.jpg` | 早安問候語背景圖 |
 | `images/greeting_afternoon.png` | 午安問候語背景圖 |
 | `images/greeting_evening.png` | 晚安問候語背景圖 |
@@ -175,22 +184,44 @@ app/
 | `silence_detection_test.dart` | 靜音偵測邏輯 |
 | `event_category_test.dart` | 事件分類邏輯 |
 | `health_notes_test.dart` | 健康注意事項邏輯 |
+| `elder_lang_toggle_test.dart` | 說話語言切換；重點是長者選華語時切得回來（不被照護者設的 `lang_preference` 蓋掉） |
+| `elder_text_lang_test.dart` | 畫面文字語言切換；重點是兩顆鈕互不連動，以及切換後另一顆的標題要跟著換 |
+| `routine_delete_test.dart` | 刪除例行公事走 `DELETE /routines/{id}`，不是舊的 `PATCH active:false` |
 
 ---
 
 ## 開發指南
 
+平台檔案（`android/`、`web/`）已在版控內，**不要再跑 `flutter create`**——那會蓋掉現有設定。
+
 ```bash
 cd app
-flutter create --platforms android --project-name e_hakka_care .
 flutter pub get
-flutter run
+flutter run          # Android 裝置／模擬器
 ```
 
-本機實測模擬器預設連線 `10.0.2.2:8000`（Android 模擬器連本機主機），桌面/網頁版請使用：
+預設跑 **demo 資料**，不需要後端也能點完所有畫面。
+
+### 看畫面（不接後端）
+
 ```bash
-flutter run --dart-define=API_BASE_URL=http://localhost:8000
+flutter build web
+cd build/web && python -m http.server 8080
 ```
+
+開 <http://127.0.0.1:8080/phone.html>——手機比例的預覽外框，可直接切換長者／照護者身分，不必真的登入。`web` build 只服務預覽與截圖，不是出貨目標（目標裝置是 Android 手機）。
+
+### 接真後端
+
+資料來源收斂在 `CareRepository` 一個介面後面，切換是一個 `--dart-define`：
+
+```bash
+flutter run \
+  --dart-define=API_BASE_URL=https://xxx.execute-api.ap-northeast-1.amazonaws.com \
+  --dart-define=USE_BACKEND=true
+```
+
+不帶 `USE_BACKEND` 就是 demo（`DemoRepository`），帶了走 `ApiRepository`；畫面兩邊共用，不需要改任何一行。本機 RAG PoC 則是模擬器連 `10.0.2.2:8000`、桌面／網頁用 `--dart-define=API_BASE_URL=http://localhost:8000`。
 
 提交前請確保：
 ```bash
@@ -198,3 +229,23 @@ dart format .
 flutter analyze    # 不得有 error
 flutter test       # 所有測試通過
 ```
+
+---
+
+## 目前狀態
+
+**已完成**
+
+- 長者模式：語音問答免手持迴圈（裝置端華語 ASR → TTS，打字備援）、今日行程與手動完成、農民曆撕曆頁首、連結家人
+- 照護者模式：長輩管理（健康狀況／生活習慣／家人／例行公事增刪改）、每日摘要、統計、事件時間軸
+- 長者端可自行切換**說話語言**（華語／客語）與**畫面文字**（一般漢字／客語漢字），兩者獨立
+- demo 資料完整，不接後端可跑完整個流程
+
+**未完成**
+
+- **Cognito 登入**：目前是本機 demo 帳號（`DemoAuthBackend`），換裝置就沒有身分記錄
+- **正式 `/chat`**：目前接的是 RAG PoC 的 `/ask`，沒有語音回覆與 session
+- **客語語音**：`lang_preference` 已能切，但 `chat_screen` 仍走華語辨識迴圈，錄音送後端那條未接
+- `POST /elders`：首次設定只寫本機，尚未建到後端
+
+後端上線的切換順序：**Cognito 先於一切**，沒有 token 其餘端點都會 401。

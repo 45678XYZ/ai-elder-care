@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../shared/i18n/strings.dart';
 import '../../shared/models/routine.dart';
 import '../../shared/services/care_repository.dart';
 import '../../shared/services/lunar_date.dart';
@@ -16,6 +17,7 @@ import '../../theme/app_theme.dart';
 import '../widgets/almanac_face.dart';
 import '../widgets/calendar_tear.dart';
 import '../widgets/greeting_slot.dart';
+import '../widgets/lang_toggle.dart';
 import 'calendar_enlarged.dart';
 
 /// S4 `/elder/today` — 長者模式今日畫面。
@@ -26,7 +28,10 @@ import 'calendar_enlarged.dart';
 /// 長者規格：內文 >=24sp、觸控 >=60dp。可互動元素上限 3 在這一頁刻意放寬，
 /// 理由見 [_RoutineRow]。
 ///
-/// 不放語言切換：語言由照護者在初次設定決定，長者端不切換（見 setup_screen §5.1）。
+/// 兩顆語言鈕（[ElderLangToggle] 說話、[ElderTextLangToggle] 畫面文字）放在這一頁
+/// 最底下，跟連結家人、登出同一區：它們是設定不是每日動作，長輩滑過所有行程才
+/// 遇得到，日常使用踩不到。原本長者端完全不給切（只有照護者管理頁能改），但
+/// 照護者設錯時長輩沒有自救的辦法。
 class TodayScreen extends StatefulWidget {
   const TodayScreen({super.key});
 
@@ -48,12 +53,19 @@ class _TodayScreenState extends State<TodayScreen> {
     // initState 不會重跑。長輩在聊天頁講完「藥吃了」而行程被標成完成時，就是靠這個
     // 監聽把畫面換掉——否則切回來看到的還是切走前那份。
     RoutineSync.revision.addListener(_onRoutinesChanged);
+    // 語言鈕就在這一頁上，按下去要立刻整頁換字，不能等切走再切回來。
+    AppSession.textLangRevision.addListener(_onTextLangChanged);
   }
 
   @override
   void dispose() {
     RoutineSync.revision.removeListener(_onRoutinesChanged);
+    AppSession.textLangRevision.removeListener(_onTextLangChanged);
     super.dispose();
+  }
+
+  void _onTextLangChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onRoutinesChanged() {
@@ -99,7 +111,7 @@ class _TodayScreenState extends State<TodayScreen> {
           backgroundColor: AppColors.barDark,
           duration: const Duration(seconds: 3),
           content: Text(
-            '「${o.title}」已記錄完成',
+            t1('「{}」已記錄完成', o.title),
             style: Theme.of(context)
                 .textTheme
                 .headlineSmall
@@ -127,7 +139,7 @@ class _TodayScreenState extends State<TodayScreen> {
           elderMode: true,
           isEmpty: (v) => v.items.isEmpty,
           emptyIcon: Icons.event_available_outlined,
-          emptyText: '今天沒有安排喔',
+          emptyText: t('今天沒有安排喔'),
           builder: (context, view) {
             final items = view.items.toList()
               ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
@@ -135,9 +147,15 @@ class _TodayScreenState extends State<TodayScreen> {
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               children: [
-                const TearableCalendarSheet(child: _CalendarSheet()),
+                // 這一頁凡是含畫面文字的 widget 都**不能加 const**：const 會被正規化
+                // 成同一個實例，切換書寫語言後 setState 重建時 Flutter 比到
+                // identical(new, old) 就整棵跳過，字永遠停在建立時那一版。
+                // 撕曆裡有問候語（早安／恁早），登出鈕有「登出」，兩個都中招過。
+                // 純排版的 SizedBox 沒有文字，維持 const 沒問題。
+                // ignore: prefer_const_constructors
+                TearableCalendarSheet(child: const _CalendarSheet()),
                 const SizedBox(height: AppSpacing.xl),
-                const SectionHeader('今天的安排', elderMode: true),
+                SectionHeader(t('今天的安排'), elderMode: true),
                 const SizedBox(height: AppSpacing.md),
                 for (final o in items) ...[
                   _RoutineRow(
@@ -160,11 +178,17 @@ class _TodayScreenState extends State<TodayScreen> {
                     },
                   ),
                 ],
-                // 放全頁最底下：長輩要滑過所有行程才遇得到，日常使用踩不到。
-                // 這一頁本來就是長者端唯一適合擺它的地方——聊天室的三個互動額度
-                // 要留給麥克風、打字與分頁，不能再塞。
+                // 以下兩個都放全頁最底下：長輩要滑過所有行程才遇得到，日常使用
+                // 踩不到。這一頁本來就是長者端唯一適合擺它們的地方——聊天室的
+                // 三個互動額度要留給麥克風、打字與分頁，不能再塞。
                 const SizedBox(height: AppSpacing.xl),
-                const SignOutButton(elderMode: true),
+                const ElderLangToggle(),
+                const SizedBox(height: AppSpacing.lg),
+                const ElderTextLangToggle(),
+                const SizedBox(height: AppSpacing.xl),
+                // 不加 const，理由見本清單開頭。
+                // ignore: prefer_const_constructors
+                SignOutButton(elderMode: true),
               ],
             );
           },
@@ -225,7 +249,7 @@ class _CalendarSheet extends StatelessWidget {
               Expanded(
                 child: _TappablePane(
                   heroTag: dateHeroTag,
-                  label: '放大看日期',
+                  label: t('放大看日期'),
                   onTap: () => showEnlargedDate(context,
                       now: now,
                       lunar: lunar,
@@ -238,7 +262,7 @@ class _CalendarSheet extends StatelessWidget {
               Expanded(
                 child: _TappablePane(
                   heroTag: greetingHeroTag,
-                  label: '放大看圖',
+                  label: t('放大看圖'),
                   onTap: () => showEnlargedGreeting(context,
                       now: now, aspectRatio: paneAspect),
                   child: _GreetingPane(now: now),
@@ -351,7 +375,7 @@ class _GreetingPane extends StatelessWidget {
           height: double.infinity,
           alignment: Alignment.topCenter,
           errorBuilder: (context, _, __) =>
-              _GreetingFallback(label: g.label, icon: g.icon),
+              _GreetingFallback(label: g.text, icon: g.icon),
         ),
       ),
     );
@@ -419,7 +443,7 @@ class _LinkCaregiverEntry extends StatelessWidget {
                   size: 32, color: AppColors.inkSecondary),
               const SizedBox(width: AppSpacing.md),
               Expanded(
-                child: Text('連結家人',
+                child: Text(t('連結家人'),
                     style: text.headlineSmall
                         ?.copyWith(color: AppColors.inkSecondary)),
               ),
@@ -513,7 +537,7 @@ class _RoutineRow extends StatelessWidget {
               child: FilledButton.icon(
                 onPressed: onComplete,
                 icon: const Icon(Icons.check, size: 32),
-                label: Text('我完成了',
+                label: Text(t('我完成了'),
                     style: text.headlineMedium?.copyWith(color: Colors.white)),
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.accentText,
@@ -547,7 +571,7 @@ class _QuietCheckButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: '標記「$title」完成',
+      label: t1('標記「{}」完成', title),
       child: InkWell(
         onTap: onTap,
         customBorder: const CircleBorder(),

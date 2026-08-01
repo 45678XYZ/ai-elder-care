@@ -21,8 +21,8 @@ void main() {
 
   group('註冊', () {
     test('註冊後需要驗證信箱', () async {
-      final outcome = await backend.signUp(
-          email: 'a@example.com', password: 'secret123');
+      final outcome =
+          await backend.signUp(email: 'a@example.com', password: 'secret123');
       expect(outcome, SignUpOutcome.needsConfirmation);
     });
 
@@ -70,8 +70,8 @@ void main() {
 
     test('還沒驗證完就重新註冊，等同重寄驗證碼而不是報錯', () async {
       await register('a@example.com');
-      final outcome = await backend.signUp(
-          email: 'a@example.com', password: 'secret123');
+      final outcome =
+          await backend.signUp(email: 'a@example.com', password: 'secret123');
       expect(outcome, SignUpOutcome.needsConfirmation);
     });
   });
@@ -105,8 +105,8 @@ void main() {
     });
 
     test('對不存在的帳號重寄不報錯，避免用它來試探帳號存不存在', () async {
-      await expectLater(backend.resendCode(email: 'nobody@example.com'),
-          completes);
+      await expectLater(
+          backend.resendCode(email: 'nobody@example.com'), completes);
     });
   });
 
@@ -221,8 +221,7 @@ void main() {
     Future<AuthService> signedIn(String email) async {
       final service = AuthService()..backend = backend;
       await register(email);
-      await backend.confirmSignUp(
-          email: email, code: DemoAuthBackend.demoCode);
+      await backend.confirmSignUp(email: email, code: DemoAuthBackend.demoCode);
       await service.signIn(email: email, password: 'secret123');
       return service;
     }
@@ -265,8 +264,7 @@ void main() {
 
       backend.markAsElder(
           email: 'grandma@example.com', elderId: 'eld_123456789abc');
-      await service.signIn(
-          email: 'grandma@example.com', password: 'secret123');
+      await service.signIn(email: 'grandma@example.com', password: 'secret123');
 
       expect(service.effectiveRole, UserRole.elder);
     });

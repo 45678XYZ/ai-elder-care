@@ -128,10 +128,7 @@ class ApiRepository implements CareRepository {
   @override
   Future<void> deleteRoutine(String routineId,
           {required String clientRequestId}) =>
-      // TODO(backend): api.md 還沒有刪除端點，先用停用代替。後端定案後改成
-      //   `DELETE /routines/{id}`（或屆時商定的形式），畫面不用跟著改。
-      _api.updateRoutine(routineId,
-          clientRequestId: clientRequestId, fields: const {'active': false});
+      _api.deleteRoutine(routineId, clientRequestId: clientRequestId);
 
   @override
   Future<DailyRoutineView> dailyRoutines({

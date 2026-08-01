@@ -244,11 +244,34 @@ abstract final class AppTypography {
   static const serifFamily = 'NotoSerifTC';
   static const sansFamily = 'NotoSansTC';
 
+  /// 客語漢字的缺字遞補。
+  ///
+  /// Noto Sans/Serif TC 各只收約 20,745 個碼位，客語用字有兩個不在裡面：
+  /// `𠊎`（U+2028E，第一人稱，在 CJK 擴充 B）與 `吂`（U+5402，「還沒」，雖在 BMP
+  /// 但不在 Noto TC 的收字範圍）。缺字時 Flutter 會往系統字型找，而 Android 的
+  /// Noto CJK 同樣沒有這兩個字——結果就是長輩畫面上出現豆腐方塊。
+  ///
+  /// 這支是從全字庫正宋體（TW-Sung，國發會開放資料）裁出來的**只含那兩個字**的
+  /// 子集，2.4 KB。要再加字時重跑：
+  ///
+  /// ```
+  /// py -m fontTools.subset TW-Sung-Ext-B-98_1.ttf --unicodes=U+2028E \
+  ///      --output-file=B.ttf --no-hinting
+  /// py -m fontTools.subset TW-Sung-98_1.ttf --unicodes=U+5402 \
+  ///      --output-file=A.ttf --no-hinting
+  /// py -m fontTools.merge --output-file=TWSungHakka.ttf A.ttf B.ttf
+  /// ```
+  ///
+  /// 只當 fallback、不當主字體：宋體跟暖紙手帳的黑體調性不合，整頁換掉會走鐘；
+  /// 這樣只有那兩個字會是宋體，其餘維持原樣。
+  static const hakkaFallback = 'TWSungHakka';
+
   /// [height] 只有標題那兩階會覆寫：46/32 沿用收斂前的 1.5，行距跟著字級一起
   /// 放大會讓標題散開。
   static TextStyle _sans(double size, FontWeight w, {double height = 1.55}) =>
       TextStyle(
           fontFamily: sansFamily,
+          fontFamilyFallback: const [hakkaFallback],
           fontSize: size,
           fontWeight: w,
           height: height,
@@ -258,6 +281,7 @@ abstract final class AppTypography {
     // 大數字（麥克風狀態等）— 行高 .78
     displayLarge: const TextStyle(
         fontFamily: sansFamily,
+        fontFamilyFallback: [hakkaFallback],
         fontSize: 66,
         fontWeight: FontWeight.w900,
         height: .78,
