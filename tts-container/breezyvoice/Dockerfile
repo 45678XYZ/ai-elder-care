@@ -29,7 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsox-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+# setuptools 釘在 80.x：BreezyVoice 的相依有些仍走舊式 setup.py 建 wheel，需要
+# pkg_resources，而 setuptools 81 起已把它移除，升上去會出現
+# ModuleNotFoundError: No module named 'pkg_resources'。
+RUN python3 -m pip install --no-cache-dir --upgrade pip wheel \
+    && python3 -m pip install --no-cache-dir "setuptools<81"
 
 # CosyVoice 的 Matcha-TTS 以 submodule 掛入，少了它 frontend 會 import 失敗。
 RUN git clone --recursive https://github.com/mtkresearch/BreezyVoice.git ${BREEZYVOICE_REPO} \
