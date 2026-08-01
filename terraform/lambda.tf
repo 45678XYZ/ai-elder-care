@@ -160,9 +160,9 @@ locals {
     BEDROCK_MODEL_ID           = var.bedrock_model_id
     BEDROCK_EXTRACTOR_MODEL_ID = var.bedrock_extractor_model_id
 
-    EVENT_SLOT_MINUTES      = tostring(var.event_slot_minutes)
-    EXTRACTION_MODE         = var.extraction_mode
-    SEVEN_BATCH_CHAR_LIMIT  = tostring(var.seven_batch_char_limit)
+    EVENT_SLOT_MINUTES     = tostring(var.event_slot_minutes)
+    EXTRACTION_MODE        = var.extraction_mode
+    SEVEN_BATCH_CHAR_LIMIT = tostring(var.seven_batch_char_limit)
 
     BATCH_QUEUE_URL = aws_sqs_queue.batch.id
 
