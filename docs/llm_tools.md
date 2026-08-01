@@ -88,8 +88,8 @@
 #### `delete_routine` (刪除例行行程)
 *   **LLM 描述**：`Permanently delete an existing scheduled routine for the elder. If the elder wants it back later, create a new one.`
 *   **輸入參數**：`elder_id` (字串), `routine_id` (字串)
-*   **回傳資料**：`{"status": "success", "message": "已刪除例行公事 rtn_xxx"}`
-*   **系統影響**：從 `routines` 表真刪除所有版本。事件表中的歷史完成紀錄不受影響。若要恢復則以 `create_routine` 重新建立。
+*   **回傳資料**：`{"status": "success", "data": {"deleted": true, "routine_id": "rtn_xxx"}}`
+*   **系統影響**：從 `routines` 表硬刪除所有版本，並寫入 tombstone（TTL 7 天）供冪等重播。事件表中的歷史完成紀錄不受影響。若要恢復則以 `create_routine` 重新建立。
 
 ---
 

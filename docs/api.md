@@ -565,11 +565,11 @@ Response 200 回更新後物件。`change_request_id` scope 固定為 `routine_i
 
 ### DELETE /routines/{routine_id} — 刪除（照護者）
 
-照護者刪除指定的例行公事（以原子交易建立 `active=false` 之終態版本並從當前排程列表中移除）。
+照護者硬刪除指定例行公事的所有版本，並寫入輕量 tombstone（version=0，TTL 7 天後自動清除）供冪等重播。
 
-可帶 Query 參數 `client_request_id`（預設自動衍生）。若包含 `client_request_id`，重試將進行冪等重播。
+必須帶 Query 參數 `client_request_id`。相同 `client_request_id` 重試冪等回 200；不同 `client_request_id` 對已刪除的 routine 回 409 `IDEMPOTENCY_CONFLICT`。未提供 `client_request_id` 回 400 `MISSING_REQUEST_ID`。
 
-Response 200 回已標記刪除之例行公事物件 (`active: false`)。長者帳號呼叫回 403 `FORBIDDEN`；`routine_id` 不存在回 404 `ROUTINE_NOT_FOUND`。
+Response 200：`{"deleted": true, "routine_id": "rtn_xxx"}`。長者帳號呼叫回 403 `FORBIDDEN`；`routine_id` 不存在（且無 tombstone）回 404 `ROUTINE_NOT_FOUND`。
 
 ### POST /routines/{routine_id}/complete — 手動完成（兩端）
 
