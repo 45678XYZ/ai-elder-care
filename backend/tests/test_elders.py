@@ -133,6 +133,51 @@ def test_patch_elder_success(monkeypatch):
     assert body["name"] == "陳阿蘭（更新）"
 
 
+def test_patch_elder_elder_role_lang_allowed(monkeypatch):
+    """長者本人可修改 lang_preference 和 hakka_dialect。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+    monkeypatch.setattr(
+        db,
+        "update_elder",
+        lambda eid, patch: {
+            "elder_id": eid,
+            "name": "陳阿蘭",
+            "lang_preference": patch.get("lang_preference", "zh-TW"),
+            "hakka_dialect": patch.get("hakka_dialect", "htia_sixian"),
+            "created_at": "2026-07-28T12:00:00+08:00",
+            "updated_at": "2026-07-28T12:05:00+08:00"
+        }
+    )
+
+    event = _make_event(
+        "PATCH",
+        body={"lang_preference": "hak", "hakka_dialect": "htia_hailu"},
+        path_params={"elder_id": "eld_001"},
+        sub="usr_e1",
+        elder_id="eld_001"
+    )
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body["lang_preference"] == "hak"
+    assert body["hakka_dialect"] == "htia_hailu"
+
+
+def test_patch_elder_elder_role_other_fields_forbidden(monkeypatch):
+    """長者嘗試修改非語言欄位應被 403 擋下。"""
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
+
+    event = _make_event(
+        "PATCH",
+        body={"name": "惡意修改"},
+        path_params={"elder_id": "eld_001"},
+        sub="usr_e1",
+        elder_id="eld_001"
+    )
+    resp = elders.handler(event, None)
+    assert resp["statusCode"] == 403
+
+
 # =============================================================================
 # /elders/{elder_id}/health_notes — 單筆增刪
 # =============================================================================
