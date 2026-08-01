@@ -203,6 +203,13 @@ class _ChatScreenState extends State<ChatScreen>
   /// 半句話當成一句送出去。
   static const _silenceCutoff = Duration(seconds: 4);
 
+  /// 這一輪的辨識結果已經送出去了。
+  ///
+  /// 有兩條路會送出同一輪：`onResult` 的最終結果，以及 `onStatus` 收工時的補送。
+  /// 兩條路**必須看同一個旗標**——各自用自己的區域變數時，狀態先到、結果後到就會
+  /// 送兩次：畫面上兩顆一模一樣的泡泡，後端也收到兩次 /chat。
+  bool _turnConsumed = false;
+
   /// 這一輪觸發的長者檔案重讀。開下一輪聆聽之前要等它落地——
   /// 見 [_handleQuestion] 裡的說明。
   Future<void>? _profileRefresh;
@@ -222,14 +229,21 @@ class _ChatScreenState extends State<ChatScreen>
     _awaitingFinal = false;
     _silenceTimer?.cancel();
 
-    // 已經聽到內容、只是最終結果沒送來（主動 stop 之後常常是這樣：辨識器直接
-    // 收工，不再補一次 isFinal）。那句話不能就這樣丟掉，直接當成定案送出——
-    // 否則長輩看到自己的話出現在畫面上，然後被一句「沒聽清楚」蓋掉。
-    final heard = _bestHeard.trim();
-    if (heard.isNotEmpty) {
-      _bestHeard = '';
-      _consecutiveListenErrors = 0;
-      _handleQuestion(text: heard, continueLoop: true);
+    // 已經聽到內容、只是最終結果還沒到。那句話不能丟掉，但**也不能立刻送**：
+    // 主動 stop 之後狀態回報常常比 `onResult` 早一步到，立刻送就會跟隨後到達的
+    // 最終結果送成兩筆——畫面上兩顆一模一樣的泡泡、後端兩次 /chat，第二次還會
+    // 撞上同一輪而回錯誤，最後長輩看到的是「沒聽清楚」。實機重現過。
+    //
+    // 所以留一小段時間給最終結果先走。時間到了還沒有人處理這一輪，才由這裡補送。
+    if (_bestHeard.trim().isNotEmpty) {
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (!mounted || _turnConsumed || !_conversationActive) return;
+        final heard = _bestHeard.trim();
+        if (heard.isEmpty) return;
+        _turnConsumed = true;
+        _consecutiveListenErrors = 0;
+        _handleQuestion(text: heard, continueLoop: true);
+      });
       return;
     }
 
@@ -327,6 +341,8 @@ class _ChatScreenState extends State<ChatScreen>
     // [_onSpeechStatus] 當成「悄悄收工」而補一則「沒聽清楚」。
     _awaitingFinal = false;
     _silenceTimer?.cancel();
+    // 按了停止就別再由補送那條路送出去——長輩按停止的意思是「不要了」。
+    _turnConsumed = true;
     await _speech.stop();
     // 錄到一半按停止：整段丟掉而不是送出。長輩按停止的意思是「不要了」，
     // 把半句話送去辨識並記進資料，跟他的意圖相反。
@@ -341,14 +357,13 @@ class _ChatScreenState extends State<ChatScreen>
     // 只清「正在辨識中」的暫存，不動 _messages——歷史要留著。
     _silenceTimer?.cancel();
     _bestHeard = '';
+    _turnConsumed = false;
     setState(() {
       _setPhase(_Phase.listening);
       _question = '';
     });
 
     if (AppSession.instance.isHakka) return _recordTurn();
-
-    var handled = false; // 每輪只處理一次最終結果
 
     // 從這裡到收到最終結果之間，若語音服務悄悄收工，要靠 [_onSpeechStatus] 接住。
     _awaitingFinal = true;
@@ -378,8 +393,8 @@ class _ChatScreenState extends State<ChatScreen>
         // 有文字了才開始算靜音。還沒開口就算的話，會在長輩想詞的時候切掉他。
         if (!isFinal && heard.isNotEmpty) _armSilenceCutoff();
 
-        if (isFinal && !handled) {
-          handled = true;
+        if (isFinal && !_turnConsumed) {
+          _turnConsumed = true;
           _silenceTimer?.cancel();
           // 這一輪有結果了，狀態回報不必再補救。
           _awaitingFinal = false;
