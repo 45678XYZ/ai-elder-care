@@ -36,7 +36,7 @@ class RoleSelectScreen extends StatelessWidget {
                   color: AppColors.accentText,
                   borderRadius: BorderRadius.all(AppRadius.pill),
                 ),
-                child: Text('智慧長照陪伴',
+                child: Text('客照e點通',
                     style: text.labelLarge?.copyWith(color: Colors.white)),
               ),
               const SizedBox(height: AppSpacing.xl),

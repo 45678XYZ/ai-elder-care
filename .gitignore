@@ -16,6 +16,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+.hypothesis/
 *.egg-info/
 backend/chroma_db/
 
@@ -26,6 +27,9 @@ terraform/build/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+# plan 產物會夾帶變數值與資源屬性，且每次 plan 都不同，不進版控
+tfplan
+*.tfplan
 
 # --- AI tool configs (local, per-developer) ---
 .claude/
@@ -37,7 +41,8 @@ terraform/build/
 .gemini/
 .qwen/
 .roo/
-.agents/
+.agents/*
+!.agents/skills/
 graphify-out/
 
 # --- 離線訓練工作流產出（語料、embedding 快取、標註檔、評測結果） ---
@@ -50,6 +55,9 @@ backend/local_runner/
 # 由 data/knowledge/ 每次重新產生，不是原始資料
 build/
 
+# --- 本地交付文件（不進版控） ---
+docs/deliverables/
+
 # --- misc ---
 .DS_Store
 .env
@@ -59,4 +67,3 @@ backend/local_runner/data/
 backend/local_runner/outputs/
 backend/local_runner/storage/
 .env.local
-

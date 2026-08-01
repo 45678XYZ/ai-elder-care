@@ -261,7 +261,7 @@ class AppLogoPill extends StatelessWidget {
         borderRadius: BorderRadius.all(AppRadius.pill),
       ),
       child:
-          Text('智慧長照陪伴', style: text.labelLarge?.copyWith(color: Colors.white)),
+          Text('客照e點通', style: text.labelLarge?.copyWith(color: Colors.white)),
     );
   }
 }

@@ -1,4 +1,4 @@
-package com.example.ai_elder_care
+package tw.ehakkacare.app
 
 import io.flutter.embedding.android.FlutterActivity
 

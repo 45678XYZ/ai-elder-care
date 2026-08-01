@@ -1,6 +1,5 @@
 ---
-name: developing-ai-elder-care
-description: "Guide to the ai-elder-care project (Flutter app + AWS Python Lambda + Terraform): which doc is authoritative for each topic, plus the workflow and coding conventions to follow. Use at the start of any development task in this repo — writing code, branching, committing, opening PRs, or editing docs."
+inclusion: always
 ---
 
 # Repo Guide for Agent Tools
@@ -11,7 +10,7 @@ Paths below are relative to the repository root, so they resolve from your works
 
 ## Which doc owns what
 
-New here? Read `docs/framework.md` first — it's the big picture (modules, architecture, data model, repo layout). Then use this table to find the authoritative doc for a topic and read it before acting:
+先依工作範圍選擇權威文件；不要為局部修改預載整份系統文件。只有變更系統架構、資料模型、模組邊界或 repo 佈局時才完整閱讀 `docs/framework.md`。
 
 | Topic | Authoritative doc |
 |---|---|
@@ -22,6 +21,7 @@ New here? Read `docs/framework.md` first — it's the big picture (modules, arch
 | User journeys (elder & caregiver) | `docs/user-journey.md` |
 | Branching, commit format, PR & merge rules | `docs/workflow.md` |
 | Backend setup & running tests | `backend/README.md` |
+| ASR/TTS 與 Chat 語音串接 | `developing-ai-elder-care-speech` skill；依其中的按需閱讀表載入文件 |
 
 ## Rules for agents
 
@@ -32,4 +32,7 @@ Not spelled out in the docs above, or worth emphasizing:
 - **API contract**: `docs/api.md` is the frontend/backend contract — whenever you change API behavior, update it in the same change.
 - **Keep docs in sync**: when you change a doc's content, or add/move a doc or top-level file/dir, update whatever references it — the README structure tree and its doc list, and cross-links in related docs — so nothing goes stale.
 - **Before committing**: run the checks for the area you touched (e.g. `python -m pytest` in `backend/`), per `docs/conventions.md`.
+- **Speech remote-only**: Lambda 不載入 ASR／TTS 模型；受控 Amazon Transcribe Streaming
+  `zh-TW` 與 Polly 是允許的 AWS managed providers。CE/Formo 與自託管 TTS production
+  核准只接受指定 SageMaker instance 的 staging/runtime evidence；未核准一律 fail closed。
 - **Talk with the user in Traditional Chinese.**

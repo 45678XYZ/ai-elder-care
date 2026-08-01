@@ -26,6 +26,7 @@
 | 工具名稱 | 功能描述 (供 LLM 判斷) | 調用契機 (Triggering Intent) |
 |---|---|---|
 | **`get_elder_profile`** | 查詢長者暱稱、喜好、健康注意事項與家屬。 | 閒聊或詢問個人資訊：「你知道我女兒叫什麼嗎？」 |
+| **`update_elder_profile`**| 更新長者的健康注意事項、生活習慣或暱稱。 | 發現新的個人特徵或喜好：「我不吃牛肉」、「我最近膝蓋痛」。 |
 | **`get_recent_events`** | 查詢長者近期的生活事件與健康記錄歷史。 | 查詢近期狀況：「我這週有滑倒過嗎？」 |
 | **`get_daily_summaries`**| 查詢長者每日的健康摘要與行程執行率。 | 查詢整體健康趨勢或連續性摘要。 |
 | **`get_recent_conversations`**| 查詢長者與 Agent 近期的對話歷史。 | 用於短期記憶恢復或延續先前中斷的話題。 |
@@ -49,27 +50,27 @@
 ### 2.1 行程管理類 (Routine Management)
 
 #### `get_today_routines` (查詢今日行程)
-*   **LLM 描述**：`Retrieve a list of scheduled routines and their completion status for a specific elder on a given date.`
+*   **LLM 描述**：`Retrieve a list of scheduled routines and their completion status for the elder on a given date.`
 *   **輸入參數**：`elder_id` (字串), `date` (字串，YYYY-MM-DD)
 *   **回傳資料**：`{"date": "2026-07-20", "items": [{"routine_id": "rtn_001", "title": "吃血壓藥", "status": "pending", ...}]}`
 *   **系統影響**：無副作用 (唯讀)。主要提供大腦當日的行程關懷依據。
 
 #### `remind_pending_routines` (主動提醒待辦行程)
 *   **LLM 描述**：`Check and retrieve pending scheduled routines for the elder to generate warm reminders.`
-*   **輸入參數**：`elder_id` (字串), `date` (字串，YYYY-MM-DD)
+*   **輸入參數**：`elder_id` (字串), `date` (字串，YYYY-MM-DD，選填)
 *   **回傳資料**：`{"status": "success", "date": "2026-07-20", "pending_count": 1, "pending_routines": [...]}`
 *   **系統影響**：無副作用 (唯讀)。通常觸發於需要主動關懷長者是否忘記吃藥等情境。
 
 #### `complete_routine` (確認完成行程)
 *   **LLM 描述**：`Mark a specific routine as completed and log a life event for the elder.`
 *   **輸入參數**：`elder_id` (字串), `routine_id` (字串), `date` (字串), `completed_by` (字串，口語回報一律填 `conversation`)
-*   **回傳資料**：`{"status": "success", "message": "...", "routine_id": "rtn_001", "completed_at": "..."}`
+*   **回傳資料**：`{"status": "success", "data": {...}}`
 *   **系統影響**：會寫入 `events` 表（紀錄 type=`routine_completion`）。將導致後續 `get_recent_events` 查詢時出現該完成紀錄，並間接影響健康摘要。
 
 #### `create_routine` (建立新行程)
 *   **LLM 描述**：`Create a new scheduled routine (either one-time or recurring) for the elder.`
-*   **輸入參數**：`elder_id` (字串), `title` (字串), `type` (enum: diet/activity/sleep/medication/wellbeing/other), `schedule` (物件，包含 freq, date, time, weekday)
-*   **回傳資料**：`{"status": "success", "routine_id": "rtn_003", "title": "看醫生", "scheduled_at": "..."}`
+*   **輸入參數**：`elder_id` (字串), `title` (字串), `type` (enum: medication/diet/activity/wellbeing/other), `time` (字串，HH:MM), `freq` (enum: daily/weekly/once), `date` (字串，YYYY-MM-DD，僅單次行程需提供)
+*   **回傳資料**：`{"status": "success", "data": {...}}` (回傳新建的行程紀錄)
 *   **系統影響**：寫入 `routines` 表並補齊防呆欄位。直接改變長者未來的行程，App 行事曆上將出現此新增項目。
 
 #### `update_routine` (更新例行行程)
@@ -91,8 +92,16 @@
 #### `get_elder_profile` (查詢長者喜好與個人檔案)
 *   **LLM 描述**：`Retrieve personal preferences, hobbies, health notes, and family members of the elder.`
 *   **輸入參數**：`elder_id` (字串)
-*   **回傳資料**：`{"status": "success", "data": {"name": "林阿蘭", "nickname": "阿蘭嬤", "health_notes": [...], "family": [...], "preferences": {...}}}`
+*   **回傳資料**：`{"status": "success", "data": {"name": "林阿蘭", "nickname": "阿蘭嬤", "health_notes": [...], "family": [...], "habit_note": "..."}}`
 *   **系統影響**：無副作用 (唯讀)。提供 Agent 學習長輩喜好並用於自然對話。
+
+#### `update_elder_profile` (更新長者個人檔案)
+*   **LLM 描述**：`Update the elder's profile, including adding new health notes, appending to lifestyle habits, or changing their nickname based on conversation.`
+*   **輸入參數**：`elder_id` (字串), `health_note_to_add` (字串，欲新增的健康注意事項), `habit_note_to_append` (字串，欲補充的生活習慣與喜好), `nickname` (字串，新暱稱)
+*   **回傳資料**：`{"status": "success", "message": "已成功更新長者個人檔案", "updated_fields": [...], "data": {...}}`
+*   **健康註記的寫入方式**：`health_note_to_add` 會以 `source: "agent"` 原子 append 進 `health_notes`（`db.append_health_note`），**不做讀出再整份寫回**。同一個欄位照護者也會在 App 上增刪，整份覆寫會讓其中一邊的結果無聲消失。已存在的相同內容不重複加入。
+*   **來源標示**：由此工具寫入的註記在 API 上帶 `source: "agent"`，與照護者手填的 `caregiver` 分開，讓照護者看得出哪幾筆是 AI 從談話裡聽來的（契約見 `docs/api.md` 的 health_notes 物件）。
+*   **回傳的 `health_notes`**：攤平成純文字陣列，不含 `note_id` 等內部識別碼。
 
 #### `get_recent_events` (查詢生活事件歷史)
 *   **LLM 描述**：`Retrieve recent life events, activities, and recorded health signals for the elder.`
@@ -101,13 +110,13 @@
 *   **系統影響**：無副作用 (唯讀)。最多回傳 20 筆近期事件。
 
 #### `get_daily_summaries` (查詢每日健康摘要)
-*   **LLM 描述**：`Retrieve recent daily health summaries for the elder.`
-*   **輸入參數**：`elder_id` (字串), `days` (整數)
+*   **LLM 描述**：`Retrieve recent daily health summaries for the elder to understand health trends over multiple days. Use this when the elder or caregiver asks about recent health status, trends, or when you need context about the elder's health over the past few days.`
+*   **輸入參數**：`elder_id` (字串), `days` (整數，預設為 3)
 *   **回傳資料**：`{"status": "success", "count": int, "summaries": [...]}`
 *   **系統影響**：無副作用 (唯讀)。主要用於協助大腦追蹤長輩的連續性健康趨勢。
 
 #### `get_recent_conversations` (查詢對話紀錄)
-*   **LLM 描述**：`Retrieve recent conversation history between the elder and the agent.`
+*   **LLM 描述**：`Retrieve the most recent conversation turns with the elder. Use this tool when you feel you have lost context of the current conversation, for example after a session timeout, to recall what was discussed earlier in this session.`
 *   **輸入參數**：`elder_id` (字串), `limit` (整數，預設 8，最高 15)
 *   **回傳資料**：`{"status": "success", "count": int, "turns": [{"time": "...", "elder": "...", "ai": "..."}, ...]}`
 *   **系統影響**：無副作用 (唯讀)。提供斷線或 Session 更換後的短期記憶恢復。
@@ -117,40 +126,27 @@
 ### 2.3 安全與警報類 (Safety & Alerts)
 
 #### `notify_caregiver` (發送照護者通知)
-*   **LLM 描述**：`Send immediate SNS alert to the caregiver when the elder experiences emergencies (falls, chest pain, dizziness) or needs routine/summary reports.`
-*   **輸入參數**：`elder_id` (字串), `category` (字串，enum: emergency/critical_escalation/mitigation/routine/summary), `message` (字串)
+*   **LLM 描述**：
+    `Send SNS notification to caregiver. Use category to control safety behavior:`
+    `- emergency: First-time urgent alert (fall/chest pain/cannot move). Has 5-min cooldown. Writes DB event.`
+    `- critical_escalation: Condition worsening (new bleeding/fainting/severe pain). BYPASSES cooldown. Use when elder reports new severe symptoms after initial emergency.`
+    `- mitigation: Elder verbally says they feel better. Sets status to WARNING (pending caregiver confirmation). Does NOT resolve the alert. Requires active emergency to exist.`
+    `- routine: Scheduled task completion digest.`
+    `- summary: Daily health summary report.`
+    `IMPORTANT: Only caregivers (not elders) can fully resolve an alert via the App.`
+*   **輸入參數**：`elder_id` (字串), `category` (字串，enum: emergency/critical_escalation/mitigation/routine/summary), `message` (字串), `context_event_id` (字串，選填，用於 escalation/mitigation 帶入對應的 alert_id), `rag_content` (字串，選填，用於補充衛教指引)
 *   **回傳資料**：`{"status": "success", "elder_id": "eld_001", "category": "emergency", "message_id": "...", "detail": "..."}`
 *   **系統影響**：
     1.  **SNS 推播**：觸發 AWS SNS，實際發送 Email / SMS 給家屬。
-    2.  **資料庫寫入**：若為 emergency 類型，會以 canonical key 寫入 `events` 表，產生 `type=safety` 事件。
-    3.  **記憶體狀態鎖**：觸發 Lambda 內存 5 分鐘冷卻期鎖定 (`_emergency_state`)，避免同一狀況重複洗版。若在冷卻期內，可能回傳 `"status": "throttled"`。
+    2.  **資料庫寫入**：若為 emergency 類型，會以 canonical key (`SAFETY#{alert_id}`) 寫入 `events` 表，產生 `type=safety` 事件。若是 critical_escalation 或 mitigation，若帶入 `context_event_id` 則會冪等收斂到同一筆安全事件。
+    3.  **記憶體狀態鎖**：觸發 Lambda 內存 5 分鐘冷卻期鎖定 (`_emergency_state`)，避免同一狀況重複洗版。若在冷卻期內，可能回傳 `"status": "throttled"`。critical_escalation 可繞過冷卻期。
 
 ---
-
-
-### 2.12 `update_elder_profile` (更新長者個人檔案)
-*   **LLM 描述**：`Update the elder's profile, including adding new health notes, appending to lifestyle habits, or changing their nickname based on conversation.`
-*   **輸入參數 (Input Parameters)**：
-    ```json
-    {
-      "type": "object",
-      "properties": {
-        "elder_id": { "type": "string" },
-        "health_note_to_add": { "type": "string", "description": "欲新增的健康注意事項" },
-        "habit_note_to_append": { "type": "string", "description": "欲補充的生活習慣與喜好" },
-        "nickname": { "type": "string", "description": "長者希望被稱呼的新暱稱" }
-      },
-      "required": ["elder_id"]
-    }
-    ```
-*   **健康註記的寫入方式**：`health_note_to_add` 會以 `source: "agent"` 原子 append 進 `health_notes`（`db.append_health_note`），**不做讀出再整份寫回**。同一個欄位照護者也會在 App 上增刪，整份覆寫會讓其中一邊的結果無聲消失。已存在的相同內容不重複加入。
-*   **來源標示**：由此工具寫入的註記在 API 上帶 `source: "agent"`，與照護者手填的 `caregiver` 分開，讓照護者看得出哪幾筆是 AI 從談話裡聽來的（契約見 `docs/api.md` 的 health_notes 物件）。
-*   **回傳的 `health_notes`**：攤平成純文字陣列，不含 `note_id` 等內部識別碼。
 
 ### 2.4 衛教知識類 (Health Knowledge)
 
 #### `search_health_knowledge` (檢索衛教知識庫)
-*   **LLM 描述**：`Search the health education knowledge base for elder care guidance: chronic disease care, dementia, fall prevention, assistive devices, oral care, nutrition, medication concepts, seasonal health, and long-term care services in Taiwan.`
+*   **LLM 描述**：`Search the health education knowledge base for elder care guidance: chronic disease care (hypertension, diabetes, stroke, asthma, COPD, osteoporosis, metabolic syndrome), dementia, fall prevention, assistive devices, oral care, nutrition, medication concepts, seasonal health, and long-term care services in Taiwan (respite care, transportation, home care, subsidy applications). Use the elder's own wording as the query.`
 *   **輸入參數**：`query` (字串，用長者的原話即可)
 *   **回傳資料**：`{"status": "success", "count": int, "passages": ["...", ...]}`
 *   **系統影響**：無副作用 (唯讀)。取代原本掛在託管 Agent 上的 knowledge base association；知識庫本體見 `terraform/bedrock_kb.tf`，回傳段落數由 `agent_kb_top_k` 控制。
@@ -174,7 +170,7 @@
 
 ### 實例 C：長者新增未來行程 ➔ 調用 `create_routine`
 *   **長者**：「明天下午三點，阿明要帶我去看心臟科醫生。」
-*   **Agent 內部邏輯**：判斷意圖為建立單次行程。呼叫 `create_routine(elder_id="eld_001", title="看心臟科", type="other", schedule={"freq": "once", "date": "2026-07-21", "time": "15:00"})`，系統回傳成功。
+*   **Agent 內部邏輯**：判斷意圖為建立單次行程。呼叫 `create_routine(elder_id="eld_001", title="看心臟科", type="other", time="15:00", freq="once", date="2026-07-21")`，系統回傳成功。
 *   **Agent 回覆**：「阿蘭嬤，我已經幫你記下來了！明天下午三點去看心臟科醫生，到時候我會再提醒你。」
 
 ### 實例 D：長者反映緊急狀況 ➔ 調用 `notify_caregiver`

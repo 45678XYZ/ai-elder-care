@@ -185,6 +185,12 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
         Resource = "*"
       },
       {
+        # Amazon Transcribe Streaming 不支援資源層級 ARN 限制。
+        Effect   = "Allow"
+        Action   = ["transcribe:StartStreamTranscription"]
+        Resource = "*"
+      },
+      {
         Effect   = "Allow"
         Action   = ["s3:PutObject", "s3:GetObject"]
         Resource = "arn:aws:s3:::${var.project_name}-audio/*"
@@ -192,11 +198,6 @@ resource "aws_iam_role_policy" "lambda_backend_policy" {
       {
         Effect   = "Allow"
         Action   = ["bedrock-agentcore:InvokeAgentRuntime", "bedrock:InvokeModel"]
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["sagemaker:InvokeEndpoint"]
         Resource = "*"
       },
       {
@@ -254,6 +255,10 @@ module "chat" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -264,9 +269,13 @@ module "chat" {
     S3_AUDIO_BUCKET = "${var.project_name}-audio"
 
     # 對話大腦：AgentCore Runtime 以 ARN 定址、以 endpoint 名稱當 qualifier（見 agentcore.tf）
-    AGENTCORE_RUNTIME_ARN      = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
-    AGENTCORE_ENDPOINT_NAME    = aws_bedrockagentcore_agent_runtime_endpoint.live.name
-    SAGEMAKER_CE_ENDPOINT_NAME = ""
+    AGENTCORE_RUNTIME_ARN   = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
+    AGENTCORE_ENDPOINT_NAME = aws_bedrockagentcore_agent_runtime_endpoint.live.name
+
+    # ASR／TTS 的路由、核准與 endpoint 都由這兩份設定驅動（見 asr_lambda_config.tf、tts_lambda_config.tf）
+    ASR_CONFIG_JSON = local.asr_config_json
+    TTS_CONFIG_JSON = local.tts_config_json
+
     TABLE_ELDERS               = aws_dynamodb_table.elders.name
     TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
     TABLE_EVENTS               = aws_dynamodb_table.events.name
@@ -300,6 +309,10 @@ module "tools" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -335,6 +348,10 @@ module "elders" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -344,27 +361,6 @@ module "elders" {
   environment_variables = {
     TABLE_ELDERS               = aws_dynamodb_table.elders.name
     CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
-  }
-}
-
-# 7. routines Lambda 函數 (GET/POST /routines, PATCH/DELETE /routines/{id}, POST /routines/{id}/complete)
-resource "aws_lambda_function" "routines" {
-  function_name = "${var.project_name}-routines"
-  role          = aws_iam_role.lambda_backend_role.arn
-  handler       = "handlers.routines.handler"
-  runtime       = "python3.11"
-  timeout       = 10
-
-  filename = "${path.module}/build/backend.zip"
-
-  environment {
-    variables = {
-      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
-      TABLE_EVENTS               = aws_dynamodb_table.events.name
-      TABLE_ELDERS               = aws_dynamodb_table.elders.name
-      ROUTINE_GRACE_MINUTES      = tostring(var.routine_grace_minutes)
-      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
-    }
   }
 }
 
@@ -388,6 +384,10 @@ module "post_confirmation" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -548,6 +548,10 @@ module "batch_extractor" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -584,6 +588,10 @@ module "session_closer" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -611,6 +619,10 @@ module "dlq_reconciler" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -646,6 +658,10 @@ module "api_events" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -692,6 +708,10 @@ module "api_summaries" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -718,6 +738,10 @@ module "summary_generator" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -746,6 +770,10 @@ module "api_stats" {
 
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
+
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
 
   architectures             = local.lambda_architectures
   build_in_docker           = true
@@ -853,6 +881,10 @@ module "api_routines" {
   source_path   = local.backend_source_path
   artifacts_dir = "${path.module}/build"
 
+  store_on_s3 = true
+  s3_bucket   = aws_s3_bucket.lambda_artifacts.id
+  s3_prefix   = "backend/"
+
   architectures             = local.lambda_architectures
   build_in_docker           = true
   docker_additional_options = local.docker_build_options
@@ -870,4 +902,3 @@ module "api_routines" {
     METRICS_ENABLED   = "true"
   }
 }
-

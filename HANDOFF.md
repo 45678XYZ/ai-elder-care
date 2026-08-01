@@ -11,7 +11,7 @@
 
 ## 專案與分工
 
-- **ai-elder-care**（2026 雲湧智生黑客松）智慧長照陪伴 App。Repo：`45678XYZ/ai-elder-care`
+- **客照e點通（e-Hakka Care）**（2026 雲湧智生黑客松）。Repo：`45678XYZ/ai-elder-care`（GitHub 上的 repo 名稱尚未更名）
 - Boyu 只負責 **`app/`（Flutter）**；`backend/`、`terraform/` 是隊友的，不主動動
 - 架構：Flutter 薄前端 + AWS（API GW / Lambda / DynamoDB / Cognito / Bedrock / Polly）
 - 規格文件：`docs/framework.md`、`docs/api.md`（**契約以 api.md 為準，欄位不自創**）
