@@ -157,7 +157,6 @@ def canonical_event(event_id="evt_aaaaaaaaaaaa", key="2026-07-26#SLOT_0900#長�
         canonical_event_key=key,
         ts="2026-07-26T09:05:00.000+08:00",
         type="medication",
-        concept_id="UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication",
         taxonomy_version="uco-1.0.0",
         subject="長者",
         predicate="服用血壓藥",

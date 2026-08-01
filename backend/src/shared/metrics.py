@@ -109,8 +109,7 @@ def emit_pipeline_metrics(
 ) -> None:
     """把 `PipelineResult.metrics` 送成指標。
 
-    事件分類分佈另外一筆一筆送（維度 `EventType`），這樣才能在 CloudWatch 上分類別看趨勢；
-    高基數的 `concept_id` 不進維度，只留在 log properties。
+    事件分類分佈另外一筆一筆送（維度 `EventType`），這樣才能在 CloudWatch 上分類別看趨勢。
     """
     type_distribution = pipeline_metrics.get("type_distribution") or {}
     properties = {

@@ -1,9 +1,8 @@
 """分類體系載入與查詢模組。
 
-提供七大高階事件類別定義與 pseudo concept 支援。
+提供七大高階事件類別定義與驗證。
 資產檔案：
-- `high_level_types.json`：高階類別定義與預設類別
-- `concept_type_map.json`：`taxonomy_version` 來源
+- `high_level_types.json`：高階類別定義、預設類別與 taxonomy_version
 """
 
 from dataclasses import dataclass
@@ -18,14 +17,6 @@ TAXONOMY_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "taxonomy"
 logger = logging.getLogger(__name__)
 
 HIGH_LEVEL_TYPES_FILE = "high_level_types.json"
-CONCEPT_TYPE_MAP_FILE = "concept_type_map.json"
-
-PSEUDO_CONCEPT_PREFIX = "UCO.HighLevel."
-
-
-def pseudo_concept_id(type_id: str) -> str:
-    """組出某個 High_Level_Type id 對應的虛擬分類節點 concept_id。"""
-    return f"{PSEUDO_CONCEPT_PREFIX}{type_id}"
 
 
 class TaxonomyError(ValueError):
@@ -46,7 +37,6 @@ class Taxonomy:
     """已校驗且封裝完畢的不可變分類體系實例。"""
 
     taxonomy_version: str
-    high_level_types_version: str
     default_type: str
     types: tuple[HighLevelType, ...]
 
@@ -54,30 +44,15 @@ class Taxonomy:
     def type_ids(self) -> tuple[str, ...]:
         return tuple(t.id for t in self.types)
 
-    def get(self, concept_id: str) -> dict[str, Any] | None:
-        """pseudo concept 視為合法存在。"""
-        if self.is_pseudo_concept(concept_id):
-            return {"concept_id": concept_id, "type": concept_id[len(PSEUDO_CONCEPT_PREFIX):]}
-        return None
-
-    def high_level_type(self, concept_id: str) -> str:
-        """取得寫入 `events.type` 的高階類別字串。"""
-        if concept_id.startswith(PSEUDO_CONCEPT_PREFIX):
-            type_id = concept_id[len(PSEUDO_CONCEPT_PREFIX):]
-            return type_id if type_id in self.type_ids else self.default_type
-        return self.default_type
-
-    def is_pseudo_concept(self, concept_id: str) -> bool:
-        if not concept_id.startswith(PSEUDO_CONCEPT_PREFIX):
-            return False
-        type_id = concept_id[len(PSEUDO_CONCEPT_PREFIX):]
+    def validate_type(self, type_id: str) -> bool:
+        """驗證 type_id 是否為合法的高階事件類別。"""
         return type_id in self.type_ids
 
-    def pseudo_concept_for_label(self, label: str) -> tuple[str, bool]:
-        """把模型回傳的標籤字串映射為 (pseudo concept_id, 是否為合法標籤)。"""
+    def resolve_type(self, label: str) -> tuple[str, bool]:
+        """將模型輸出標籤映射為合法 type_id。回傳 (type_id, is_valid)。"""
         if label in self.type_ids:
-            return pseudo_concept_id(label), True
-        return pseudo_concept_id(self.default_type), False
+            return label, True
+        return self.default_type, False
 
 
 def _read_json(path: Path) -> Any:
@@ -97,17 +72,11 @@ def load_taxonomy(assets_dir: Path | str | None = None) -> Taxonomy:
 def _load_taxonomy_cached(assets_dir: str) -> Taxonomy:
     base = Path(assets_dir)
     types_raw = _read_json(base / HIGH_LEVEL_TYPES_FILE)
-    map_raw = _read_json(base / CONCEPT_TYPE_MAP_FILE)
 
-    types, default_type, types_version = _build_types(types_raw)
-
-    taxonomy_version = map_raw.get("taxonomy_version")
-    if not taxonomy_version:
-        raise TaxonomyError("映射資產缺少 taxonomy_version")
+    types, default_type, taxonomy_version = _build_types(types_raw)
 
     return Taxonomy(
         taxonomy_version=taxonomy_version,
-        high_level_types_version=types_version,
         default_type=default_type,
         types=types,
     )
@@ -138,4 +107,9 @@ def _build_types(raw: Any) -> tuple[tuple[HighLevelType, ...], str, str]:
     default_type = raw.get("default_type")
     if default_type not in seen:
         raise TaxonomyError(f"default_type 不在高階類別清單內：{default_type}")
-    return tuple(types), default_type, raw.get("version") or ""
+
+    taxonomy_version = raw.get("taxonomy_version")
+    if not taxonomy_version:
+        raise TaxonomyError("高階類別資產缺少 taxonomy_version")
+
+    return tuple(types), default_type, taxonomy_version

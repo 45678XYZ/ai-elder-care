@@ -1,6 +1,6 @@
 """分類體系載入器測試。
 
-驗證高階類別定義與 API 契約對齊、pseudo concept 解析、以及體系可抽換。
+驗證高階類別定義與 API 契約對齊、類別驗證與解析、以及體系可抽換。
 """
 
 import json
@@ -40,52 +40,39 @@ def test_high_level_types_match_api_contract(taxonomy):
     assert taxonomy.type_ids == SUMMARY_SECTION_KEYS
 
 
-def test_pseudo_concept_resolves_to_type(taxonomy):
-    assert taxonomy.high_level_type("UCO.HighLevel.medication") == "medication"
-    assert taxonomy.high_level_type("UCO.HighLevel.safety") == "safety"
-    assert taxonomy.high_level_type("UCO.HighLevel.other") == "other"
+def test_validate_type(taxonomy):
+    assert taxonomy.validate_type("medication") is True
+    assert taxonomy.validate_type("safety") is True
+    assert taxonomy.validate_type("other") is True
+    assert taxonomy.validate_type("unknown") is False
 
 
-def test_pseudo_concept_is_recognized(taxonomy):
-    assert taxonomy.is_pseudo_concept("UCO.HighLevel.diet") is True
-    assert taxonomy.is_pseudo_concept("UCO.HighLevel.unknown") is False
-    assert taxonomy.is_pseudo_concept("UCO.BehavioralRecord") is False
-
-
-def test_pseudo_concept_for_label(taxonomy):
-    concept_id, valid = taxonomy.pseudo_concept_for_label("medication")
-    assert concept_id == "UCO.HighLevel.medication"
+def test_resolve_type_with_valid_label(taxonomy):
+    type_id, valid = taxonomy.resolve_type("medication")
+    assert type_id == "medication"
     assert valid is True
 
-    concept_id, valid = taxonomy.pseudo_concept_for_label("unknown_label")
-    assert concept_id == "UCO.HighLevel.other"
+    type_id, valid = taxonomy.resolve_type("diet")
+    assert type_id == "diet"
+    assert valid is True
+
+
+def test_resolve_type_with_invalid_label(taxonomy):
+    type_id, valid = taxonomy.resolve_type("unknown_label")
+    assert type_id == "other"
     assert valid is False
 
-
-def test_unknown_concept_falls_back_to_default(taxonomy):
-    assert taxonomy.high_level_type("UCO.SomethingElse") == "other"
-
-
-def test_get_returns_none_for_unknown(taxonomy):
-    assert taxonomy.get("UCO.NotExist") is None
-
-
-def test_get_returns_dict_for_pseudo_concept(taxonomy):
-    result = taxonomy.get("UCO.HighLevel.diet")
-    assert result is not None
-    assert result["concept_id"] == "UCO.HighLevel.diet"
+    type_id, valid = taxonomy.resolve_type("")
+    assert type_id == "other"
+    assert valid is False
 
 
 def test_taxonomy_is_swappable(assets_copy):
     types_path = assets_copy / "high_level_types.json"
     types = json.loads(types_path.read_text(encoding="utf-8"))
     types["types"].insert(-1, {"id": "social", "display_name": "社交", "description": "人際互動"})
+    types["taxonomy_version"] = "uco-2.0.0-test"
     _write_json(types_path, types)
-
-    map_path = assets_copy / "concept_type_map.json"
-    mapping = json.loads(map_path.read_text(encoding="utf-8"))
-    mapping["taxonomy_version"] = "uco-2.0.0-test"
-    _write_json(map_path, mapping)
 
     swapped = load_taxonomy(assets_copy)
     assert swapped.taxonomy_version == "uco-2.0.0-test"
@@ -96,4 +83,14 @@ def test_taxonomy_is_swappable(assets_copy):
 def test_missing_asset_is_rejected(assets_copy):
     (assets_copy / "high_level_types.json").unlink()
     with pytest.raises(TaxonomyError, match="資產缺失"):
+        load_taxonomy(assets_copy)
+
+
+def test_missing_taxonomy_version_is_rejected(assets_copy):
+    types_path = assets_copy / "high_level_types.json"
+    types = json.loads(types_path.read_text(encoding="utf-8"))
+    del types["taxonomy_version"]
+    _write_json(types_path, types)
+
+    with pytest.raises(TaxonomyError, match="taxonomy_version"):
         load_taxonomy(assets_copy)

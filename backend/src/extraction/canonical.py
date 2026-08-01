@@ -25,7 +25,6 @@ import re
 import unicodedata
 
 TAXONOMY_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "taxonomy"
-from .taxonomy import Taxonomy
 from .temporal import day_key, parse_ts
 
 logger = logging.getLogger(__name__)
@@ -58,30 +57,12 @@ class CanonicalError(ValueError):
 
 
 @dataclass(frozen=True)
-class ConceptPredicates:
-    """單一概念 (Concept) 的受控謂語與別名對照資料結構。"""
-
-    canonical: tuple[str, ...]
-    aliases: dict[str, str]
-
-
-@dataclass(frozen=True)
 class PredicateLexicon:
     """伺服器管轄之主體與謂語受控詞彙庫模型。"""
 
     version: str
     other_token: str
     subject_aliases: dict[str, str]
-    concepts: dict[str, ConceptPredicates]
-
-    def candidates(self, concept_id: str) -> tuple[str, ...]:
-        """取得特定概念的受控謂語候選清單。"""
-        entry = self.concepts.get(concept_id)
-        return entry.canonical if entry else ()
-
-    def candidates_for_prompt(self, concept_ids: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
-        """組裝供 Prompt 使用的概念對應謂語白名單；未登記的概念回傳空元組。"""
-        return {concept_id: self.candidates(concept_id) for concept_id in concept_ids}
 
 
 @dataclass(frozen=True)
@@ -90,7 +71,6 @@ class PredicateResolution:
 
     value: str
     matched: bool
-    matched_concept_id: str | None = None
     via_alias: bool = False
     via_fuzzy_embedding: bool = False
     similarity_score: float | None = None
@@ -112,24 +92,10 @@ def _load_predicate_lexicon_cached(assets_dir: str) -> PredicateLexicon:
     with path.open(encoding="utf-8") as fp:
         raw: dict[str, Any] = json.load(fp)
 
-    concepts: dict[str, ConceptPredicates] = {}
-    for concept_id, entry in (raw.get("concepts") or {}).items():
-        canonical = tuple(entry.get("canonical") or ())
-        aliases = dict(entry.get("aliases") or {})
-        if not canonical:
-            raise CanonicalError(f"謂語詞彙缺少 canonical 清單：{concept_id}")
-        for alias, target in aliases.items():
-            if target not in canonical:
-                raise CanonicalError(
-                    f"謂語別名指向不存在的 canonical 值：{concept_id} {alias} -> {target}"
-                )
-        concepts[concept_id] = ConceptPredicates(canonical=canonical, aliases=aliases)
-
     return PredicateLexicon(
         version=raw.get("version") or "",
         other_token=raw.get("other_token") or "__other__",
         subject_aliases=dict(raw.get("subject_aliases") or {}),
-        concepts=concepts,
     )
 
 
@@ -191,10 +157,8 @@ def normalize_subject(
 
 
 def normalize_predicate(
-    concept_id: str,
     predicate: str | None,
     lexicon: PredicateLexicon,
-    taxonomy: Taxonomy | None = None,
     embedder: Any | None = None,
 ) -> PredicateResolution:
     """將口語謂語正規化為穩定的文字表述。
@@ -205,7 +169,7 @@ def normalize_predicate(
     - 謂語的同義收斂由 dedup.py 的 embedding cosine similarity 在去重階段處理
     - 此設計消除了「predicate_lexicon canonical 清單太窄導致 LLM 被迫亂選」的根因
 
-    保留 lexicon/taxonomy/embedder 參數以維持呼叫端向後相容。
+    保留 lexicon/embedder 參數以維持呼叫端向後相容。
     """
     raw_text = predicate or ""
     text = normalize_text(raw_text)
@@ -216,7 +180,6 @@ def normalize_predicate(
     return PredicateResolution(
         value=text,
         matched=True,
-        matched_concept_id=concept_id,
         raw_predicate=raw_text,
     )
 

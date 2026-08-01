@@ -293,7 +293,7 @@ final success 必須用單一 `TransactWrite`，並以該 ID 是下一個可提�
 
 - `direct_seven` pipeline 不分塊、不檢索、不做 RAC 分類。對整個 session 的 frozen turns 依字元上限（`SEVEN_BATCH_CHAR_LIMIT`）於 turn 邊界貪婪分批，每批一次 LLM 呼叫萃取七大類事件。
 - 萃取結果經 SharedTail 進行時間解析、canonical key 計算、slot 去重與型別驗證後寫入 events 表。
-- pipeline 輸出的 `concept_id` 為 pseudo concept（`UCO.HighLevel.<type_id>`），不需要 UCO 細分類節點。
+- pipeline 輸出的 `type` 為七大高階類別之一，直接對應分類體系的 `type_id`。
 - retry 冪等性由 frozen turns（確定性輸入）與 conditional Put（確定性寫入）保證。
 
 ### `events` 表
@@ -316,10 +316,9 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 | `extraction_track` | String | 是 | 首次建立來源：`realtime` \| `batch` \| `manual` |
 | `ts` | String | 是 | 事件實際發生時間 |
 | `type` | String | 是 | 高階類別：`diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `safety` \| `other` |
-| `concept_id` | String | 自動萃取事件必填 | 分類體系的細分類節點，如 `UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication`；供後端摘要、統計與 alerts 篩選，API 不暴露 |
 | `taxonomy_version` | String | 自動萃取事件必填 | 寫入當時的分類體系版本，如 `uco-1.0.0`；抽換體系後舊事件保留原值 |
 | `detail` | String | 是 | canonical 事件的自然語言摘要描述 |
-| `structured_detail` | Map | 否 | JSON 格式的結構化細節屬性（如 `{"medication_name": "血壓藥", "dosage": "一顆", "timing": "早上飯後"}`）；欄位結構因 `concept_id` 不同而異，API 不暴露 |
+| `structured_detail` | Map | 否 | JSON 格式的結構化細節屬性（如 `{"medication_name": "血壓藥", "dosage": "一顆", "timing": "早上飯後"}`）；API 不暴露 |
 | `source` | String | 是 | `conversation` \| `manual` |
 | `conversation_id` | String | 否 | 對話事件主要來源 turn；維持 API 契約 |
 | `evidence_conversation_ids` | List[String] | 是 | 支持目前事件內容的來源 turn IDs |
@@ -334,14 +333,14 @@ MVP 不另建 `type` GSI：`GET /events` 先在 `events-by-time` 以 `elder_id` 
 
 #### 分類體系
 
-事件分兩層分類：對外的**高階類別** `type`（前端與摘要使用，七類），以及對內的**細分類節點** `concept_id`（後端篩選、統計與 RAG 使用）。兩層都必須是可配置、可擴充、可抽換的資產，後端程式不硬編碼任何類別字串：
+事件以**高階類別** `type` 分類（前端與摘要使用，七類）。分類體系必須是可配置、可擴充、可抽換的資產，後端程式不硬編碼任何類別字串：
 
-- 高階類別定義、細分類節點體系、以及「節點 → 高階類別」的映射各自是獨立的資產檔，隨部署包一起版控。
-- 每筆事件寫入 `taxonomy_version` 記錄當時採用的體系版本；抽換或擴充體系只影響新建事件，舊事件保留原 `concept_id` 與 `taxonomy_version`。
-- 未知或無法映射的節點退回 `type=other` 並告警，不得靜默丟棄。
+- 高階類別定義（`high_level_types.json`）隨部署包一起版控。
+- 每筆事件寫入 `taxonomy_version` 記錄當時採用的體系版本；抽換或擴充體系只影響新建事件，舊事件保留原 `taxonomy_version`。
+- 未知或無法映射的類別退回 `type=other` 並告警，不得靜默丟棄。
 - 可配置的邊界到 `daily_summaries.sections` 為止：`sections` 與 `type` 固定一一對應，新增高階類別必須同步 `sections`、`docs/api.md` 與摘要生成器。
 
-`GET /events` 只用 `type` 過濾；`concept_id` 不對外暴露，MVP 也不為它另建索引，後端需要細分類篩選時在 Query 結果上以 `FilterExpression` 或程式端過濾。
+`GET /events` 用 `type` 過濾；MVP 不為它另建 GSI，先在 `events-by-time` Query 再以 `FilterExpression` 過濾。
 
 #### Canonical identity 與寫入規則
 
@@ -451,7 +450,7 @@ Base table：PK `elder_id` + SK `date` (`YYYY-MM-DD`，台灣日界)。
 
 ## 成本與可觀測性
 
-移除每輪額外完整 extraction 模型呼叫，預期可降低模型呼叫與 realtime latency 成本，但實際效果必須以 telemetry 驗證。至少觀測 chat latency、structured output 失敗率、safety rule 命中、每 session turn/input bytes、batch attempts、SQS duplicate/DLQ、partial summary 比例與重算延遲、去重合併率、`type`／`concept_id` 分佈；未量測前不承諾固定百分比節省。
+移除每輪額外完整 extraction 模型呼叫，預期可降低模型呼叫與 realtime latency 成本，但實際效果必須以 telemetry 驗證。至少觀測 chat latency、structured output 失敗率、safety rule 命中、每 session turn/input bytes、batch attempts、SQS duplicate/DLQ、partial summary 比例與重算延遲、去重合併率、`type` 分佈；未量測前不承諾固定百分比節省。
 
 ## 後端環境變數
 

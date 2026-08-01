@@ -275,12 +275,11 @@ def test_close_to_events_end_to_end(stack):
     assert item["type"] == "medication"
     assert item["detail"] == "早餐後服用血壓藥一顆"
     assert item["source"] == "conversation"
-    for internal in ("canonical_event_key", "concept_id", "structured_detail", "revision"):
+    for internal in ("canonical_event_key", "structured_detail", "revision"):
         assert internal not in item
 
     # 5. 內部欄位仍完整寫入，供摘要與統計使用
     stored = db.get_event(ELDER, item["event_id"])
-    assert stored["concept_id"] == "UCO.HighLevel.medication"
     assert stored["taxonomy_version"] == "uco-1.0.0"
     assert stored["extraction_track"] == "batch"
     assert stored["evidence_conversation_ids"]

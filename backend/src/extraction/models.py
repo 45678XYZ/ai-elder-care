@@ -22,7 +22,7 @@ class Turn:
 class ExtractedEvent:
     """萃取出的單一事件（尚未算 canonical key、尚未去重）。"""
 
-    concept_id: str
+    type: str
     subject: str
     predicate: str
     summary: str
@@ -42,7 +42,6 @@ class CanonicalEvent:
     canonical_event_key: str
     ts: str
     type: str
-    concept_id: str
     taxonomy_version: str
     subject: str
     predicate: str
@@ -64,7 +63,6 @@ class CanonicalEvent:
             "canonical_event_key": self.canonical_event_key,
             "ts": self.ts,
             "type": self.type,
-            "concept_id": self.concept_id,
             "taxonomy_version": self.taxonomy_version,
             "detail": self.detail,
             "structured_detail": self.structured_detail or None,

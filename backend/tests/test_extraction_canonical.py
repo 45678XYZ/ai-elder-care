@@ -15,21 +15,9 @@ from src.extraction.canonical import (
     safety_alert_key,
     slot_label,
 )
-from src.extraction.taxonomy import load_taxonomy
-
-SCHEDULED = "UCO.BehavioralRecord.MedicationBehavior.ScheduledMedication"
-VITAL = "UCO.StatusOutcome.PhysiologicalMeasurement.VitalSignRecord"
-FALL = "UCO.StatusOutcome.SafetyIncident.PhysicalFall"
-
-
 @pytest.fixture
 def lexicon():
     return load_predicate_lexicon()
-
-
-@pytest.fixture
-def taxonomy():
-    return load_taxonomy()
 
 
 # -- Slot ---------------------------------------------------------------------
@@ -62,7 +50,7 @@ def test_slot_uses_taipei_day_boundary():
     assert slot_label("2026-07-26T01:41:00+00:00", 60) == "SLOT_09"
 
 
-def test_invalid_slot_granularity(taxonomy):
+def test_invalid_slot_granularity():
     with pytest.raises(CanonicalError):
         slot_label("2026-07-26T09:00:00.000+08:00", 0)
     with pytest.raises(CanonicalError):
@@ -98,50 +86,43 @@ def test_normalize_subject_accepts_runtime_aliases(lexicon):
 # -- 謂語正規化 ---------------------------------------------------------------
 
 
-def test_predicate_alias_converges_variants(lexicon, taxonomy):
+def test_predicate_open_world_strategy(lexicon):
     """開放世界策略下，謂語傳回自然語言正規化文字。"""
-    canonical = normalize_predicate(SCHEDULED, "服用血壓藥", lexicon, taxonomy)
+    canonical = normalize_predicate("服用血壓藥", lexicon)
     assert canonical.matched is True
+    assert canonical.value == "服用血壓藥"
 
-    resolved = normalize_predicate(SCHEDULED, "吃血壓藥", lexicon, taxonomy)
+    resolved = normalize_predicate("吃血壓藥", lexicon)
     assert resolved.matched is True
     assert resolved.value == "吃血壓藥"
 
 
-def test_predicate_distinguishes_different_events_under_same_concept(lexicon, taxonomy):
-    """同節點不同事件（量血壓 vs 量體重）謂語不同，應各自成立。"""
-    bp = normalize_predicate(VITAL, "測血壓", lexicon, taxonomy)
-    weight = normalize_predicate(VITAL, "秤體重", lexicon, taxonomy)
+def test_predicate_distinguishes_different_events(lexicon):
+    """不同謂語應各自保留。"""
+    bp = normalize_predicate("測血壓", lexicon)
+    weight = normalize_predicate("秤體重", lexicon)
     assert bp.value == "測血壓"
     assert weight.value == "秤體重"
     assert bp.value != weight.value
 
 
-def test_predicate_falls_back_to_ancestor_lexicon(lexicon, taxonomy):
+def test_predicate_normalizes_text(lexicon):
     """開放世界策略下保留輸入謂語的自然語言表達。"""
-    resolved = normalize_predicate(SCHEDULED, "吃藥", lexicon, taxonomy)
+    resolved = normalize_predicate("吃藥", lexicon)
     assert resolved.matched is True
     assert resolved.value == "吃藥"
 
 
-def test_unmatched_predicate_keeps_original_and_warns(lexicon, taxonomy, caplog):
-    resolved = normalize_predicate(SCHEDULED, "把藥丟掉", lexicon, taxonomy)
+def test_predicate_accepts_any_text(lexicon, caplog):
+    resolved = normalize_predicate("把藥丟掉", lexicon)
     assert resolved.matched is True
     assert resolved.value == "把藥丟掉"
 
 
-def test_other_token_is_not_matched(lexicon, taxonomy):
-    resolved = normalize_predicate(SCHEDULED, lexicon.other_token, lexicon, taxonomy)
+def test_other_token_passes_through(lexicon):
+    resolved = normalize_predicate(lexicon.other_token, lexicon)
     assert resolved.matched is True
     assert resolved.value == "__other__"
-
-
-
-
-def test_lexicon_candidates_for_prompt(lexicon):
-    candidates = lexicon.candidates_for_prompt((SCHEDULED, "UCO.NotRegistered"))
-    assert "服用血壓藥" in candidates[SCHEDULED]
-    assert candidates["UCO.NotRegistered"] == ()
 
 
 # -- canonical key 與 event_id ------------------------------------------------
@@ -229,11 +210,11 @@ def test_event_time_key_sorts_by_time():
     assert early < late
 
 
-def test_full_identity_flow_is_deterministic(lexicon, taxonomy):
+def test_full_identity_flow_is_deterministic(lexicon):
     """從謂語正規化到 event_id 的整條路徑重跑必須一致。"""
 
     def build(predicate: str, subject: str) -> str:
-        resolved = normalize_predicate(FALL, predicate, lexicon, taxonomy)
+        resolved = normalize_predicate(predicate, lexicon)
         key = canonical_event_key(
             "2026-07-26T18:20:00.000+08:00",
             normalize_subject(subject, lexicon),

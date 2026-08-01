@@ -241,8 +241,8 @@ class _SharedTail:
         ts_date = ts.split("T")[0]
         if ts_date < ref_date:
             logger.info(
-                "過往歷史回憶事件已排除：ts=%s ref_date=%s concept_id=%s predicate=%s",
-                ts, ref_date, extracted.concept_id, extracted.predicate,
+                "過往歷史回憶事件已排除：ts=%s ref_date=%s type=%s predicate=%s",
+                ts, ref_date, extracted.type, extracted.predicate,
             )
             self._dropped_events += 1
             return False
@@ -250,17 +250,15 @@ class _SharedTail:
         subject = normalize_subject(extracted.subject, self.lexicon, extra_aliases=self.family_aliases)
 
         predicate = normalize_predicate(
-            extracted.concept_id,
             extracted.predicate,
             self.lexicon,
-            self.taxonomy,
             embedder=self.embedder,
         )
         if not predicate.value:
             logger.warning(
-                "事件缺少可用謂語，已丟棄：source_chunk_id=%s concept_id=%s",
+                "事件缺少可用謂語，已丟棄：source_chunk_id=%s type=%s",
                 origin.source_chunk_id,
-                extracted.concept_id,
+                extracted.type,
             )
             self._dropped_events += 1
             return False
@@ -280,7 +278,7 @@ class _SharedTail:
             structured["raw_predicate"] = predicate.raw_predicate
 
         if self.suspected_routine_lookup is not None:
-            suspected = self.suspected_routine_lookup(extracted.concept_id, predicate.value, ts)
+            suspected = self.suspected_routine_lookup(extracted.type, predicate.value, ts)
             if suspected:
                 structured["suspected_routine_id"] = suspected
 
@@ -290,8 +288,7 @@ class _SharedTail:
             event_id=event_id_for(elder_id, key),
             canonical_event_key=key,
             ts=ts,
-            type=self.taxonomy.high_level_type(extracted.concept_id),
-            concept_id=extracted.concept_id,
+            type=extracted.type,
             taxonomy_version=self.config.taxonomy_version or self.taxonomy.taxonomy_version,
             subject=subject,
             predicate=predicate.value,
@@ -322,9 +319,8 @@ class _SharedTail:
                 valid_events.append(event)
             else:
                 logger.warning(
-                    "事件未通過型別驗證，已丟棄：event_id=%s concept_id=%s type=%s",
+                    "事件未通過型別驗證，已丟棄：event_id=%s type=%s",
                     event.event_id,
-                    event.concept_id,
                     event.type,
                 )
                 self._dropped_events += 1
@@ -338,8 +334,6 @@ class _SharedTail:
 
 
 def _validate_event(event: CanonicalEvent, taxonomy: Taxonomy) -> bool:
-    if taxonomy.get(event.concept_id) is None:
-        return False
     if event.type not in taxonomy.type_ids:
         return False
     if not (event.ts and event.subject and event.predicate and event.detail):
@@ -589,10 +583,10 @@ def extract_seven_type_events(
 
     unmapped_type_count = 0
     events: list[ExtractedEvent] = []
-    for index, (event, pseudo_concept_id, is_valid_label) in enumerate(accepted):
+    for index, (event, type_id, is_valid_label) in enumerate(accepted):
         if not is_valid_label:
             unmapped_type_count += 1
-        events.append(_to_extracted_event(index, event, pseudo_concept_id))
+        events.append(_to_extracted_event(index, event, type_id))
 
     return SevenTypeExtraction(
         events=tuple(events),
@@ -625,7 +619,7 @@ def _validate_seven_type_events(
         if cleaned.get("confidence_score") is None:
             cleaned["confidence_score"] = float(cleaned.get("confidence") or 1.0)
 
-        pseudo_concept_id, is_valid_label = taxonomy.pseudo_concept_for_label(
+        type_id, is_valid_label = taxonomy.resolve_type(
             cleaned.get("high_level_type")
         )
         cleaned["high_level_type"] = (
@@ -639,7 +633,7 @@ def _validate_seven_type_events(
         except ValidationError as exc:
             failures.append((raw, _summarize_validation_error(exc)))
             continue
-        accepted.append((validated.model_dump(), pseudo_concept_id, is_valid_label))
+        accepted.append((validated.model_dump(), type_id, is_valid_label))
     return accepted, failures
 
 
@@ -691,11 +685,11 @@ def _request_repair(
 def _to_extracted_event(
     index: int,
     event: Mapping[str, Any],
-    pseudo_concept_id: str,
+    type_id: str,
 ) -> ExtractedEvent:
     confidence = event.get("confidence_score")
     return ExtractedEvent(
-        concept_id=pseudo_concept_id,
+        type=type_id,
         subject=str(event.get("subject", "")),
         predicate=str(event.get("predicate", "")),
         summary=str(event.get("event_summary", "")),

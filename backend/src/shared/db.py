@@ -80,7 +80,6 @@ EVENT_MATERIAL_FIELDS: tuple[str, ...] = (
     "canonical_event_key",
     "type",
     "detail",
-    "concept_id",
     "routine_id",
     "routine_date",
 )
