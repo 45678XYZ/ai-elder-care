@@ -22,6 +22,7 @@ Lambda。本 Handler 負責分派到對應的 handle_* 函式，呼叫 shared/db
 
 import json
 import os
+import ssl
 import time
 import urllib.request
 import uuid
@@ -813,6 +814,26 @@ _CWA_FORECAST_URL = (
     "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001"
 )
 
+
+def _cwa_ssl_context() -> ssl.SSLContext:
+    """氣象署專用的 TLS context：解除 Python 3.13 新增的 X509 格式嚴格檢查。
+
+    Python 3.13 起 `ssl.create_default_context()` 預設帶上 VERIFY_X509_STRICT，它依
+    RFC 5280 要求鏈上的 CA 憑證必須有 Subject Key Identifier。氣象署的憑證由
+    TWCA Secure SSL CA 簽發，該鏈缺這個欄位，於是握手被拒：
+
+        [SSL: CERTIFICATE_VERIFY_FAILED] Missing Subject Key Identifier
+
+    這在 python3.11 的執行環境不會發生（當時沒有這個 flag），是 runtime 升到 3.13
+    之後才浮現的——升級的理由見 terraform/lambda.tf（av/numpy 的 arm64 wheel）。
+
+    只關掉這一項：主機名稱比對、憑證鏈信任與效期驗證全部維持，因此不等於停用 TLS 驗證。
+    憑證換成有 SKI 的那天，這個函式可以直接刪掉。
+    """
+    ctx = ssl.create_default_context()
+    ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return ctx
+
 _REGION_TO_CWA_LOCATION = {
     "基隆": "基隆市", "台北": "臺北市", "臺北": "臺北市",
     "新北": "新北市", "桃園": "桃園市", "新竹": "新竹縣",
@@ -863,7 +884,7 @@ def handle_get_weather_forecast(params: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=5, context=_cwa_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
         print(f"[Error] handle_get_weather_forecast 呼叫氣象署失敗: {e}")
