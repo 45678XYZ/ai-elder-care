@@ -76,18 +76,20 @@ locals {
       }
       } : {}, {
       formospeech_whisper_v3 = {
-        model_id          = "formospeech/whisper-large-v3-taiwanese-hakka"
-        revision          = "main"
-        license           = "CC BY-NC 4.0"
-        access_status     = "gated"
-        usage_restriction = "staging_validation_only"
-        approval_state    = "not_approved"
+        model_id      = "formospeech/whisper-large-v3-taiwanese-hakka"
+        revision      = "main"
+        license       = "CC BY-NC 4.0"
+        access_status = "gated"
+        # 三者同時成立，is_production_allowed 才為真；由單一變數控制避免只開一半。
+        usage_restriction = var.asr_formo_approved ? "production" : "staging_validation_only"
+        approval_state    = var.asr_formo_approved ? "approved" : "not_approved"
         production_gate = {
-          staging_validation_passed = false
-          license_cleared           = false
+          staging_validation_passed = var.asr_formo_approved
+          license_cleared           = var.asr_formo_approved
+          # gated repo 的存取權已取得，與核准與否無關。
           access_granted            = true
-          quota_cleared             = false
-          runtime_capacity_verified = false
+          quota_cleared             = var.asr_formo_approved
+          runtime_capacity_verified = var.asr_formo_approved
           approval_record_ref       = null
         }
       }
