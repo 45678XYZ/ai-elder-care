@@ -49,6 +49,11 @@ class _SetupScreenState extends State<SetupScreen> {
   /// 而後端沒收到值時本來就是四縣，畫面該反映那個事實。
   HakkaDialect _dialect = HakkaDialect.sixian;
 
+  /// 性別。**不預選**：後端這個欄位可為 null，而「還沒問到」與「長輩回答其他」
+  /// 是兩件事，預設一個值等於替他決定，之後也分不出這筆問過沒有。
+  /// 也因此不列為必填——問不出來就留空，不該卡住整個設定流程。
+  Gender? _gender;
+
   @override
   void initState() {
     super.initState();
@@ -136,6 +141,7 @@ class _SetupScreenState extends State<SetupScreen> {
         birthYear: birthYear,
         addressRegion: region,
         hakkaDialect: _dialect.value,
+        gender: _gender?.value,
       );
     } else {
       await AppSession.instance.saveSetup(
@@ -145,6 +151,7 @@ class _SetupScreenState extends State<SetupScreen> {
         birthYear: birthYear,
         addressRegion: region,
         hakkaDialect: _dialect.value,
+        gender: _gender?.value,
       );
     }
 
@@ -262,6 +269,38 @@ class _SetupScreenState extends State<SetupScreen> {
                   decoration: _fieldDecoration(hint: '例如：台北市大安區'),
                   validator: (v) =>
                       (v == null || v.trim().isEmpty) ? '請填居住地區' : null,
+                ),
+                const SizedBox(height: AppSpacing.lg),
+
+                // 欄位五：性別（選填）
+                //
+                // 標明「可不填」而不是靜靜地讓它選填：照護者看到一排選項會預設
+                // 自己非選不可，問不到就卡在這裡不敢送出。
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: AppSpacing.sm,
+                  children: [
+                    Text('性別', style: text.labelLarge),
+                    Text('※ 可不填',
+                        style: text.bodySmall
+                            ?.copyWith(color: AppColors.inkSecondary)),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    for (final g in Gender.values)
+                      _DialectChip(
+                        label: g.label,
+                        selected: _gender == g,
+                        // 再按一次取消選取：不預選就一定要有反悔的路，
+                        // 否則手滑選到之後再也回不到「沒填」。
+                        onTap: () =>
+                            setState(() => _gender = _gender == g ? null : g),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: AppSpacing.xl),
 

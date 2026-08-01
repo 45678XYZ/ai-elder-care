@@ -155,9 +155,13 @@ class _ChatScreenState extends State<ChatScreen>
               // 原始錯誤碼幫不上忙，但要留在歷史裡，長輩往回捲才知道哪一句沒進去。
               onError: (_) {
                 if (!mounted) return;
+                // 錯誤已經處理完這一輪，別讓後續的狀態回報再補救一次
+                // （否則同一輪會補兩則提示、錯誤計數也多加一次）。
+                _awaitingFinal = false;
                 _appendNotHeardHint();
                 _onListenFailed();
               },
+              onStatus: _onSpeechStatus,
             );
     } catch (_) {
       ok = false; // 平台不支援或測試環境無外掛，退回打字備援
@@ -165,9 +169,36 @@ class _ChatScreenState extends State<ChatScreen>
     if (mounted) setState(() => _micAvailable = ok);
   }
 
+  /// 這一輪已經開始聆聽、但還沒收到最終結果。
+  ///
+  /// 用來分辨語音服務「正常收工」與「悄悄收工」：[_speech.listen] 有 `listenFor`
+  /// 上限（30 秒），時間到了辨識器會自己停下來。**如果那段時間裡長輩一句話都沒被
+  /// 收到，`onResult` 不會被呼叫、`onError` 也不會**——它只是安靜地結束。
+  ///
+  /// 沒有接 `onStatus` 之前，那一刻沒有任何人知道：畫面繼續顯示「我在聽」、秒數
+  /// 繼續往上跳，而底下早就沒在聽了。實機看到過連續 400 秒沒有任何逐字稿。
+  bool _awaitingFinal = false;
+
   /// 這一輪觸發的長者檔案重讀。開下一輪聆聽之前要等它落地——
   /// 見 [_handleQuestion] 裡的說明。
   Future<void>? _profileRefresh;
+
+  /// 語音服務的狀態回報（`listening`／`notListening`／`done`）。
+  ///
+  /// 只處理一件事：**聆聽結束了，但這一輪從頭到尾沒有最終結果**。那代表剛才
+  /// 什麼都沒收到（沒開口、環境太吵、辨識器自己放棄），要嘛重開一輪、要嘛收手，
+  /// 不能就這樣停在 listening。
+  ///
+  /// 走 [_onListenFailed] 與錯誤同一條路：對長輩來說「聽不到」跟「聽錯」沒有差別，
+  /// 而連續失敗的收手邏輯兩邊都需要。
+  void _onSpeechStatus(String status) {
+    if (!mounted) return;
+    final ended = status == 'done' || status == 'notListening';
+    if (!ended || !_awaitingFinal) return;
+    _awaitingFinal = false;
+    _appendNotHeardHint();
+    _onListenFailed();
+  }
 
   /// 連續辨識失敗的次數。成功收到一句就歸零。
   ///
@@ -241,6 +272,9 @@ class _ChatScreenState extends State<ChatScreen>
     // 之間回來，照樣把階段拉回 speaking。
     _turnSeq++;
     setState(() => _conversationActive = false);
+    // 主動停止會讓語音服務回報 notListening，那是預期中的收工，不該被
+    // [_onSpeechStatus] 當成「悄悄收工」而補一則「沒聽清楚」。
+    _awaitingFinal = false;
     await _speech.stop();
     // 錄到一半按停止：整段丟掉而不是送出。長輩按停止的意思是「不要了」，
     // 把半句話送去辨識並記進資料，跟他的意圖相反。
@@ -261,6 +295,9 @@ class _ChatScreenState extends State<ChatScreen>
     if (AppSession.instance.isHakka) return _recordTurn();
 
     var handled = false; // 每輪只處理一次最終結果
+
+    // 從這裡到收到最終結果之間，若語音服務悄悄收工，要靠 [_onSpeechStatus] 接住。
+    _awaitingFinal = true;
 
     await _speech.listen(
       // 靜音多久算講完。預設 3 秒對長輩太短——他們講一句話中間本來就會停頓
@@ -283,6 +320,8 @@ class _ChatScreenState extends State<ChatScreen>
 
         if (isFinal && !handled) {
           handled = true;
+          // 這一輪有結果了，狀態回報不必再補救。
+          _awaitingFinal = false;
           // 收到一句完整的就代表辨識器恢復正常了，錯誤計數歸零。
           _consecutiveListenErrors = 0;
           final q = text.trim();

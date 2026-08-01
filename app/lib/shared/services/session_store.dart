@@ -63,6 +63,7 @@ class AppSession {
   static String _birthYearKey(String a) => 'elder_birth_year_$a';
   static String _addressRegionKey(String a) => 'elder_address_region_$a';
   static String _dialectKey(String a) => 'elder_hakka_dialect_$a';
+  static String _genderKey(String a) => 'elder_gender_$a';
   static String _langKey(String a) => 'elder_lang_$a';
   static String _textLangKey(String a) => 'elder_text_lang_$a';
   static String _selectedElderKey(String a) => 'selected_elder_id_$a';
@@ -81,6 +82,12 @@ class AppSession {
   /// **這個值一定要進得了長者檔案才算數**：後端只讀 elder profile 的腔調，
   /// /chat 不帶它（api.md）。存在這裡是初次設定到 POST /elders 之間的過渡。
   String elderHakkaDialect = HakkaDialect.defaultValue;
+
+  /// 性別（`male`｜`female`｜`other`），對齊 api.md 的 `gender`。
+  ///
+  /// **null 代表沒填**——不是預設男性，也不是「其他」。後端這個欄位本來就可為 null，
+  /// 而「還沒問到」與「長輩回答其他」是兩件不同的事，用同一個值表示就再也分不出來。
+  String? elderGender;
 
   /// 居住地區，如「台北市大安區」。對齊 api.md 的 `address_region`。
   String elderAddressRegion = '';
@@ -289,6 +296,7 @@ class AppSession {
       elderBirthYear = null;
       elderAddressRegion = '';
       elderHakkaDialect = HakkaDialect.defaultValue;
+      elderGender = null;
       lang = 'zh-TW';
       _langChosen = false;
       textLang = 'zh-TW';
@@ -303,6 +311,8 @@ class AppSession {
     elderAddressRegion = p.getString(_addressRegionKey(accountId)) ?? '';
     elderHakkaDialect =
         p.getString(_dialectKey(accountId)) ?? HakkaDialect.defaultValue;
+    // 沒有 key 就是沒填，維持 null——不要拿任何值頂替。
+    elderGender = p.getString(_genderKey(accountId));
     // key 存不存在就是「選過沒有」——寫進去的只可能是 /setup 或語言鈕。
     final savedLang = p.getString(_langKey(accountId));
     _langChosen = savedLang != null;
@@ -439,12 +449,14 @@ class AppSession {
     int? birthYear,
     String addressRegion = '',
     String hakkaDialect = HakkaDialect.defaultValue,
+    String? gender,
   }) async {
     elderName = name;
     elderNickname = nickname;
     elderBirthYear = birthYear;
     elderAddressRegion = addressRegion;
     elderHakkaDialect = hakkaDialect;
+    elderGender = gender;
     this.lang = lang;
     _langChosen = true;
     setupDone = true;
@@ -463,6 +475,8 @@ class AppSession {
       await p.setString(_addressRegionKey(account), addressRegion);
     }
     await p.setString(_dialectKey(account), hakkaDialect);
+    // 性別可以不填，沒填就不寫 key——「還沒問到」與「選了其他」要分得出來。
+    if (gender != null) await p.setString(_genderKey(account), gender);
     await p.setBool(_setupDoneKey(account), true);
 
     // 後端建立長者資料並綁定帳號
@@ -472,6 +486,7 @@ class AppSession {
         if (nickname.isNotEmpty) 'nickname': nickname,
         if (birthYear != null) 'birth_year': birthYear,
         if (addressRegion.isNotEmpty) 'address_region': addressRegion,
+        if (gender != null) 'gender': gender,
         'lang_preference': lang == 'hak' ? 'hak' : 'zh-TW',
         'hakka_dialect': hakkaDialect,
         'self_register': true,
@@ -493,6 +508,7 @@ class AppSession {
     int? birthYear,
     String addressRegion = '',
     String hakkaDialect = HakkaDialect.defaultValue,
+    String? gender,
   }) async {
     final p = await SharedPreferences.getInstance();
     await p.setString(
@@ -504,6 +520,7 @@ class AppSession {
         'birth_year': birthYear,
         'address_region': addressRegion,
         'hakka_dialect': hakkaDialect,
+        'gender': gender,
       }),
     );
   }
@@ -545,6 +562,7 @@ class AppSession {
     final birthYear = data['birth_year'];
     final region = data['address_region'];
     final dialect = data['hakka_dialect'];
+    final gender = data['gender'];
     await p.setString(_nameKey(accountId), name is String ? name : '');
     await p.setString(
         _nicknameKey(accountId), nickname is String ? nickname : '');
@@ -557,6 +575,10 @@ class AppSession {
     if (dialect is String && dialect.isNotEmpty) {
       await p.setString(_dialectKey(accountId), dialect);
     }
+    // 性別是選填，暫存項裡可能是 null；沒填就不寫 key。
+    if (gender is String && gender.isNotEmpty) {
+      await p.setString(_genderKey(accountId), gender);
+    }
     await p.setBool(_setupDoneKey(accountId), true);
     await p.remove(key);
 
@@ -567,6 +589,7 @@ class AppSession {
         if (nickname is String && nickname.isNotEmpty) 'nickname': nickname,
         if (birthYear is int) 'birth_year': birthYear,
         if (region is String && region.isNotEmpty) 'address_region': region,
+        if (gender is String && gender.isNotEmpty) 'gender': gender,
         if (lang is String) 'lang_preference': lang == 'hak' ? 'hak' : 'zh-TW',
         if (dialect is String && dialect.isNotEmpty) 'hakka_dialect': dialect,
         'self_register': true,
@@ -601,6 +624,7 @@ class AppSession {
     elderBirthYear = null;
     elderAddressRegion = '';
     elderHakkaDialect = HakkaDialect.defaultValue;
+    elderGender = null;
     lang = 'zh-TW';
     _langChosen = false;
     textLang = 'zh-TW';

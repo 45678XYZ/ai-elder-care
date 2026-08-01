@@ -148,6 +148,35 @@ enum HakkaDialect {
   }
 }
 
+/// 性別。值域 `male|female|other`（api.md 公開欄位 enum）。
+///
+/// **沒有預設值，也不是必填**：後端這個欄位可為 null，而「沒填」與「選了其他」
+/// 是兩件不同的事——前者是還沒問到，後者是長輩自己的回答。硬給一個預設等於
+/// 替他決定，之後也分不出這筆到底問過沒有。
+///
+/// 宣告順序即畫面上的排列順序。
+enum Gender {
+  male('male', '男'),
+  female('female', '女'),
+  other('other', '其他');
+
+  const Gender(this.value, this.label);
+
+  /// 送給後端的字串（api.md 的 enum 值）。
+  final String value;
+
+  /// 畫面上顯示的字。
+  final String label;
+
+  /// 後端字串 → 列舉；未知值或 null 回 null（維持「沒填」這個狀態）。
+  static Gender? fromValue(String? v) {
+    for (final g in values) {
+      if (g.value == v) return g;
+    }
+    return null;
+  }
+}
+
 /// 單筆健康註記。欄位規格見 docs/api.md 的 health_notes 物件。
 ///
 /// **來源要分得出來**：這個欄位同時被照護者（自己填的）與對話中的 AI（依長輩談話
