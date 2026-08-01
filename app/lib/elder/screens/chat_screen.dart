@@ -156,12 +156,57 @@ class _ChatScreenState extends State<ChatScreen>
               onError: (_) {
                 if (!mounted) return;
                 _appendNotHeardHint();
+                _onListenFailed();
               },
             );
     } catch (_) {
       ok = false; // 平台不支援或測試環境無外掛，退回打字備援
     }
     if (mounted) setState(() => _micAvailable = ok);
+  }
+
+  /// 連續辨識失敗的次數。成功收到一句就歸零。
+  ///
+  /// Android 的語音服務在連續幾輪之後很容易開始回錯誤（辨識器忙碌、逾時、no match），
+  /// 而 `cancelOnError: true` 會讓那一輪的聆聽直接取消。原本 onError 只補一句提示、
+  /// 沒有把迴圈接回去，於是 `_phase` 卡在 listening——畫面一直說「我在聽」、秒數照跳，
+  /// 但沒有任何人開始下一輪。長輩看到的就是「講什麼都沒反應」。實機大約撐四輪。
+  int _consecutiveListenErrors = 0;
+
+  /// 連續失敗幾次就收手。無限重試會變成一直閃提示的空轉，比直接停下來更難懂。
+  static const _maxConsecutiveListenErrors = 3;
+
+  /// 這一輪聆聽失敗了：決定要重開一輪，還是收手回待機。
+  void _onListenFailed() {
+    _consecutiveListenErrors++;
+
+    if (!_conversationActive) {
+      setState(() => _setPhase(_Phase.idle));
+      return;
+    }
+
+    if (_consecutiveListenErrors >= _maxConsecutiveListenErrors) {
+      setState(() {
+        _conversationActive = false;
+        _setPhase(_Phase.idle);
+      });
+      // 講清楚下一步要做什麼。停在這裡而不說話的話，長輩只會一直對著手機講。
+      _appendHint('現在聽不太到，請按一下麥克風再說一次，或用下方打字。');
+      return;
+    }
+
+    // 重開一輪之前先讓語音服務收乾淨：Android 的辨識器還沒結束時再 listen，
+    // 下一次會立刻再報一次忙碌，變成錯誤接錯誤。
+    Future.delayed(const Duration(milliseconds: 400), () async {
+      if (!mounted || !_conversationActive) return;
+      try {
+        await _speech.stop();
+      } catch (_) {
+        // 已經停了或平台不支援，照樣往下開新的一輪
+      }
+      if (!mounted || !_conversationActive) return;
+      _listenTurn();
+    });
   }
 
   /// 統一切換階段：管理 listening 秒數計時器。
@@ -241,6 +286,8 @@ class _ChatScreenState extends State<ChatScreen>
 
         if (isFinal && !handled) {
           handled = true;
+          // 收到一句完整的就代表辨識器恢復正常了，錯誤計數歸零。
+          _consecutiveListenErrors = 0;
           final q = whole.trim();
           if (q.isEmpty) {
             if (_conversationActive) _listenTurn();

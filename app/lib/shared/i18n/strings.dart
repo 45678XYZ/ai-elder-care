@@ -111,6 +111,8 @@ const _hakka = <String, String>{
 const missingFromHakka = <String>[
   // 底部分頁。原本是「今日行程」→「今晡日行程」，改名之後那個譯法不適用了。
   '主頁',
+  // 語音辨識連續失敗時的收手提示（見 chat_screen 的 _onListenFailed）。
+  '現在聽不太到，請按一下麥克風再說一次，或用下方打字。',
 ];
 
 /// 把一句華語介面文字換成長輩選的書寫語言。
