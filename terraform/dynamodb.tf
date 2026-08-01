@@ -224,6 +224,38 @@ resource "aws_dynamodb_table" "routines" {
 
 # auth 身分對應表（非 framework 資料表）：Cognito sub → elder_id，供 pre-token-generation
 # trigger 查詢後注入 elder_id claim（見 cognito.tf、backend/src/handlers/pre_token_generation.py）。
+# 7. caregiver_lookup 表（cg_ 短 ID ↔ Cognito sub 反查）
+resource "aws_dynamodb_table" "caregiver_lookup" {
+  name         = "${var.project_name}-caregiver-lookup"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "short_id"
+
+  attribute {
+    name = "short_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "sub"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "by-sub"
+    hash_key        = "sub"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  tags = {
+    Project     = var.project_name
+    Environment = "production"
+  }
+}
+
 resource "aws_dynamodb_table" "elder_accounts" {
   name         = "${var.project_name}-elder-accounts"
   billing_mode = "PAY_PER_REQUEST"

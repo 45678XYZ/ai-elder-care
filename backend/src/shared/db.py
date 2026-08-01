@@ -54,6 +54,7 @@ TABLE_CONVERSATIONS = os.environ.get("TABLE_CONVERSATIONS", "conversations")
 TABLE_EVENTS = os.environ.get("TABLE_EVENTS", "events")
 TABLE_DAILY_SUMMARIES = os.environ.get("TABLE_DAILY_SUMMARIES", "daily_summaries")
 TABLE_ROUTINES = os.environ.get("TABLE_ROUTINES", "routines")
+TABLE_CAREGIVER_LOOKUP = os.environ.get("TABLE_CAREGIVER_LOOKUP", "caregiver-lookup")
 TABLE_ELDER_ACCOUNTS = os.environ.get("ELDER_ACCOUNTS_TABLE", "elder_accounts")
 
 # 事件時間軸索引；events 的 Base table SK 是 event_id，時間範圍查詢一律走此 GSI
@@ -426,6 +427,92 @@ def list_elders(caregiver_id: str = None) -> list[dict[str, Any]]:
     except ClientError as e:
         raise DBError(f"查詢長者列表失敗: {e.response['Error']['Message']}")
 
+
+
+# -----------------------------------------------------------------------------
+# Caregiver Lookup 表操作
+# -----------------------------------------------------------------------------
+
+
+def put_caregiver_lookup(short_id: str, sub: str, name: str) -> dict[str, Any]:
+    """寫入或覆寫照護者 lookup 記錄（cg_ 短 ID → sub）。"""
+    table = get_dynamodb_resource().Table(TABLE_CAREGIVER_LOOKUP)
+    now = datetime.now(TZ_TAIPEI).isoformat()
+    item = {"short_id": short_id, "sub": sub, "name": name, "created_at": now}
+    try:
+        table.put_item(Item=item)
+        return item
+    except ClientError as e:
+        raise DBError(f"寫入 caregiver lookup 失敗: {e.response['Error']['Message']}")
+
+
+def get_caregiver_by_short_id(short_id: str) -> dict[str, Any] | None:
+    """以 cg_ 短 ID 查詢照護者 sub 與 name。"""
+    table = get_dynamodb_resource().Table(TABLE_CAREGIVER_LOOKUP)
+    try:
+        resp = table.get_item(Key={"short_id": short_id}, ConsistentRead=True)
+        return resp.get("Item")
+    except ClientError as e:
+        raise DBError(f"查詢 caregiver lookup 失敗: {e.response['Error']['Message']}")
+
+
+def get_caregiver_by_sub(sub: str) -> dict[str, Any] | None:
+    """以 Cognito sub 透過 GSI 查詢照護者 lookup 記錄。"""
+    table = get_dynamodb_resource().Table(TABLE_CAREGIVER_LOOKUP)
+    try:
+        resp = table.query(
+            IndexName="by-sub",
+            KeyConditionExpression="sub = :s",
+            ExpressionAttributeValues={":s": sub},
+        )
+        items = resp.get("Items", [])
+        return items[0] if items else None
+    except ClientError as e:
+        raise DBError(f"查詢 caregiver by sub 失敗: {e.response['Error']['Message']}")
+
+
+def batch_get_caregivers_by_subs(subs: list[str]) -> dict[str, dict[str, Any]]:
+    """批次以 sub 查詢照護者 lookup（回傳 {sub: item} 映射）。"""
+    if not subs:
+        return {}
+    table = get_dynamodb_resource().Table(TABLE_CAREGIVER_LOOKUP)
+    result: dict[str, dict[str, Any]] = {}
+    try:
+        for sub in subs:
+            resp = table.query(
+                IndexName="by-sub",
+                KeyConditionExpression="sub = :s",
+                ExpressionAttributeValues={":s": sub},
+            )
+            items = resp.get("Items", [])
+            if items:
+                result[sub] = items[0]
+    except ClientError as e:
+        raise DBError(f"批次查詢 caregiver 失敗: {e.response['Error']['Message']}")
+    return result
+
+
+def link_caregiver_to_elder(elder_id: str, caregiver_sub: str) -> dict[str, Any]:
+    """原子式將照護者 sub 加入長者的 caregiver_ids（若已存在則不重複加）。"""
+    table = get_dynamodb_resource().Table(TABLE_ELDERS)
+    try:
+        resp = table.update_item(
+            Key={"elder_id": elder_id},
+            UpdateExpression="SET caregiver_ids = list_append(if_not_exists(caregiver_ids, :empty), :new_id), updated_at = :now",
+            ConditionExpression="NOT contains(caregiver_ids, :sub)",
+            ExpressionAttributeValues={
+                ":new_id": [caregiver_sub],
+                ":empty": [],
+                ":sub": caregiver_sub,
+                ":now": datetime.now(TZ_TAIPEI).isoformat(),
+            },
+            ReturnValues="ALL_NEW",
+        )
+        return convert_decimals(resp.get("Attributes", {}))
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return convert_decimals(get_elder(elder_id))
+        raise DBError(f"綁定照護者失敗: {e.response['Error']['Message']}")
 
 
 # -----------------------------------------------------------------------------
