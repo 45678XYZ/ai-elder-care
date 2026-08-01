@@ -303,6 +303,7 @@ resource "aws_bedrockagentcore_agent_runtime" "companion" {
     KNOWLEDGE_BASE_ID   = aws_bedrockagent_knowledge_base.kb.id
     AGENT_MODEL_ID      = var.agent_model_id != "" ? var.agent_model_id : var.bedrock_model_id
     KB_RETRIEVE_TOP_K   = tostring(var.agent_kb_top_k)
+    TAVILY_API_KEY      = var.tavily_api_key
   }
 
   depends_on = [
