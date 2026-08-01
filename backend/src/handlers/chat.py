@@ -12,7 +12,8 @@
    並以 transaction 建立 `processing` turn 並佔用 session 的 inflight 名額。
 5. 若傳入音檔 (audio)，透過 remote-only ASR facade 將音訊轉成文字 transcript；
    未核准路由一律 fail closed，不回落到假逐字稿。
-6. 調用 Amazon Bedrock Agent 大腦進行推導並處理 Tool Calling 觸發。
+6. 調用 AgentCore Runtime 上的對話大腦推導，帶入以 elder_id 推出的穩定 runtimeSessionId
+   以載入/更新託管 Memory；工具呼叫與知識庫檢索都在 runtime 內完成（見 backend/src/agentcore_runtime/）。
 7. 依 lang 與 elder profile 腔調呼叫受控 TTS route；只允許同語言備援，成功才上傳 MP3。
 8. 以 transaction 提交 `completed` 結果、解除 inflight 名額並把本輪追加進 session，
    再回傳符合 api.md 規範的 Response 200（音訊每次動態簽發 15 分鐘 presigned URL）。
@@ -79,13 +80,17 @@ DEFAULT_HAKKA_DIALECT = HakkaDialect.SIXIAN
 
 # 環境變數自訂名稱
 S3_BUCKET_NAME = os.environ.get("S3_AUDIO_BUCKET", "ai-elder-care-audio")
-BEDROCK_AGENT_ID = os.environ.get("BEDROCK_AGENT_ID", "")
-BEDROCK_AGENT_ALIAS_ID = os.environ.get("BEDROCK_AGENT_ALIAS_ID", "TSTALIASID")
+AGENTCORE_RUNTIME_ARN = os.environ.get("AGENTCORE_RUNTIME_ARN", "")
+AGENTCORE_ENDPOINT_NAME = os.environ.get("AGENTCORE_ENDPOINT_NAME", "live")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
+
+# AgentCore 的 runtimeSessionId 長度限制：短於 33 或長於 256 一律 ValidationException
+_RUNTIME_SESSION_ID_MIN_LEN = 33
+_RUNTIME_SESSION_ID_MAX_LEN = 256
 
 # 全域 Boto3 Clients (Warm Start 重用連線)
 _s3_client = None
-_bedrock_agent_runtime = None
+_agentcore_client = None
 
 
 def get_s3_client():
@@ -96,12 +101,12 @@ def get_s3_client():
     return _s3_client
 
 
-def get_bedrock_agent_runtime():
-    """取得 Bedrock Agent Runtime Client 實例。"""
-    global _bedrock_agent_runtime
-    if _bedrock_agent_runtime is None:
-        _bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
-    return _bedrock_agent_runtime
+def get_agentcore_client():
+    """取得 Bedrock AgentCore Client 實例（對話大腦 Runtime 的資料面）。"""
+    global _agentcore_client
+    if _agentcore_client is None:
+        _agentcore_client = boto3.client("bedrock-agentcore", region_name=AWS_REGION)
+    return _agentcore_client
 
 
 def parse_event_body(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -183,23 +188,50 @@ def transcribe_audio(
     )
 
 
-def invoke_agent_brain(
-    elder_id: str,
-    transcript: str,
-    lang: str,
-    hakka_dialect: HakkaDialect | None,
-) -> Tuple[str, bool, bool]:
-    """呼叫 Bedrock Agents Classic runtime 進行對話推導。
-    
+def taiwan_now() -> str:
+    """當前台灣時間（UTC+8）的可讀字串，讓大腦精準感知日期與星期。"""
+    tz_offset = 8 * 3600
+    tw_time_tuple = time.gmtime(time.time() + tz_offset)
+    weekdays = ["日", "一", "二", "三", "四", "五", "六"]
+    wday_str = weekdays[int(time.strftime("%w", tw_time_tuple))]
+    return time.strftime(f"%Y-%m-%d %H:%M (週{wday_str})", tw_time_tuple)
+
+
+def runtime_session_id(elder_id: str) -> str:
+    """AgentCore 的 runtimeSessionId；同一位長者永遠得到同一個值。
+
+    這個 ID 同時是託管長期記憶的對話串鍵，因此必須穩定：換了值等於換一份記憶，長者上次
+    講過的事就找不回來。以 elder_id 的 hash 補齊長度而非隨機字串，正是為了維持穩定。
+
+    補長度是硬性要求：API 規定最短 33 字元，直接傳 `eld_001`（7 字元）會被擋成
+    ValidationException。
+
+    hash 擺在 elder_id 前面：長度上限 256，被截掉的只會是後面那段供人閱讀的 elder_id，
+    不會動到用來區分長者的 hash。
+    """
+    digest = hashlib.sha256(elder_id.encode("utf-8")).hexdigest()
+    return f"eldercare-{digest}-{elder_id}"[:_RUNTIME_SESSION_ID_MAX_LEN]
+
+
+def invoke_agent_brain(elder_id: str, transcript: str, lang: str = "zh-TW") -> Tuple[str, bool, bool]:
+    """呼叫 AgentCore Runtime 上的對話大腦進行推導。
+
+    大腦的實作在 backend/src/agentcore_runtime/；本函式只負責組請求與解讀回應。
+
+    `routines_updated` 與 `safety_alert_triggered` 由 runtime 在回應 payload 裡明確回報，
+    不是從 trace 猜的：這兩個旗標直接決定 App 要不要刷新行事曆與是否標記安全警報，用字串
+    比對去猜工具有沒有被呼叫，模型換個措辭就會失準。
+
     Args:
-        elder_id (str): 長者 ID，作為 sessionId 傳入以隔離託管 Memory。
-        transcript (str): 長者輸入的對話文字。
+        elder_id: 長者 ID；決定工具的操作對象與長期記憶的歸屬。
+        transcript: 長者輸入的對話文字。
+        lang: 本輪的偏好語言（zh-TW 或 hak）。
 
     Returns:
         Tuple[str, bool, bool]: (reply_text, routines_updated, safety_alert_triggered)
     """
-    if not BEDROCK_AGENT_ID:
-        # 本地開發與未配置 Agent ID 時的保底回覆
+    if not AGENTCORE_RUNTIME_ARN:
+        # 本地開發與未配置 Runtime 時的保底回覆
         if lang == "hak":
             return (
                 f"【模擬回覆】𠊎有收到「{transcript}」。愛記得啉水、照時間歇睏喔！",
@@ -212,66 +244,36 @@ def invoke_agent_brain(
             False
         )
 
-    client = get_bedrock_agent_runtime()
+    session_id = runtime_session_id(elder_id)
+    payload = {
+        "elder_id": elder_id,
+        "text": transcript,
+        "lang": lang,
+        "local_time": taiwan_now(),
+        "session_key": session_id,
+    }
+
     try:
-        # 產生帶有台灣時間 (UTC+8) 的當前時間前綴，讓 LLM 精準感知當前時間與星期
-        tz_offset = 8 * 3600
-        tw_time_tuple = time.gmtime(time.time() + tz_offset)
-        weekdays = ["日", "一", "二", "三", "四", "五", "六"]
-        wday_str = weekdays[int(time.strftime("%w", tw_time_tuple))]
-        tw_time_str = time.strftime(f"%Y-%m-%d %H:%M (週{wday_str})", tw_time_tuple)
-
-        dialect_line = (
-            f"\n[客語腔調: {hakka_dialect.value}]" if hakka_dialect is not None else ""
+        response = get_agentcore_client().invoke_agent_runtime(
+            agentRuntimeArn=AGENTCORE_RUNTIME_ARN,
+            qualifier=AGENTCORE_ENDPOINT_NAME,
+            runtimeSessionId=session_id,
+            contentType="application/json",
+            payload=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         )
-        prompt_with_time = (
-            f"[目前台灣時間: {tw_time_str}]\n"
-            f"[回覆語言: {lang}]{dialect_line}\n"
-            "請嚴格使用指定回覆語言，不要從文字內容自行猜測或切換語言。\n"
-            f"{transcript}"
-        )
-
-        response = client.invoke_agent(
-            agentId=BEDROCK_AGENT_ID,
-            agentAliasId=BEDROCK_AGENT_ALIAS_ID,
-            sessionId=elder_id,
-            inputText=prompt_with_time,
-            sessionState={
-                "promptSessionAttributes": {
-                    "response_language": lang,
-                    "hakka_dialect": (
-                        hakka_dialect.value if hakka_dialect is not None else ""
-                    ),
-                }
-            },
-        )
-
-        reply_text = ""
-        routines_updated = False
-        safety_alert_triggered = False
-
-        # 讀取 completion 事件串流
-        for event in response.get("completion", []):
-            if "chunk" in event:
-                chunk_bytes = event["chunk"]["bytes"]
-                reply_text += chunk_bytes.decode("utf-8")
-            
-            # 檢查 Response Trace 是否觸發了 routines 相關工具或通知工具
-            if "trace" in event:
-                trace_str = str(event["trace"])
-                if any(tool in trace_str for tool in ("complete_routine", "create_routine", "update_routine", "deactivate_routine")):
-                    routines_updated = True
-                if "notify_caregiver" in trace_str:
-                    safety_alert_triggered = True
-
-        if not reply_text:
-            reply_text = "抱歉，我剛才沒有聽清，您可以再說一次嗎？"
-
-        return reply_text, routines_updated, safety_alert_triggered
-
+        body = json.loads(response["response"].read().decode("utf-8"))
     except ClientError as e:
-        print(f"[Error] Bedrock Agent invoke failed: {e.response['Error']['Message']}")
-        raise RuntimeError(f"Bedrock Agent invoke error: {e.response['Error']['Message']}")
+        logger.error("呼叫對話大腦失敗：%s", e.response["Error"]["Message"])
+        raise RuntimeError("AgentCore invoke error")
+    except (KeyError, ValueError):
+        logger.exception("對話大腦回應無法解析：elder_id=%s", elder_id)
+        raise RuntimeError("AgentCore response error")
+
+    reply_text = (body.get("reply_text") or "").strip()
+    if not reply_text:
+        reply_text = "抱歉，我剛才沒有聽清，您可以再說一次嗎？"
+
+    return reply_text, bool(body.get("routines_updated")), bool(body.get("safety_alert_triggered"))
 
 
 def upload_audio_to_s3(audio_bytes: bytes, conversation_id: str) -> str | None:
@@ -529,7 +531,6 @@ def accept_new_turn(
     session = requested_session(req)
     turn = {
         "conversation_id": conversation_id,
-        "idempotency_key": req.client_request_id,
         "client_request_id": req.client_request_id,
         "request_hash": payload_hash,
         "lang": req.lang,
@@ -631,7 +632,7 @@ def run_turn(
 
     try:
         reply_text, routines_updated, safety_alert_triggered = invoke_agent_brain(
-            req.elder_id, transcript, req.lang, hakka_dialect
+            req.elder_id, transcript, req.lang
         )
     except Exception:
         raise TurnFailure(500, "INTERNAL_ERROR", "對話服務目前無法使用")

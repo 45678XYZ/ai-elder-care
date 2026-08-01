@@ -17,10 +17,11 @@ TAXONOMY_ASSETS_DIR = ASSETS_DIR / "taxonomy"
 RETRIEVAL_ASSETS_DIR = ASSETS_DIR / "retrieval"
 SEGMENTER_ASSETS_DIR = ASSETS_DIR / "segmenter"
 
-# 分塊策略；llm_prompt 為預設（品質最好），encoder 系列供離線與降級使用
+# 分塊策略；llm_prompt 為預設（品質最好），encoder 系列供離線與降級使用，full_session 為整會話單一塊
 CHUNKER_LLM_PROMPT = "llm_prompt"
 CHUNKER_EMBEDDING_DEPTH = "embedding_depth"
 CHUNKER_PAIRWISE_V2 = "pairwise_v2"
+CHUNKER_FULL_SESSION = "full_session"
 
 # 萃取階段的 schema 約束方式；預設走 prompt 指引加後驗證，見 feature 文件 §4
 EXTRACTION_PROMPT_GUIDED = "prompt_guided"

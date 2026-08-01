@@ -24,7 +24,7 @@ resource "aws_cognito_user_pool" "accounts" {
   # 註冊完成後自動綁定 SNS
   lambda_config {
     pre_token_generation = module.pre_token.lambda_function_arn
-    post_confirmation    = aws_lambda_function.post_confirmation.arn
+    post_confirmation    = module.post_confirmation.lambda_function_arn
   }
 }
 

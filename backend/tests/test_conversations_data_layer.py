@@ -97,22 +97,15 @@ def test_list_turn_times_returns_completed_turns_in_order(db):
 def test_saved_conversation_is_countable_as_an_interaction(db):
     """寫入端與統計讀取端的接縫。
 
-    `save_conversation` 寫出來的 turn 必須被 `list_turn_times` 讀到——少了
+    寫出來的 turn 必須被 `list_turn_times` 讀到——少了
     `request_status` 就會被過濾條件整批濾掉，統計無聲變 0。
     """
-    db.save_conversation(
-        {
-            "elder_id": ELDER,
-            "conversation_id": "cnv_saved",
-            "created_at": "2026-07-13T09:05:00.000+08:00",
-            "elder_transcript": "我吃過血壓藥了",
-            "ai_respond_text": "有按時吃藥真棒！",
-        }
-    )
+    put_turn(db, "2026-07-13T09:05:00.000+08:00", "cnv_saved")
 
     assert db.list_turn_times(ELDER, "2026-07-13", "2026-07-13") == [
         "2026-07-13T09:05:00.000+08:00"
     ]
+
 
 
 def test_list_turn_times_skips_unfinished_and_failed_turns(db):

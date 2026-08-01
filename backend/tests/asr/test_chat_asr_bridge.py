@@ -84,7 +84,7 @@ def _reset(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             chat,
             "invoke_agent_brain",
-            lambda elder_id, transcript, lang, dialect: ("回覆", False, False),
+            lambda elder_id, transcript, lang="zh-TW": ("回覆", False, False),
         )
 
         class _FakeFacade:

@@ -13,7 +13,8 @@
 
 三個設計選擇撐起冪等性：
 
-- **身分穩定**：`conversation_id` 由 `elder_id + idempotency_key` 穩定產生，因此「同一個請求」
+- **身分穩定**：`conversation_id` 由 `elder_id + client_request_id` 穩定產生，因此「同一個請求」
+
   重送時必然指向同一筆 item，冪等判定只是一次強一致 GetItem，不需要額外索引或掃描。
 - **request lease**：`processing` 帶租約。租約未到期代表另一個 invocation 還在飛，重送回 409；
   到期才可接管，讓「Lambda 被砍掉」的 turn 不會永遠卡住 session 的 inflight reservation。
@@ -49,11 +50,12 @@ INPUT_BYTE_FIELDS: tuple[str, ...] = ("ai_prompt_text", "elder_transcript", "ai_
 # reserve 時必須由呼叫端指定的欄位；其餘由本模組補齊
 _REQUIRED_TURN_FIELDS: tuple[str, ...] = (
     "conversation_id",
-    "idempotency_key",
+    "client_request_id",
     "request_hash",
     "lang",
     "input_type",
 )
+
 
 
 class TurnError(db.DBError):
@@ -162,11 +164,9 @@ def reserve(
         "source": "elder_initiated",
         "user_status": "replied",
         "routines_updated": False,
-        "rt_extraction_status": "pending",
-        "rt_extraction_attempts": 0,
-        "batch_extraction_status": "pending",
         "schema_version": 1,
         **turn,
+
         "elder_id": elder_id,
         "record_id": turn_record_id(conversation_id),
         "conversation_time_key": f"{created_at}#{conversation_id}",
@@ -327,10 +327,9 @@ def commit(
             "request_status": STATUS_COMPLETED,
             "system_status": "success",
             "ai_responded_at": completed_at,
-            "rt_extraction_status": STATUS_COMPLETED,
-            "rt_extracted_at": completed_at,
         }
     )
+
     turn_values.update(
         db.to_attribute_values({":processing": STATUS_PROCESSING, ":owner": owner})
     )

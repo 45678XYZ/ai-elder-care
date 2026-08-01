@@ -98,8 +98,7 @@ def stack(monkeypatch):
         monkeypatch.setattr(
             chat,
             "invoke_agent_brain",
-            lambda eid, txt, lang, dialect: calls.append(txt)
-            or (REPLY, True, False),
+            lambda eid, txt, lang="zh-TW": calls.append(txt) or (REPLY, True, False),
         )
         monkeypatch.setattr(chat.db, "get_elder", lambda elder_id: {"elder_id": elder_id})
         monkeypatch.setattr(chat, "get_tts_facade", lambda: DummyTTSFacade())
@@ -129,40 +128,37 @@ def body_of(response):
     return json.loads(response["body"])
 
 
-def test_agent_receives_explicit_language_and_dialect(monkeypatch):
+def test_agent_receives_explicit_language(monkeypatch):
+    """語言由 payload 明確指定，不讓大腦從逐字稿內容自行猜測或切換。"""
     from src.handlers import chat
-    from src.shared.tts import HakkaDialect
+
+    class Body:
+        @staticmethod
+        def read():
+            return json.dumps({"reply_text": "食飽咧。"}).encode()
 
     class Client:
-        def invoke_agent(self, **kwargs):
+        def invoke_agent_runtime(self, **kwargs):
             self.kwargs = kwargs
-            return {"completion": [{"chunk": {"bytes": "食飽咧。".encode()}}]}
+            return {"response": Body()}
 
     client = Client()
-    monkeypatch.setattr(chat, "BEDROCK_AGENT_ID", "agent-1")
-    monkeypatch.setattr(chat, "get_bedrock_agent_runtime", lambda: client)
+    monkeypatch.setattr(chat, "AGENTCORE_RUNTIME_ARN", "arn:aws:bedrock-agentcore:::runtime/x")
+    monkeypatch.setattr(chat, "get_agentcore_client", lambda: client)
 
-    reply, _, _ = chat.invoke_agent_brain(
-        ELDER, "食飽吂？", "hak", HakkaDialect.HAILU
-    )
+    reply, _, _ = chat.invoke_agent_brain(ELDER, "食飽吂？", "hak")
 
-    attributes = client.kwargs["sessionState"]["promptSessionAttributes"]
-    assert attributes == {
-        "response_language": "hak",
-        "hakka_dialect": "htia_hailu",
-    }
-    assert "[回覆語言: hak]" in client.kwargs["inputText"]
+    payload = json.loads(client.kwargs["payload"].decode())
+    assert payload["lang"] == "hak"
+    assert payload["elder_id"] == ELDER
     assert reply == "食飽咧。"
 
 
 def test_local_hakka_agent_fallback_does_not_switch_to_chinese(monkeypatch):
     from src.handlers import chat
-    from src.shared.tts import HakkaDialect
 
-    monkeypatch.setattr(chat, "BEDROCK_AGENT_ID", "")
-    reply, _, _ = chat.invoke_agent_brain(
-        ELDER, "食飽吂？", "hak", HakkaDialect.SIXIAN
-    )
+    monkeypatch.setattr(chat, "AGENTCORE_RUNTIME_ARN", "")
+    reply, _, _ = chat.invoke_agent_brain(ELDER, "食飽吂？", "hak")
 
     assert "𠊎" in reply
 
@@ -375,8 +371,8 @@ def test_in_flight_request_returns_409(stack):
         session["session_id"],
         turn={
             "conversation_id": conversation_id,
-            "idempotency_key": REQUEST_ID,
             "client_request_id": REQUEST_ID,
+
             "request_hash": chat.request_hash(
                 chat.ChatRequest.model_validate(chat_body()), b""
             ),
@@ -402,8 +398,8 @@ def test_expired_lease_is_taken_over_and_completed(stack, monkeypatch):
         session["session_id"],
         turn={
             "conversation_id": conversation_id,
-            "idempotency_key": REQUEST_ID,
             "client_request_id": REQUEST_ID,
+
             "request_hash": chat.request_hash(
                 chat.ChatRequest.model_validate(chat_body()), b""
             ),
@@ -486,7 +482,7 @@ def test_unstored_audio_does_not_become_a_dead_link(stack, monkeypatch):
 def test_bedrock_failure_is_recorded_as_failed(stack, monkeypatch):
     chat, _, _, turns, _ = stack
 
-    def broken(elder_id, transcript, lang, dialect):
+    def broken(elder_id, transcript, lang="zh-TW"):
         raise RuntimeError("bedrock down")
 
     monkeypatch.setattr(chat, "invoke_agent_brain", broken)
@@ -498,3 +494,81 @@ def test_bedrock_failure_is_recorded_as_failed(stack, monkeypatch):
     assert turn["request_status"] == turns.STATUS_FAILED
     # 保存的錯誤要是穩定且安全化的，不得夾帶內部例外訊息
     assert "bedrock down" not in turn["error_message"]
+
+
+# =============================================================================
+# 對話大腦呼叫層（AgentCore Runtime）
+# =============================================================================
+
+def _chat_module():
+    """取未經 moto 重載的 chat 模組；本節只測純函式與 client 呼叫組裝。"""
+    return importlib.import_module("src.handlers.chat")
+
+
+def test_runtime_session_id_meets_api_minimum_length():
+    """AgentCore 規定 runtimeSessionId 最短 33 字元，直接傳 elder_id 會被 API 擋掉。"""
+    chat = _chat_module()
+    assert len(chat.runtime_session_id("eld_001")) >= 33
+
+
+def test_runtime_session_id_is_stable_per_elder():
+    """同一位長者必須永遠得到同一個值：這個 ID 就是託管記憶的對話串鍵。"""
+    chat = _chat_module()
+    assert chat.runtime_session_id(ELDER) == chat.runtime_session_id(ELDER)
+    assert chat.runtime_session_id(ELDER) != chat.runtime_session_id("eld_other")
+
+
+class _FakeStreamingBody:
+    def __init__(self, payload):
+        self._payload = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    def read(self):
+        return self._payload
+
+
+class _FakeAgentCoreClient:
+    def __init__(self, payload):
+        self._payload = payload
+        self.calls = []
+
+    def invoke_agent_runtime(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"response": _FakeStreamingBody(self._payload)}
+
+
+def test_invoke_agent_brain_reads_flags_from_payload(monkeypatch):
+    """旗標由 runtime 明確回報，不再靠掃 trace 字串猜工具有沒有被呼叫。"""
+    chat = _chat_module()
+    fake = _FakeAgentCoreClient(
+        {"reply_text": REPLY, "routines_updated": True, "safety_alert_triggered": True}
+    )
+    monkeypatch.setattr(chat, "AGENTCORE_RUNTIME_ARN", "arn:aws:bedrock-agentcore:::runtime/x")
+    monkeypatch.setattr(chat, "get_agentcore_client", lambda: fake)
+
+    reply, routines_updated, safety_alert = chat.invoke_agent_brain(ELDER, TRANSCRIPT, "zh-TW")
+
+    assert reply == REPLY
+    assert routines_updated is True
+    assert safety_alert is True
+
+    sent = fake.calls[0]
+    assert len(sent["runtimeSessionId"]) >= 33
+    payload = json.loads(sent["payload"].decode("utf-8"))
+    # 時間戳走獨立欄位，不混進長者原話——否則會一起被寫進長期記憶
+    assert payload["text"] == TRANSCRIPT
+    assert payload["local_time"]
+    assert payload["elder_id"] == ELDER
+
+
+def test_invoke_agent_brain_falls_back_on_empty_reply(monkeypatch):
+    """模型沒產出文字時要有保底回覆，長者至少聽得到一句話。"""
+    chat = _chat_module()
+    fake = _FakeAgentCoreClient({"reply_text": "  ", "routines_updated": False})
+    monkeypatch.setattr(chat, "AGENTCORE_RUNTIME_ARN", "arn:aws:bedrock-agentcore:::runtime/x")
+    monkeypatch.setattr(chat, "get_agentcore_client", lambda: fake)
+
+    reply, routines_updated, safety_alert = chat.invoke_agent_brain(ELDER, TRANSCRIPT)
+
+    assert reply.strip()
+    assert routines_updated is False
+    assert safety_alert is False

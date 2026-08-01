@@ -26,8 +26,8 @@
 ├── AGENTS.md       # Codex 全專案工作規範
 ├── app/            # Flutter（elder/ caregiver/ 兩組頁面 + shared services）
 ├── asr-lambda/     # CE/Formo SageMaker container 開發與 staging 相容性預檢
-├── backend/        # Python Lambda handlers＋ASR/TTS 領域模組＋extraction pipeline
-├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, Transcribe, SageMaker ASR/TTS
+├── backend/        # Python Lambda handlers＋agentcore_runtime/ 對話大腦＋ASR/TTS 領域模組＋extraction/ 生活記錄萃取 pipeline
+├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, AgentCore Runtime, Transcribe, SageMaker ASR/TTS
 ├── data/           # 模擬長者 persona、合成情境腳本、seed 腳本、knowledge/ 衛教文件
 ├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、交付文件、PII、開發流程與功能移植計畫
 └── skills/         # 供各 AI 工具開發使用的 skill（開發者需自行加入自己的工具）

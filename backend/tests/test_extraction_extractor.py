@@ -94,14 +94,12 @@ def run(client, composed, taxonomy, **kwargs):
 
 
 def test_prompt_carries_dynamic_schema_rules(composed, taxonomy):
-    lexicon = load_predicate_lexicon()
     prompt = build_extraction_prompt(
         "chk_1",
         TRANSCRIPT,
         REFERENCE,
         composed,
         taxonomy,
-        predicate_candidates=lexicon.candidates_for_prompt(composed.concept_ids),
         elder=ELDER,
     )
     # 決策 H：不走硬約束，schema 規則必須在 prompt 裡明列
@@ -109,9 +107,11 @@ def test_prompt_carries_dynamic_schema_rules(composed, taxonomy):
     assert "medication_item" in prompt
     assert "systolic_bp" in prompt
     assert '"additionalProperties": false' in prompt
-    # predicate 受控詞彙與出口
-    assert "服用血壓藥" in prompt
-    assert "__other__" in prompt
+    # 開放世界 predicate：不再列候選清單和 __other__ 出口
+    assert "predicate 填寫規則" in prompt
+    assert "__other__" not in prompt
+    # 事實判定原則（P1 修復核心）
+    assert "事實判定原則" in prompt
     # 時序推導基準與 chunk_id
     assert REFERENCE in prompt
     assert "chk_1" in prompt

@@ -1,367 +1,497 @@
-/// 後端 API 客戶端。規格見 docs/api.md。
-///
-/// 共通慣例：
-/// - 所有請求帶 Authorization: Bearer <Cognito ID Token>
-/// - 錯誤 body 為 { "error": { "code", "message" } }（401 除外，由 API Gateway 回應）
-/// - 列表分頁：?limit= 與 ?next_token=
-library;
-
-import 'dart:convert';
-import 'dart:math';
+﻿import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-/// 辨識語言。wire 值必須與 api.md 的 `Language` enum 一致。
-enum ChatLanguage {
-  zhTw('zh-TW'),
-  hak('hak');
+import '../config/api_config.dart';
+import '../models/ask_result.dart';
+import '../models/caregiver.dart';
+import '../models/chat_reply.dart';
+import '../models/daily_summary.dart';
+import '../models/elder.dart';
+import '../models/life_event.dart';
+import '../models/api_page.dart';
+import '../models/routine.dart';
+import '../models/session_close.dart';
+import '../models/stats.dart';
+import 'api_exception.dart';
 
-  const ChatLanguage(this.wireValue);
-
-  final String wireValue;
-
-  /// 裝置 TTS fallback 要求的 locale；只做 capability 判斷，不代表已安裝 voice。
-  String get deviceTtsLocale => this == ChatLanguage.zhTw ? 'zh-TW' : 'hak-TW';
-
-  /// 只有裝置回報精確支援要求 locale 時才可嘗試 OS TTS，否則保留文字／重試。
-  bool canUseDeviceTtsFallback(Iterable<String> supportedLocales) {
-    final requiredLocale = deviceTtsLocale.toLowerCase();
-    return supportedLocales.any(
-      (locale) => locale.replaceAll('_', '-').toLowerCase() == requiredLocale,
-    );
-  }
-}
-
-/// 客語 ASR 與 TTS 共用腔調；來源只允許 elder profile。
-enum HakkaDialect {
-  sixian('htia_sixian'),
-  hailu('htia_hailu'),
-  dapu('htia_dapu'),
-  raoping('htia_raoping'),
-  zhaoan('htia_zhaoan'),
-  nansixian('htia_nansixian');
-
-  const HakkaDialect(this.wireValue);
-
-  final String wireValue;
-
-  static HakkaDialect fromWireValue(String value) => values.firstWhere(
-        (dialect) => dialect.wireValue == value,
-        orElse: () => HakkaDialect.sixian,
-      );
-}
-
-/// Elder profile 中供 ASR/TTS 共用的語音偏好投影。
-class ElderVoicePreferences {
-  const ElderVoicePreferences({
-    required this.language,
-    required this.hakkaDialect,
-  });
-
-  factory ElderVoicePreferences.fromJson(Map<String, Object?> json) {
-    final languageValue = json['lang_preference'] as String? ?? 'zh-TW';
-    return ElderVoicePreferences(
-      language: ChatLanguage.values.firstWhere(
-        (language) => language.wireValue == languageValue,
-        orElse: () => ChatLanguage.zhTw,
-      ),
-      hakkaDialect: HakkaDialect.fromWireValue(
-        json['hakka_dialect'] as String? ?? HakkaDialect.sixian.wireValue,
-      ),
-    );
-  }
-
-  final ChatLanguage language;
-  final HakkaDialect hakkaDialect;
-
-  Map<String, Object?> toJson() => {
-        'lang_preference': language.wireValue,
-        'hakka_dialect': hakkaDialect.wireValue,
-      };
-}
-
-/// 上傳音訊的容器格式。後端只接受這兩種。
-enum AudioFormat {
-  wav('wav'),
-  m4a('m4a');
-
-  const AudioFormat(this.wireValue);
-
-  final String wireValue;
-}
-
-/// 送往 `POST /chat` 的音訊輸入。單句 ≤ 60 秒，否則後端回 400 `AUDIO_TOO_LONG`。
-class AudioInput {
-  const AudioInput({required this.base64Data, required this.format});
-
-  /// base64 編碼後的音訊位元組。
-  final String base64Data;
-  final AudioFormat format;
-
-  Map<String, Object?> toJson() => {
-        'data': base64Data,
-        'format': format.wireValue,
-      };
-}
-
-/// `POST /chat` 的成功回應。
-class ChatResult {
-  const ChatResult({
-    required this.conversationId,
-    required this.sessionId,
-    required this.transcript,
-    required this.replyText,
-    required this.replyAudioUrl,
-    required this.routinesUpdated,
-  });
-
-  factory ChatResult.fromJson(Map<String, Object?> json) {
-    return ChatResult(
-      conversationId: json['conversation_id'] as String? ?? '',
-      sessionId: json['session_id'] as String? ?? '',
-      transcript: json['transcript'] as String? ?? '',
-      replyText: json['reply_text'] as String? ?? '',
-      replyAudioUrl: json['reply_audio_url'] as String?,
-      routinesUpdated: json['routines_updated'] as bool? ?? false,
-    );
-  }
-
-  /// 本 turn 的 ID；相同 client_request_id 重送會得到同一個值。
-  final String conversationId;
-
-  /// 本 turn 實際使用的 session；下一輪必須帶回這個值。
-  final String sessionId;
-  final String transcript;
-  final String replyText;
-
-  /// 15 分鐘有效的 S3 presigned URL；TTS 全部失敗時為 null，文字回覆仍成立。
-  final String? replyAudioUrl;
-
-  bool get hasReplyAudio => replyAudioUrl?.isNotEmpty ?? false;
-
-  /// 為 true 時應背景重拉 `GET /routines` 並重排本地通知。
-  final bool routinesUpdated;
-}
-
-/// 後端回傳的具型別錯誤。
+/// 後端 API 客戶端。端點、欄位、錯誤格式與分頁規則一律以 docs/api.md 為準。
 ///
-/// [code] 是穩定識別碼，UX 分支只能依它判斷；[message] 可能調整，僅供顯示。
-class ApiException implements Exception {
-  const ApiException({
-    required this.statusCode,
-    required this.code,
-    required this.message,
-  });
-
-  final int statusCode;
-  final String code;
-  final String message;
-
-  /// 後端仍在處理同一個 client_request_id。應以**相同** ID 重試，不可換新 ID。
-  bool get isRequestInProgress => code == 'REQUEST_IN_PROGRESS';
-
-  /// 同一個 client_request_id 搭配了不同內容。必須改用新的 ID。
-  bool get isIdempotencyConflict => code == 'IDEMPOTENCY_CONFLICT';
-
-  /// 音訊超過 60 秒；重錄較短的一句才有意義。
-  bool get isAudioTooLong => code == 'AUDIO_TOO_LONG';
-
-  @override
-  String toString() => 'ApiException($statusCode, $code): $message';
-}
-
-/// 網路層或回應格式問題（無法解析成 api.md 的錯誤結構）。
-class ApiTransportException implements Exception {
-  const ApiTransportException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => 'ApiTransportException: $message';
-}
-
-/// 取得 Cognito ID Token 的回呼。由 AuthService 提供，並負責自動更新。
-typedef IdTokenProvider = Future<String> Function();
-
+/// 本類自己的實作決定（api.md 未規範的部分）：
+/// - 認證 token 由 [ApiClient.new] 的 `tokenProvider` 提供（登入接上 Cognito 後注入），
+///   尚未接上時不帶 Authorization header。
+/// - 本類是**薄的一層**：只負責組請求、解回應、把錯誤轉成 [ApiException]，
+///   不做重試、不持有 session 狀態。冪等鍵（`client_request_id`）一律由呼叫端提供並持有，
+///   因為重送必須沿用同一個值——長者對話的那一份由 [ChatSession] 管。
+///
+/// [ask] 是過渡端點——打本機 RAG PoC 的 `/ask`（無認證、無 `/v1` 前綴），先驗證問答串接；
+/// 正式後端上線後由 [chat] 取代。
 class ApiClient {
   ApiClient({
-    required this.baseUrl,
-    required this.idTokenProvider,
+    String? baseUrl,
     http.Client? httpClient,
-  }) : _http = httpClient ?? http.Client();
+    Future<String?> Function()? tokenProvider,
+  })  : _baseUrl = baseUrl ?? ApiConfig.baseUrl,
+        _http = httpClient ?? http.Client(),
+        _tokenProvider = tokenProvider;
 
-  /// API Gateway 的路徑前綴，含 `/v1`。例：`https://xxx.execute-api.../v1`
-  final String baseUrl;
-  final IdTokenProvider idTokenProvider;
+  final String _baseUrl;
   final http.Client _http;
 
-  /// `POST /chat` 的等待上限。後端一次 turn 要做 ASR、對話推導與 TTS，
-  /// 因此比一般讀取端點寬鬆。
-  static const Duration chatTimeout = Duration(seconds: 45);
+  /// 取得目前 Cognito ID Token；回傳 null 表示尚未登入。
+  final Future<String?> Function()? _tokenProvider;
 
-  /// 送出一句長者輸入並取得 AI 回覆。[text] 與 [audio] 必須擇一。
+  // ---- RAG PoC（過渡）----
+
+  /// 送一句問題到本機 RAG PoC 的 `POST /ask`，回傳答案與引用來源。
   ///
-  /// [clientRequestId] 是冪等鍵：
-  /// - **新的一句話**：省略，讓本方法產生新 ID。
-  /// - **重送同一句話**（連線中斷、收到 409 `REQUEST_IN_PROGRESS`）：必須帶回
-  ///   原本的 ID。換新 ID 會讓後端當成新的一句，可能重複建立行程或事件。
+  /// 過渡用端點：契約（`{question}` → `{answer, sources}`）比正式 [chat] 簡單，沒有語音、
+  /// 對話 ID、行程更新旗標。正式後端上線後由 [chat] 取代。連線或非 200 時丟 [ApiException]。
+  Future<AskResult> ask(String question) async {
+    final http.Response res;
+    try {
+      res = await _http.post(
+        Uri.parse('$_baseUrl/ask'),
+        headers: const {'Content-Type': 'application/json; charset=utf-8'},
+        body: jsonEncode({'question': question}),
+      );
+    } catch (e) {
+      throw ApiException('無法連線到後端：$e');
+    }
+
+    if (res.statusCode != 200) {
+      throw ApiException(_errorMessage(res), statusCode: res.statusCode);
+    }
+    // http 套件的 body getter 依 content-type charset 以 UTF-8 解碼。
+    return AskResult.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  // ---- 對話（長者模式）----
+
+  /// `POST /chat` — realtime 對話快路徑。[text] 與 [audioBase64] 擇一（audio 為 base64）。
   ///
-  /// 第一輪省略 [sessionId]；之後帶回上一輪回應的 [ChatResult.sessionId]。
-  Future<ChatResult> chat({
+  /// [clientRequestId] 是冪等鍵：**每次新的長者輸入產生新值，同一次輸入重送沿用原值**。
+  /// 呼叫端不要在這裡臨時生成——重試時值必須一樣，否則會重複建立 routine／event。
+  /// 一般直接用 [ChatSession]，它已代管冪等鍵與 session。
+  ///
+  /// [sessionId] 第一輪省略；之後帶回前一輪回應的值。後端可能因原 session 已 idle／關閉／
+  /// 達上限而改用新 session，實際使用的以回應的 [ChatReply.sessionId] 為準。
+  ///
+  /// text 與 audio 同時給或同時空白時丟 [ArgumentError]——這是呼叫端的錯，
+  /// 不必送出去等後端回 400。
+  Future<ChatReply> chat({
+    required String clientRequestId,
     required String elderId,
-    required ChatLanguage lang,
-    String? text,
-    AudioInput? audio,
+    required String lang,
     String? sessionId,
-    String? clientRequestId,
+    String? text,
+    String? audioBase64,
+    String audioFormat = 'm4a',
   }) async {
-    if ((text == null) == (audio == null)) {
-      throw ArgumentError('text 與 audio 必須擇一填寫，不可同時提供或同時省略');
+    final hasText = text != null && text.isNotEmpty;
+    final hasAudio = audioBase64 != null && audioBase64.isNotEmpty;
+    if (hasText == hasAudio) {
+      throw ArgumentError('text 與 audio 擇一必填，不可同時給或同時空白。');
     }
 
-    final body = <String, Object?>{
-      'client_request_id': clientRequestId ?? newClientRequestId(),
-      'elder_id': elderId,
-      'lang': lang.wireValue,
+    final json = await _request('POST', '/chat', body: {
+      'client_request_id': clientRequestId,
       if (sessionId != null) 'session_id': sessionId,
+      'elder_id': elderId,
+      'lang': lang,
       if (text != null) 'text': text,
-      if (audio != null) 'audio': audio.toJson(),
-    };
-
-    final json = await _post('/chat', body, timeout: chatTimeout);
-    return ChatResult.fromJson(json);
+      if (audioBase64 != null)
+        'audio': {'data': audioBase64, 'format': audioFormat},
+    });
+    return ChatReply.fromJson(json);
   }
 
-  /// 關閉 session：停止追加 turn 並啟動離線事件整理。
+  /// `POST /chat/sessions/{id}/close` — 明確關閉 session。
   ///
-  /// 以 session 狀態保證冪等，因此不需要 client_request_id；收到 409
-  /// `REQUEST_IN_PROGRESS` 時重試同一個呼叫即可。
-  Future<Map<String, Object?>> closeChatSession(String sessionId) {
-    return _post('/chat/sessions/$sessionId/close', const <String, Object?>{});
-  }
-
-  /// 更新 elder profile 的語言與客語腔調；後續 turn 的 ASR/TTS 會共同採用。
-  Future<ElderVoicePreferences> updateElderVoicePreferences({
-    required String elderId,
-    required ElderVoicePreferences preferences,
-  }) async {
-    final json = await _patch('/elders/$elderId', preferences.toJson());
-    return ElderVoicePreferences.fromJson(json);
-  }
-
-  void close() => _http.close();
-
-  // TODO: getElders() / getElder() / createElder() / updateElder()
-  // TODO: getSummaries() / generateSummary()
-  // TODO: getEvents()
-  // TODO: getRoutines()（定義列表 / ?date= 當日視圖）
-  // TODO: createRoutine() / updateRoutine() / completeRoutine()
-  // TODO: getStats()
-
-  Future<Map<String, Object?>> _post(
-    String path,
-    Map<String, Object?> body, {
-    Duration timeout = const Duration(seconds: 15),
-  }) async {
-    final token = await idTokenProvider();
-    final http.Response response;
-    try {
-      response = await _http
-          .post(
-            Uri.parse('$baseUrl$path'),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json; charset=utf-8',
-            },
-            body: jsonEncode(body),
-          )
-          .timeout(timeout);
-    } on Exception catch (error) {
-      throw ApiTransportException('呼叫 $path 失敗：$error');
-    }
-
-    return _decode(response, path);
-  }
-
-  Future<Map<String, Object?>> _patch(
-    String path,
-    Map<String, Object?> body, {
-    Duration timeout = const Duration(seconds: 15),
-  }) async {
-    final token = await idTokenProvider();
-    final http.Response response;
-    try {
-      response = await _http
-          .patch(
-            Uri.parse('$baseUrl$path'),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json; charset=utf-8',
-            },
-            body: jsonEncode(body),
-          )
-          .timeout(timeout);
-    } on Exception catch (error) {
-      throw ApiTransportException('呼叫 $path 失敗：$error');
-    }
-    return _decode(response, path);
-  }
-
-  /// 解析回應；非 2xx 一律轉成 [ApiException]。
-  Map<String, Object?> _decode(http.Response response, String path) {
-    // 後端一律 UTF-8；不用 response.body 是因為它依 Content-Type 猜編碼，
-    // 缺 charset 時會把中文解成亂碼。
-    final raw = utf8.decode(response.bodyBytes, allowMalformed: true);
-
-    Object? decoded;
-    if (raw.isNotEmpty) {
-      try {
-        decoded = jsonDecode(raw);
-      } on FormatException {
-        decoded = null;
-      }
-    }
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      if (decoded is Map<String, Object?>) {
-        return decoded;
-      }
-      throw ApiTransportException('$path 回應不是 JSON 物件');
-    }
-
-    // 401 由 API Gateway 回應，格式與 api.md 的錯誤結構不同，因此可能取不到 code。
-    var code = 'UNKNOWN_ERROR';
-    var message = raw.isEmpty ? 'HTTP ${response.statusCode}' : raw;
-    if (decoded is Map<String, Object?>) {
-      final error = decoded['error'];
-      if (error is Map<String, Object?>) {
-        code = error['code'] as String? ?? code;
-        message = error['message'] as String? ?? message;
-      }
-    }
-    if (response.statusCode == 401) {
-      code = 'UNAUTHORIZED';
-    }
-
-    throw ApiException(
-      statusCode: response.statusCode,
-      code: code,
-      message: message,
+  /// 停止免手持互動、離開對話畫面或切換長者前呼叫；會凍結快照並啟動離線事件整理。
+  /// 只有 token 對應的長者本人可呼叫。
+  ///
+  /// 冪等靠 session 狀態，**不需要也不可帶 `client_request_id`**：還有 turn 在處理時
+  /// 回 409 `REQUEST_IN_PROGRESS`，退避後重送同一個呼叫即可（[ChatSession.close] 已代辦）。
+  Future<SessionCloseResult> closeSession(String sessionId) async {
+    // body 可省略，但送出時 api.md 要求必須是空 object。
+    final json = await _request(
+      'POST',
+      '/chat/sessions/$sessionId/close',
+      body: const <String, dynamic>{},
     );
+    return SessionCloseResult.fromJson(json);
   }
-}
 
-/// 產生 client_request_id 用的 UUID v4。
-///
-/// 自己實作而不引入 uuid 套件：只需要一個隨機識別碼，不值得為此增加依賴。
-String newClientRequestId() {
-  final random = Random.secure();
-  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
-  // version 4、variant 10xx
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  // ---- 呼叫者身分 ----
 
-  final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
-      '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+  /// `GET /me` — 呼叫者自己的身分（照護者 ID 與顯示名稱）。
+  ///
+  /// 照護者要把 ID 報給家人（長輩手機上的「連結家人」輸入它），得先看得到自己的 ID。
+  /// 長者帳號呼叫回 403 `FORBIDDEN`，所以只在照護者模式呼叫。
+  Future<Caregiver> getMe() async {
+    final json = await _request('GET', '/me');
+    return Caregiver.fromJson(json);
+  }
+
+  // ---- 長者資料 ----
+
+  /// `GET /elders` — 長者列表（一頁）。
+  ///
+  /// 續頁把上一頁的 [ApiPage.nextToken] 原樣帶進 [nextToken]；[getAllElders] 是自動翻完的版本。
+  Future<ApiPage<Elder>> getElders({int? limit, String? nextToken}) async {
+    final json = await _request('GET', '/elders',
+        query: _pageQuery(limit: limit, nextToken: nextToken));
+    return ApiPage.fromJson(json, Elder.fromJson);
+  }
+
+  /// 翻完所有頁的長者列表。照護者綁定的長者數量有限，一次載齊比讓 UI 處理分頁單純。
+  Future<List<Elder>> getAllElders({int? limit}) =>
+      _drain((token) => getElders(limit: limit, nextToken: token));
+
+  /// `GET /elders/{id}` — 單筆長者。
+  Future<Elder> getElder(String elderId) async {
+    final json = await _request('GET', '/elders/$elderId');
+    return Elder.fromJson(json);
+  }
+
+  /// `POST /elders` — 建立長者。[fields] 的必填欄位見 docs/api.md。
+  Future<Elder> createElder(Map<String, dynamic> fields) async {
+    final json = await _request('POST', '/elders', body: fields);
+    return Elder.fromJson(json);
+  }
+
+  /// `PATCH /elders/{id}` — 部分更新長者。
+  Future<Elder> updateElder(String elderId, Map<String, dynamic> fields) async {
+    final json = await _request('PATCH', '/elders/$elderId', body: fields);
+    return Elder.fromJson(json);
+  }
+
+  /// `POST /elders/{id}/health_notes` — 新增一筆健康註記。
+  ///
+  /// 與 [updateElder] 送整份 `health_notes` 的差別在於這裡是原子 append：這個欄位
+  /// 對話中的 AI 也會寫（api.md），整份覆寫會把對方期間寫進去的內容一起蓋掉。
+  ///
+  /// 不帶 `source`——來源由後端依寫入路徑決定，client 指定會被回 400。
+  Future<Elder> addHealthNote(String elderId, String text) async {
+    final json = await _request('POST', '/elders/$elderId/health_notes',
+        body: {'text': text});
+    return Elder.fromJson(json);
+  }
+
+  /// `DELETE /elders/{id}/health_notes/{note_id}` — 刪除一筆健康註記。
+  ///
+  /// 找不到那一筆回 404 `HEALTH_NOTE_NOT_FOUND`。
+  Future<Elder> removeHealthNote(String elderId, String noteId) async {
+    final json =
+        await _request('DELETE', '/elders/$elderId/health_notes/$noteId');
+    return Elder.fromJson(json);
+  }
+
+  // ---- 綁定照護者 ----
+
+  /// `POST /elders/{id}/caregivers` — 把一位照護者綁到這位長者（長者本人呼叫）。
+  ///
+  /// 回傳的 [CaregiverLink.isNew] 區分兩種成功：201 是這次才綁上的、200 是早就綁過了。
+  /// 兩者都算成功，但畫面要說不同的話——長輩才知道剛才那一下到底有沒有作用。
+  ///
+  /// 靠「長者＋照護者」天然冪等，不需要 `client_request_id`：重送走同一條路。
+  /// 查無此 ID 回 404 `CAREGIVER_NOT_FOUND`（打錯字就是這個）；`elder_id` 不存在或
+  /// 不屬於本人一律回 404 `ELDER_NOT_FOUND`，不以 403 區分，避免洩漏某位長者是否存在。
+  Future<CaregiverLink> linkCaregiver({
+    required String elderId,
+    required String caregiverId,
+  }) async {
+    final (json, status) = await _requestWithStatus(
+      'POST',
+      '/elders/$elderId/caregivers',
+      body: {'caregiver_id': caregiverId},
+    );
+    return (caregiver: Caregiver.fromJson(json), isNew: status == 201);
+  }
+
+  /// `GET /elders/{id}/caregivers` — 已綁定的家人（已翻完所有頁）。
+  ///
+  /// 按 `linked_at` 由舊到新。長者本人與已綁定的照護者都讀得到。
+  Future<List<Caregiver>> getCaregivers(String elderId) =>
+      _drain((token) async {
+        final json = await _request('GET', '/elders/$elderId/caregivers',
+            query: _pageQuery(nextToken: token));
+        return ApiPage.fromJson(json, Caregiver.fromJson);
+      });
+
+  // ---- 每日摘要（照護者）----
+
+  /// `GET /summaries` — 每日摘要列表（一頁）。[from]/[to] 為日期，含首尾，預設最近 7 天。
+  ///
+  /// 回傳的摘要可能是 partial（見 [DailySummary.isPartial]）——當日仍有對話未整理完，
+  /// UI 要據此提示，不可當成當日全貌。
+  Future<ApiPage<DailySummary>> getSummaries({
+    required String elderId,
+    String? from,
+    String? to,
+    int? limit,
+    String? nextToken,
+  }) async {
+    final json = await _request('GET', '/summaries', query: {
+      'elder_id': elderId,
+      if (from != null) 'from': from,
+      if (to != null) 'to': to,
+      ..._pageQuery(limit: limit, nextToken: nextToken),
+    });
+    return ApiPage.fromJson(json, DailySummary.fromJson);
+  }
+
+  /// `POST /summaries/generate` — 手動觸發生成（Demo 用）。
+  Future<DailySummary> generateSummary({
+    required String elderId,
+    String? date,
+  }) async {
+    final json = await _request('POST', '/summaries/generate', body: {
+      'elder_id': elderId,
+      if (date != null) 'date': date,
+    });
+    return DailySummary.fromJson(json);
+  }
+
+  // ---- 生活事件（時間軸，照護者）----
+
+  /// `GET /events` — 生活事件（一頁）。[from]/[to] 為日期（預設今天），[type] 選填過濾。
+  ///
+  /// 按 `ts` 最新優先、跨頁順序穩定；時間軸捲到底時把 [ApiPage.nextToken] 帶進 [nextToken] 續拉。
+  ///
+  /// 注意可見時機（api.md）：例行公事完成與高風險事件在 `/chat` 回應前就查得到，
+  /// **一般生活事件要等 session 關閉且批次整理完成**才會出現。
+  Future<ApiPage<LifeEvent>> getEvents({
+    required String elderId,
+    String? from,
+    String? to,
+    String? type,
+    int? limit,
+    String? nextToken,
+  }) async {
+    final json = await _request('GET', '/events', query: {
+      'elder_id': elderId,
+      if (from != null) 'from': from,
+      if (to != null) 'to': to,
+      if (type != null) 'type': type,
+      ..._pageQuery(limit: limit, nextToken: nextToken),
+    });
+    return ApiPage.fromJson(json, LifeEvent.fromJson);
+  }
+
+  // ---- 例行公事 ----
+
+  /// `GET /routines?elder_id=` — 例行公事定義列表（App 據此排本地通知）。
+  ///
+  /// 排通知要看到全部定義，所以這裡自動翻完所有頁再回傳。
+  /// `/chat` 回 `routines_updated=true` 時應背景重拉此端點並重排通知。
+  Future<List<Routine>> getRoutines({required String elderId}) =>
+      _drain((token) async {
+        final json = await _request('GET', '/routines', query: {
+          'elder_id': elderId,
+          ..._pageQuery(nextToken: token),
+        });
+        return ApiPage.fromJson(json, Routine.fromJson);
+      });
+
+  /// `GET /routines?elder_id=&date=` — 當日行程視圖（展開該日 occurrence 與完成狀態）。
+  Future<DailyRoutineView> getDailyRoutines({
+    required String elderId,
+    required String date,
+  }) async {
+    final json = await _request('GET', '/routines', query: {
+      'elder_id': elderId,
+      'date': date,
+    });
+    return DailyRoutineView.fromJson(json);
+  }
+
+  /// `POST /routines` — 建立例行公事（照護者）。
+  ///
+  /// [clientRequestId] 必填：後端用它算出 `routine_id`，所以同一個值重送拿到同一筆，
+  /// 不會建出兩筆重複行程。送出前先產生並持有，重送沿用；換內容要換新值，
+  /// 否則回 409 `IDEMPOTENCY_CONFLICT`。
+  ///
+  /// 對話中建立的 routine 由後端直接寫入，不經此端點。
+  Future<Routine> createRoutine({
+    required String clientRequestId,
+    required Map<String, dynamic> fields,
+  }) async {
+    final json = await _request('POST', '/routines', body: {
+      'client_request_id': clientRequestId,
+      ...fields,
+    });
+    return Routine.fromJson(json);
+  }
+
+  /// `PATCH /routines/{id}` — 修改／停用例行公事（照護者）。
+  ///
+  /// [clientRequestId] 必填且**每次修改都要新的一個**（同一個值代表同一次修改，
+  /// 重送不會建出第二個版本）。[fields] 只可含 `title`、`type`、`schedule`、`remind`、
+  /// `active`——其他欄位後端回 400 `INVALID_PARAMETER`。
+  Future<Routine> updateRoutine(
+    String routineId, {
+    required String clientRequestId,
+    required Map<String, dynamic> fields,
+  }) async {
+    final json = await _request('PATCH', '/routines/$routineId', body: {
+      'client_request_id': clientRequestId,
+      ...fields,
+    });
+    return Routine.fromJson(json);
+  }
+
+  /// `POST /routines/{id}/complete` — 手動確認完成（兩端）。
+  ///
+  /// 靠「長者＋routine＋日期」天然冪等，不需要 `client_request_id`：已完成的重送回同一筆，
+  /// 不會重複記事件。指定日期無排程時回 400 `ROUTINE_NOT_SCHEDULED`。
+  Future<RoutineOccurrence> completeRoutine(
+    String routineId, {
+    String? date,
+  }) async {
+    final json = await _request('POST', '/routines/$routineId/complete', body: {
+      if (date != null) 'date': date,
+    });
+    return RoutineOccurrence.fromJson(json);
+  }
+
+  // ---- 統計（照護者）----
+
+  /// `GET /stats` — 統計（今日/期間互動、例行公事完成、逐日趨勢）。
+  Future<Stats> getStats({required String elderId, int days = 7}) async {
+    final json = await _request('GET', '/stats', query: {
+      'elder_id': elderId,
+      'days': '$days',
+    });
+    return Stats.fromJson(json);
+  }
+
+  // ---- 內部：HTTP 與錯誤處理 ----
+
+  /// 統一送出 `/v1` 底下的請求，處理認證 header、連線錯誤與非 2xx 狀態碼。
+  Future<Map<String, dynamic>> _request(
+    String method,
+    String path, {
+    Map<String, String>? query,
+    Object? body,
+  }) async =>
+      (await _requestWithStatus(method, path, query: query, body: body)).$1;
+
+  /// 同 [_request]，但連狀態碼一起給。
+  ///
+  /// 只有綁定照護者用得到：那個端點用 201／200 區分「這次才綁上」與「早就綁過了」，
+  /// body 兩者相同，不看狀態碼就分不出來（api.md）。其餘端點看 body 就夠，走 [_request]。
+  Future<(Map<String, dynamic>, int)> _requestWithStatus(
+    String method,
+    String path, {
+    Map<String, String>? query,
+    Object? body,
+  }) async {
+    var uri = Uri.parse('$_baseUrl/v1$path');
+    if (query != null && query.isNotEmpty) {
+      uri = uri.replace(queryParameters: query);
+    }
+    final headers = await _headers();
+    final payload = body == null ? null : jsonEncode(body);
+
+    late final http.Response res;
+    try {
+      switch (method) {
+        case 'GET':
+          res = await _http.get(uri, headers: headers);
+          break;
+        case 'POST':
+          res = await _http.post(uri, headers: headers, body: payload);
+          break;
+        case 'PATCH':
+          res = await _http.patch(uri, headers: headers, body: payload);
+          break;
+        case 'DELETE':
+          res = await _http.delete(uri, headers: headers, body: payload);
+          break;
+        default:
+          throw ArgumentError('未支援的 method：$method');
+      }
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      throw ApiException('無法連線到後端：$e');
+    }
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException(
+        _errorMessage(res),
+        statusCode: res.statusCode,
+        code: _errorCode(res),
+      );
+    }
+    if (res.body.isEmpty) return (const <String, dynamic>{}, res.statusCode);
+    return (jsonDecode(res.body) as Map<String, dynamic>, res.statusCode);
+  }
+
+  /// 組請求 header；有 token 才帶 Authorization。
+  Future<Map<String, String>> _headers() async {
+    final token = await _tokenProvider?.call();
+    return {
+      'Content-Type': 'application/json; charset=utf-8',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+  }
+
+  /// 組分頁的 query 參數。`next_token` 是不透明游標，原樣送回，不解析也不重組。
+  Map<String, String> _pageQuery({int? limit, String? nextToken}) => {
+        if (limit != null) 'limit': '$limit',
+        if (nextToken != null && nextToken.isNotEmpty) 'next_token': nextToken,
+      };
+
+  /// 反覆呼叫 [fetchPage] 直到沒有 `next_token`，把各頁 items 串成一個 list。
+  ///
+  /// 只用於「總量本來就有限、UI 需要完整資料」的列表（如長者清單、排通知用的行程定義）；
+  /// 事件時間軸這種會長大的資料請讓 UI 自己一頁一頁拉。
+  Future<List<T>> _drain<T>(
+    Future<ApiPage<T>> Function(String? nextToken) fetchPage,
+  ) async {
+    final all = <T>[];
+    String? token;
+    do {
+      final page = await fetchPage(token);
+      all.addAll(page.items);
+      token = page.nextToken;
+    } while (token != null);
+    return all;
+  }
+
+  /// 從錯誤回應取 body 的 `error.code`。
+  String? _errorCode(http.Response res) {
+    try {
+      final body = jsonDecode(res.body);
+      if (body is Map && body['error'] is Map) {
+        return (body['error'] as Map)['code']?.toString();
+      }
+    } catch (_) {
+      // 非 JSON body
+    }
+    return null;
+  }
+
+  /// 從錯誤回應盡量取出可讀訊息：優先正式後端的 `{error:{message}}`，
+  /// 否則退回 FastAPI PoC 的 `{detail}`，再退回泛用訊息。
+  String _errorMessage(http.Response res) {
+    try {
+      final body = jsonDecode(res.body);
+      if (body is Map<String, dynamic>) {
+        final err = body['error'];
+        if (err is Map && err['message'] != null) {
+          return err['message'].toString();
+        }
+        if (body['detail'] != null) return body['detail'].toString();
+      }
+    } catch (_) {
+      // 非 JSON body，往下用泛用訊息
+    }
+    return '請求失敗（HTTP ${res.statusCode}）';
+  }
+
+  /// 釋放底層 HTTP 連線。使用端（如畫面 dispose 時）呼叫。
+  void dispose() => _http.close();
 }

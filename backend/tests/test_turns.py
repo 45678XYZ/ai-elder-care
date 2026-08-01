@@ -82,7 +82,6 @@ def reserve(turns, sessions, *, conversation_id="cnv_1", owner=OWNER, session_id
         session_id,
         turn={
             "conversation_id": conversation_id,
-            "idempotency_key": f"req-{conversation_id}",
             "client_request_id": f"req-{conversation_id}",
             "request_hash": HASH,
             "lang": "zh-TW",

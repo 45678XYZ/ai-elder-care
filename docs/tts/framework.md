@@ -51,9 +51,9 @@ Terraform 預設不建立遠端 TTS endpoint。中文在未核准台灣華語模
 
 ## Agent 與 App
 
-- 目前 repo 是 Bedrock Agents Classic `InvokeAgent`，不是 AgentCore Runtime。Chat Lambda
-  在輸入前置 `[回覆語言: ...]` 與客語腔調，並同步寫入 prompt session attributes；
-  Agent instruction 禁止自動偵測語言。
+- 對話大腦是 AgentCore Runtime（`invoke_agent_runtime`）。Chat Lambda 在 payload 明確帶
+  `lang`，大腦的 turn prefix 依此決定回覆語言，禁止從文字內容自動偵測。腔調（`hakka_dialect`）
+  只影響 ASR 與 TTS 的 route，不進大腦 payload。
 - `zh-TW` 回覆必須是繁體中文、台灣慣用詞；`hak` 回覆是客語漢字。
 - Flutter contract 將 `reply_audio_url` 視為 nullable。無 URL 時 UI 可顯示文字並提供重試；
   裝置 TTS 只有確認裝置支援要求 locale 時才可啟用。本次不實作畫面或 AudioService。

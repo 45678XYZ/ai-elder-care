@@ -2,7 +2,8 @@
 
 ## 文件狀態
 
-- 狀態：執行中；main merge 與 ASR fail-closed 衝突整合已完成，後續 Agent 邊界與部署打包仍待處理
+- 狀態：本文的 Bedrock Agents Classic 段落已過時。`main` 已於 `784e50b` 把對話大腦遷到
+  AgentCore Runtime，本計畫「暫不遷移 AgentCore」的前提不再成立；ASR/TTS 的部分仍有效。
 - 實作基線：`main@9a9e972376337583f61295db24bf276e7ce66c98`
 - ASR 參考：`feature/asr-lambda@bcb035a43332f085405d6b5388d4eafd925b8866`
 - Merge commit：`feature/asr-lambda@6a01712`（main → ASR branch）

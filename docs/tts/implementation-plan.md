@@ -12,8 +12,8 @@ OpenTofu 驗證後 `.terraform.lock.hcl` 已恢復為 Terraform registry/hash。
 - 分支：`feature/tts`，基於 `feature/asr-lambda`；未經授權不 commit、push、merge 或 apply。
 - `POST /chat.lang` 維持 `zh-TW | hak` 唯一語言來源，不從漢字內容自動猜測。
 - `hak` 的腔調來自 elder profile；API 固定六腔，ASR 與 TTS 使用同一份設定。
-- Agent 明確依 `lang + hakka_dialect` 產生繁體中文或指定腔調的客語漢字。
-- TTS 與現有 Bedrock Agents Classic 解耦串接；本案不遷移 AgentCore Runtime。
+- 大腦明確依 `lang` 產生繁體中文或客語漢字；腔調（`hakka_dialect`）只決定 ASR 與 TTS 的 route。
+- TTS 與對話大腦（AgentCore Runtime）解耦串接，不依賴大腦的實作細節。
 - 客語模型採 OmniVoice 主力、VoxHakka 選配備援；模型只在 SageMaker 執行。
 - 中文優先台灣華語口音；Polly Zhiyu Neural／Standard 可用但只視為可切換的相容／備援 provider，
   不宣稱是台灣口音。若台灣華語模型未核准，允許設定選用 Zhiyu。

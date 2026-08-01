@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from src.shared.models import (
     SUMMARY_SECTION_KEYS,
-    ConversationCreate,
+    ConversationItem,
     DailySummaryCreate,
     DailySummaryResponse,
     ElderCreate,
@@ -17,12 +17,14 @@ from src.shared.models import (
     EventResponse,
     EventType,
     FamilyMember,
+    HealthNote,
     RoutineComplete,
     RoutineCreate,
     RoutineDefinition,
     RoutineOccurrence,
     RoutineSchedule,
     RoutineUpdate,
+    health_note_texts,
 )
 
 
@@ -99,9 +101,55 @@ def test_elder_response_model():
     assert er.health_notes == []
 
 
-def test_conversation_create_model():
-    """測試 ConversationCreate 模型長者發話單一模式與核心欄位。"""
-    cc_elder = ConversationCreate(
+
+def test_health_note_model_defaults():
+    """測試 HealthNote 的預設值：未指定來源時視為照護者填寫。"""
+    hn = HealthNote(text="高血壓")
+    assert hn.text == "高血壓"
+    assert hn.source == "caregiver"
+    assert hn.note_id.startswith("hn_")
+    assert hn.created_at is None
+
+    # note_id 每筆不同，刪除單筆時才指得準
+    assert HealthNote(text="高血壓").note_id != hn.note_id
+
+    with pytest.raises(ValidationError):
+        HealthNote(text="高血壓", source="不存在的來源")
+
+
+def test_health_notes_accept_legacy_strings():
+    """舊契約的純字串陣列仍要讀得動，不必先做資料遷移。"""
+    ec = ElderCreate(name="陳阿蘭", health_notes=["高血壓", "膝關節退化"])
+    assert [n.text for n in ec.health_notes] == ["高血壓", "膝關節退化"]
+    # 舊資料都是照護者建檔時填的，預設成 caregiver 與事實相符
+    assert all(n.source == "caregiver" for n in ec.health_notes)
+
+    er = ElderResponse(
+        elder_id="eld_abc123",
+        name="王大同",
+        created_at="2026-07-24T15:00:00+08:00",
+        health_notes=["高血壓"],
+    )
+    assert er.health_notes[0].text == "高血壓"
+
+    eu = ElderUpdate(health_notes=[{"text": "最近膝蓋痛", "source": "agent"}])
+    assert eu.health_notes[0].source == "agent"
+
+
+def test_health_note_texts_flattens_both_formats():
+    """攤平給 prompt 用：物件取 text，舊字串原樣通過，空值剔除。"""
+    notes = [
+        {"note_id": "hn_a", "text": "高血壓", "source": "caregiver"},
+        "膝關節退化",
+        {"note_id": "hn_c", "text": "", "source": "agent"},
+    ]
+    assert health_note_texts(notes) == ["高血壓", "膝關節退化"]
+    assert health_note_texts(None) == []
+
+
+def test_conversation_item_model():
+    """測試 ConversationItem 模型長者發話單一模式與核心欄位。"""
+    cc_elder = ConversationItem(
         elder_id="eld_001",
         session_id="ses_01J8",
         elder_transcript="我吃過血壓藥了",
@@ -116,6 +164,7 @@ def test_conversation_create_model():
     assert cc_elder.ai_respond_audio_s3_key == "tts/cnv_001.mp3"
     assert cc_elder.elder_received_at == "2026-07-24T17:30:00+08:00"
     assert cc_elder.ai_responded_at == "2026-07-24T17:30:01+08:00"
+
 
 def test_event_models():
 

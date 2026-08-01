@@ -53,6 +53,16 @@ output "tts_config_json" {
   sensitive   = false
 }
 
+output "agentcore_runtime_arn" {
+  description = "對話大腦 Runtime ARN（chat Lambda 環境變數、手動 invoke 測試用）"
+  value       = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
+}
+
+output "agentcore_memory_id" {
+  description = "託管長期記憶 ID；runtime 以此接 AgentCoreMemorySaver"
+  value       = aws_bedrockagentcore_memory.companion.id
+}
+
 output "kb_knowledge_base_id" {
   description = "Bedrock Knowledge Base ID（chat Lambda 環境變數、同步腳本用）"
   value       = aws_bedrockagent_knowledge_base.kb.id

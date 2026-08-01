@@ -71,25 +71,38 @@ resource "aws_iam_role_policy" "daily_digest_policy" {
 # 2. daily_digest Lambda 函數（每晚晚報彙整與推播）
 # =============================================================================
 
-resource "aws_lambda_function" "daily_digest" {
+module "daily_digest" {
+  source  = "terraform-aws-modules/lambda/aws"
+  version = "~> 8.0"
+
   function_name = "${var.project_name}-daily-digest"
-  role          = aws_iam_role.daily_digest_role.arn
-  handler       = "handlers.daily_digest.handler"
+  description   = "每晚照護者晚報彙整與推播"
+  handler       = "src.handlers.daily_digest.handler"
   runtime       = "python3.11"
   timeout       = 120 # 晚報需掃描所有長者，給足夠時間
   memory_size   = 256
 
-  filename = "${path.module}/build/backend.zip"
+  create_role = false
+  lambda_role = aws_iam_role.daily_digest_role.arn
 
-  environment {
-    variables = {
-      TABLE_ELDERS               = aws_dynamodb_table.elders.name
-      TABLE_ROUTINES             = aws_dynamodb_table.routines.name
-      TABLE_EVENTS               = aws_dynamodb_table.events.name
-      TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
-      CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
-      AWS_REGION_NAME            = var.aws_region
-    }
+  source_path   = local.backend_source_path
+  artifacts_dir = "${path.module}/build"
+
+  architectures             = local.lambda_architectures
+  build_in_docker           = true
+  docker_additional_options = local.docker_build_options
+
+  cloudwatch_logs_retention_in_days = 30
+
+  environment_variables = {
+    TABLE_ELDERS               = aws_dynamodb_table.elders.name
+    TABLE_ROUTINES             = aws_dynamodb_table.routines.name
+    TABLE_EVENTS               = aws_dynamodb_table.events.name
+    TABLE_DAILY_SUMMARIES      = aws_dynamodb_table.daily_summaries.name
+    CAREGIVER_NOTIFY_TOPIC_ARN = aws_sns_topic.caregiver_notifications.arn
+
+    # AWS_REGION 是 Lambda 保留字，不能自己設；daily_digest.py 因此讀 AWS_REGION_NAME
+    AWS_REGION_NAME = var.aws_region
   }
 }
 
@@ -119,7 +132,7 @@ resource "aws_iam_role_policy" "eventbridge_invoke_lambda" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["lambda:InvokeFunction"]
-      Resource = aws_lambda_function.daily_digest.arn
+      Resource = module.daily_digest.lambda_function_arn
     }]
   })
 }
@@ -141,7 +154,7 @@ resource "aws_scheduler_schedule" "daily_digest_schedule" {
   schedule_expression_timezone = "UTC"
 
   target {
-    arn      = aws_lambda_function.daily_digest.arn
+    arn      = module.daily_digest.lambda_function_arn
     role_arn = aws_iam_role.eventbridge_scheduler_role.arn
 
     # 傳給 Lambda 的事件 payload（空 JSON 即可，Lambda 自行查詢所有長者）
@@ -162,7 +175,7 @@ resource "aws_scheduler_schedule" "daily_digest_schedule" {
 resource "aws_lambda_permission" "allow_scheduler_invoke_daily_digest" {
   statement_id  = "AllowEventBridgeSchedulerInvoke"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.daily_digest.function_name
+  function_name = module.daily_digest.lambda_function_name
   principal     = "scheduler.amazonaws.com"
   source_arn    = aws_scheduler_schedule.daily_digest_schedule.arn
 }

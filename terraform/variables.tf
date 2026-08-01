@@ -161,6 +161,26 @@ variable "kb_chunk_overlap_percentage" {
   default     = 20
 }
 
+# --- 對話大腦（AgentCore Runtime，見 agentcore.tf）---
+
+variable "agent_model_id" {
+  description = "陪伴對話大腦的模型；留空沿用 bedrock_model_id。對話要求低延遲與口語自然度，與萃取的取捨不同，因此獨立成一個變數"
+  type        = string
+  default     = ""
+}
+
+variable "agent_memory_expiry_days" {
+  description = "AgentCore 託管記憶的事件保留天數；API 限制 7 至 365"
+  type        = number
+  default     = 30
+}
+
+variable "agent_kb_top_k" {
+  description = "衛教知識庫單次檢索回傳的段落數；進 prompt 的量，調高會拉長延遲"
+  type        = number
+  default     = 4
+}
+
 # --- 生活記錄事件萃取（Module B）---
 
 variable "bedrock_model_id" {
@@ -171,7 +191,7 @@ variable "bedrock_model_id" {
     要固定區域改成 us./apac. 前綴；要省成本改 Sonnet／Haiku。
   EOT
   type        = string
-  default     = "global.anthropic.claude-opus-4-6-v1:0"
+  default     = "global.anthropic.claude-opus-5"
 }
 
 variable "bedrock_classifier_model_id" {

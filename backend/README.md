@@ -5,6 +5,7 @@
 ```
 src/
 ├── handlers/     # chat / elders / summaries / events / routines / stats / summary_generator / pre_token_generation（Cognito trigger）
+├── agentcore_runtime/  # 對話大腦：LangGraph 狀態機、工具包裝、人設；部署到 AgentCore Runtime 而非 Lambda
 ├── extraction/   # 生活記錄（Module B）萃取 pipeline：分類體系、分塊、分類、萃取、canonical identity、去重
 │   └── assets/   # 隨部署包發佈的資產：taxonomy/ 分類體系、retrieval/ 概念檢索 sub-chunks
 └── shared/       # auth（token 授權）、db（DynamoDB 六表）、models（Pydantic schema）、
@@ -23,6 +24,8 @@ tests/            # pytest
 `training/` 與 `scripts/segmenter_v2_*.py` 是離線工作流，不進 Lambda 部署包（`pyproject.toml` 的 packages 只收 `src*`）；操作步驟見 [docs/feature_segmenter-pairwise-v2.md](../docs/feature_segmenter-pairwise-v2.md)。
 
 `extraction/` 只由 batch 相關 Lambda 使用，不進 realtime `/chat` 路徑；設計與移植步驟見 [docs/feature_events-extraction.md](../docs/feature_events-extraction.md)。
+
+`agentcore_runtime/` 是唯一不跑在 Lambda 上的部分：它以 zip 部署到 Bedrock AgentCore Runtime（見 `terraform/agentcore.tf`），由 `chat.py` 以 `invoke_agent_runtime` 呼叫，再由它回頭呼叫 tools Lambda。依賴另立 `agentcore_requirements.txt`（langgraph 那一串只有大腦用得到，混進 `requirements.txt` 會讓其餘 Lambda 的部署包一起變大）；本機要跑它的測試時裝 `pip install -r agentcore_requirements.txt`。工具契約見 [docs/llm_tools.md](../docs/llm_tools.md)。
 
 ## 開發
 
