@@ -348,7 +348,13 @@ class _ChatScreenState extends State<ChatScreen>
     // 把半句話送去辨識並記進資料，跟他的意圖相反。
     await _recorder.cancel();
     await _audio.stop();
-    if (mounted) setState(() => _setPhase(_Phase.idle));
+    if (!mounted) return;
+    setState(() {
+      _setPhase(_Phase.idle);
+      // 那句話不會送出去了，暫存泡泡也不該留在畫面上——留著就是一句沒人回應的
+      // 話掛在那裡，長輩以為它進去了。
+      _question = '';
+    });
   }
 
   /// 聆聽一句話；靜音斷句後拿到最終文字（華語）或音檔（客語）就送出。
@@ -394,6 +400,17 @@ class _ChatScreenState extends State<ChatScreen>
       pauseFor: const Duration(seconds: 6),
       onResult: (text, isFinal) {
         if (!mounted) return;
+
+        // 這一輪已經定案、送出去了。
+        //
+        // 外掛在 `stop()` 之後還會把最後一次結果補送進來，而且是**非同步**的：
+        // `await _speech.stop()` 早就回來、泡泡也已經移進歷史（`_question` 清空），
+        // 它才姍姍來遲。照收的話 `_question` 又被寫回去，那顆「正在辨識中」的暫存
+        // 泡泡重新亮起來——畫面上就是同一句逐字稿兩份，一直掛到回覆進來、下一輪
+        // 把它清掉為止。實機看到的正是「送出後到回覆之間重複，回覆後消失」。
+        //
+        // 定案之後這一輪的回呼一律不理，連 `_bestHeard` 都不動。
+        if (_turnConsumed) return;
 
         // 顯示的與送出的都走同一份，畫面上看到什麼就是送出什麼。
         final heard = mergeRecognized(_bestHeard, text);
