@@ -20,6 +20,9 @@
 locals {
   asr_endpoints_enabled = var.asr_enable_endpoints ? 1 : 0
 
+  # CE 是獨立 gate：eval 結論不採用它，但保留可單獨開啟的能力做比較驗證。
+  asr_ce_enabled = var.asr_enable_endpoints && var.asr_enable_ce_endpoint
+
   asr_ce_endpoint_name = "${var.project_name}-asr-ce"
   asr_ce_instance_type = "ml.g5.4xlarge"
   asr_formo_dialects = toset([
@@ -51,7 +54,7 @@ locals {
     "ml.g5.4xlarge"   = 1
   }
   asr_requested_instance_types = var.asr_enable_endpoints ? concat(
-    [local.asr_ce_instance_type],
+    local.asr_ce_enabled ? [local.asr_ce_instance_type] : [],
     values(local.asr_formo_instance_types),
   ) : []
 }
@@ -62,13 +65,14 @@ locals {
 check "asr_endpoints_require_all_parameters" {
   assert {
     condition = !var.asr_enable_endpoints || (
-      var.asr_ce_image_uri != "" &&
-      var.asr_ce_model_data_url != "" &&
+      (!local.asr_ce_enabled || (
+        var.asr_ce_image_uri != "" && var.asr_ce_model_data_url != ""
+      )) &&
       var.asr_formo_image_uri != "" &&
       var.asr_formo_model_data_url != "" &&
       var.asr_model_artifact_bucket != ""
     )
-    error_message = "啟用 ASR 端點時，必須同時提供 CE／Formo image、model data 與 artifact bucket。"
+    error_message = "啟用 ASR 端點時，必須提供 Formo image、model data 與 artifact bucket；另外啟用 CE 時還要提供 CE 的 image 與 model data。"
   }
 }
 
@@ -165,7 +169,7 @@ resource "aws_iam_role_policy" "asr_inference_artifacts" {
 # 2. 共同備援：Taiwan-Tongues-ASR-CE
 # ─────────────────────────────────────────────────────────────────
 resource "aws_sagemaker_model" "asr_ce" {
-  count = local.asr_endpoints_enabled
+  count = local.asr_ce_enabled ? 1 : 0
 
   name               = "${var.project_name}-asr-ce"
   execution_role_arn = aws_iam_role.asr_inference[0].arn
@@ -191,7 +195,7 @@ resource "aws_sagemaker_model" "asr_ce" {
 }
 
 resource "aws_sagemaker_endpoint_configuration" "asr_ce" {
-  count = local.asr_endpoints_enabled
+  count = local.asr_ce_enabled ? 1 : 0
 
   name = "${var.project_name}-asr-ce"
 
@@ -204,7 +208,7 @@ resource "aws_sagemaker_endpoint_configuration" "asr_ce" {
 }
 
 resource "aws_sagemaker_endpoint" "asr_ce" {
-  count = local.asr_endpoints_enabled
+  count = local.asr_ce_enabled ? 1 : 0
 
   name                 = local.asr_ce_endpoint_name
   endpoint_config_name = aws_sagemaker_endpoint_configuration.asr_ce[0].name
@@ -286,7 +290,7 @@ resource "aws_iam_policy" "invoke_asr_endpoints" {
       Effect = "Allow"
       Action = "sagemaker:InvokeEndpoint"
       Resource = concat(
-        [aws_sagemaker_endpoint.asr_ce[0].arn],
+        aws_sagemaker_endpoint.asr_ce[*].arn,
         [for endpoint in aws_sagemaker_endpoint.asr_formo : endpoint.arn]
       )
     }]

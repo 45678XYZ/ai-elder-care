@@ -43,7 +43,8 @@ API Gateway + Cognito JWT 認證
 ```text
 ├── app/            # Flutter（elder/ caregiver/ 兩組頁面 + shared services）
 ├── asr-lambda/     # CE/Formo SageMaker container 開發與 staging 相容性預檢
-├── tts-container/  # TTS 推論容器原始碼（BreezyVoice 台灣華語）
+├── asr-container/  # ASR 推論容器原始碼（FormoSpeech 客語六腔）
+├── tts-container/  # TTS 推論容器原始碼（BreezyVoice 台灣華語、OmniVoice 客語）
 ├── backend/        # Python Lambda handlers＋agentcore_runtime/ 對話大腦＋ASR/TTS 領域模組＋extraction/ 生活記錄萃取 pipeline
 ├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, AgentCore Runtime, Transcribe, SageMaker ASR/TTS
 ├── data/           # 模擬長者 persona、合成情境腳本、seed 腳本、knowledge/ 衛教文件
@@ -58,6 +59,7 @@ API Gateway + Cognito JWT 認證
 - [backend/src/README.md](backend/src/README.md) — 後端核心原始碼逐檔說明
 - [data/README.md](data/README.md) — 資料資源（Persona / 知識庫 / 測試情境）
 - [docs/README.md](docs/README.md) — 設計文件導覽
+- [asr-container/README.md](asr-container/README.md) — ASR 推論容器與部署 runbook
 - [tts-container/README.md](tts-container/README.md) — TTS 推論容器與部署 runbook
 
 ## 文件導覽
