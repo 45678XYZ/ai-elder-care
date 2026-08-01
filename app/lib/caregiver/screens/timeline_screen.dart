@@ -6,6 +6,7 @@ import '../../shared/services/care_repository.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
+import '../../shared/widgets/auto_refresh.dart';
 import '../../shared/widgets/care_header.dart';
 import '../../shared/widgets/status_chip.dart';
 import '../../theme/app_theme.dart';
@@ -24,13 +25,18 @@ class TimelineScreen extends StatefulWidget {
   State<TimelineScreen> createState() => _TimelineScreenState();
 }
 
-class _TimelineScreenState extends State<TimelineScreen> {
+class _TimelineScreenState extends State<TimelineScreen>
+    with AutoRefreshState<TimelineScreen> {
   late Future<ApiPage<LifeEvent>> _future;
 
   /// 已載入的所有頁；「載入更多」往後接。
   final _items = <LifeEvent>[];
   String? _nextToken;
   bool _loadingMore = false;
+
+  /// 使用者按過「載入更早的紀錄」。背景重拉只會拿第一頁，翻過頁之後重拉等於
+  /// 把他捲了半天的內容收掉，寧可不拉。
+  bool _pagedBack = false;
 
   /// null = 全部；否則只顯示該類。
   EventCategory? _filter;
@@ -41,9 +47,27 @@ class _TimelineScreenState extends State<TimelineScreen> {
     _load();
   }
 
+  /// 新事件是從對話整理出來的，會在照護者沒有動作的情況下自己長出來。
+  ///
+  /// 只重拉第一頁：最新的事件在最前面，這一頁本來就是由新往舊排。
+  @override
+  Future<void> autoRefresh() async {
+    try {
+      final page = await _fetchFirstPage();
+      if (!mounted) return;
+      setState(() => _future = Future.value(page));
+    } catch (_) {
+      // 靜默：`_fetchFirstPage` 失敗時不會動到 `_items`，畫面維持原樣
+    }
+  }
+
+  @override
+  bool get canAutoRefresh => !_pagedBack && !_loadingMore;
+
   void _load() {
     _items.clear();
     _nextToken = null;
+    _pagedBack = false;
     _future = _fetchFirstPage();
   }
 
@@ -90,6 +114,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
       setState(() {
         _items.addAll(page.items);
         _nextToken = page.nextToken;
+        _pagedBack = true;
       });
     } finally {
       if (mounted) setState(() => _loadingMore = false);

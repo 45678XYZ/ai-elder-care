@@ -6,6 +6,7 @@ import '../../shared/services/care_repository.dart';
 import '../../shared/services/session_store.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
+import '../../shared/widgets/auto_refresh.dart';
 import '../../shared/widgets/care_header.dart';
 import '../../theme/app_theme.dart';
 
@@ -23,7 +24,8 @@ class StatsScreen extends StatefulWidget {
   State<StatsScreen> createState() => _StatsScreenState();
 }
 
-class _StatsScreenState extends State<StatsScreen> {
+class _StatsScreenState extends State<StatsScreen>
+    with AutoRefreshState<StatsScreen> {
   late Future<Stats> _future;
   bool _showTable = false;
 
@@ -31,6 +33,19 @@ class _StatsScreenState extends State<StatsScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  /// 今日互動次數與最後互動時間會隨著長輩講話一路變動，這一頁卻是照護者最常
+  /// 開著不動的一頁（「他今天講過話了嗎」）。載入失敗一律吞掉，維持上一份。
+  @override
+  Future<void> autoRefresh() async {
+    try {
+      final stats = await _fetch();
+      if (!mounted) return;
+      setState(() => _future = Future.value(stats));
+    } catch (_) {
+      // 靜默：畫面維持上一份成功的資料
+    }
   }
 
   void _load() {

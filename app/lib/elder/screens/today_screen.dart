@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -13,6 +11,7 @@ import '../../shared/services/session_store.dart';
 import '../../shared/services/taiwan_holiday.dart';
 import '../../shared/widgets/app_card.dart';
 import '../../shared/widgets/async_view.dart';
+import '../../shared/widgets/auto_refresh.dart';
 import '../../shared/widgets/sign_out_button.dart';
 import '../../shared/widgets/status_chip.dart';
 import '../../theme/app_theme.dart';
@@ -42,29 +41,17 @@ class TodayScreen extends StatefulWidget {
   State<TodayScreen> createState() => _TodayScreenState();
 }
 
-class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
+class _TodayScreenState extends State<TodayScreen>
+    with AutoRefreshState<TodayScreen> {
   late Future<DailyRoutineView> _future;
 
   /// 本地已確認完成的 routine——按下去立刻反映，不等重新拉整份清單。
   final _justCompleted = <String>{};
 
-  /// 背景同步的節奏。
-  ///
-  /// 這一頁會**停在畫面上很久**：長輩開著它就放下手機，兩個 tab 又掛在
-  /// StatefulNavigationShell 底下（切走再切回來 State 是留著的、initState 不會重跑）。
-  /// 沒有這個計時器的話，照護者剛新增的行程、對話大腦剛寫進去的完成狀態，
-  /// 都要等到 App 整個重啟才看得到。
-  ///
-  /// 60 秒是取捨：行程是分鐘級的事，更密沒有意義，只是多打後端。
-  static const _syncInterval = Duration(seconds: 60);
-  Timer? _syncTimer;
-
   @override
   void initState() {
     super.initState();
     _load();
-    WidgetsBinding.instance.addObserver(this);
-    _syncTimer = Timer.periodic(_syncInterval, (_) => _silentRefresh());
     // 兩個 tab 掛在 StatefulNavigationShell 底下，切走再切回來這個 State 是留著的、
     // initState 不會重跑。長輩在聊天頁講完「藥吃了」而行程被標成完成時，就是靠這個
     // 監聽把畫面換掉——否則切回來看到的還是切走前那份。
@@ -75,20 +62,9 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    _syncTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
     RoutineSync.revision.removeListener(_onRoutinesChanged);
     AppSession.textLangRevision.removeListener(_onTextLangChanged);
     super.dispose();
-  }
-
-  /// 回到前台就同步一次。
-  ///
-  /// 手機鎖著的時候計時器不保證會跑，而長輩最常見的用法正是「放著、過一陣子再拿起來」
-  /// ——那一刻看到的必須是新的，不能是睡前那份。
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _silentRefresh();
   }
 
   /// 背景重拉，**不讓畫面退回載入中**。
@@ -97,7 +73,21 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
   /// 於是每 60 秒整頁閃一次。這裡先在背景把資料拿到手，成功才換上去。
   /// 失敗一律吞掉——維持舊資料遠比閃一個錯誤畫面好，長輩不需要知道某一次背景
   /// 同步沒成功。
-  Future<void> _silentRefresh() async {
+  ///
+  /// 這一頁會**停在畫面上很久**：長輩開著它就放下手機，沒有背景同步的話，
+  /// 照護者剛新增的行程要等 App 整個重啟才看得到。
+  @override
+  Future<void> autoRefresh() async {
+    // 三顆語言鈕就在這一頁上，而長輩可以**用講的**改語言與腔調（後端的
+    // `update_elder_profile`）。那條路只在對話當下同步一次，萬一那一次沒對上
+    // （後端讀不到剛寫進去的值、網路斷一下），鈕就會一直跟他實際在用的語言對不上。
+    // 這一頁本來就在背景同步，順手把長者檔案也重讀一次，讓它自己修正回來。
+    // 失敗吞掉——refreshSelectedElder 自己已經吞過一層，這裡只是保險。
+    try {
+      await AppSession.instance.refreshSelectedElder();
+    } catch (_) {
+      // 靜默
+    }
     try {
       final view = await _fetch();
       if (!mounted) return;
