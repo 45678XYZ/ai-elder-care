@@ -128,6 +128,11 @@ def store(monkeypatch):
     def get_events(elder_id, event_ids):
         return {eid: state["events"][eid] for eid in event_ids if eid in state["events"]}
 
+    def delete_routine(routine_id):
+        state["versions"] = [
+            v for v in state["versions"] if v["routine_id"] != routine_id
+        ]
+
     for name, fake in {
         "get_routine_version": get_routine_version,
         "list_routine_versions": list_routine_versions,
@@ -137,6 +142,7 @@ def store(monkeypatch):
         "list_routine_versions_by_elder": list_routine_versions_by_elder,
         "put_event_if_absent": put_event_if_absent,
         "get_events": get_events,
+        "delete_routine": delete_routine,
     }.items():
         monkeypatch.setattr(db, name, fake)
 
@@ -408,8 +414,10 @@ def test_delete_routine_endpoint(store):
     )
 
     assert resp["statusCode"] == 200
-    assert _body(resp)["active"] is False
-    assert store["versions"][1]["current_sort_key"].startswith("I#")
+    body = _body(resp)
+    assert body["deleted"] is True
+    assert body["routine_id"] == "rtn_001"
+    assert len(store["versions"]) == 0
 
 
 

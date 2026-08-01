@@ -87,6 +87,14 @@ class TestShortValidWav:
 # ─────────────────────────────────────────────────────────────────
 # Success cases — valid M4A
 # ─────────────────────────────────────────────────────────────────
+try:
+    import av  # noqa: F401
+    _has_av = True
+except ModuleNotFoundError:
+    _has_av = False
+
+
+@pytest.mark.skipif(not _has_av, reason="M4A 測試需要 PyAV (av)")
 class TestValidM4a:
     """Valid M4A should produce CanonicalAudio."""
 
