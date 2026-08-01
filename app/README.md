@@ -60,7 +60,7 @@ app/
 | `widgets/almanac_face.dart` | 農民曆牌面 Widget：顯示國曆/農曆日期與節氣 |
 | `widgets/calendar_tear.dart` | 撕頁日曆 Widget：模擬日曆撕頁效果的日期顯示 |
 | `widgets/greeting_slot.dart` | 時段問候語 Widget：依早/午/晚顯示不同問候語與背景圖 |
-| `widgets/lang_toggle.dart` | 長者自行切換語言的兩顆鈕：`ElderLangToggle`（說話：華語／客語）與 `ElderTextLangToggle`（畫面文字：一般漢字／客語漢字）。兩者獨立，講客語不等於讀得懂客語漢字 |
+| `widgets/lang_toggle.dart` | 長者自行切換的三顆鈕：`ElderLangToggle`（說話：華語／客語）、`ElderDialectToggle`（客語腔調六選一，選了客語才出現）、`ElderTextLangToggle`（畫面文字：一般漢字／客語漢字）。三者獨立——講客語不等於讀得懂客語漢字，腔調則只有講客語時才有意義 |
 
 ### caregiver/ — 照護者模式
 
@@ -71,7 +71,7 @@ app/
 | `screens/summaries_screen.dart` | 每日摘要畫面：顯示 AI 每日為長者生成的健康與生活摘要 |
 | `screens/timeline_screen.dart` | 事件時間軸畫面：以時間倒序呈現長者近期生活事件（用藥、活動、安全事件等） |
 | `screens/stats_screen.dart` | 統計圖表畫面：互動輪數趨勢、行程完成率、逐日數據 |
-| `screens/setup_screen.dart` | 設定管理畫面：長者資料編輯、行程管理、通知偏好 |
+| `screens/setup_screen.dart` | 初次設定：建立長輩基本資料（姓名、稱呼、出生年、居住地區、說話語言、客語腔調），只在還沒有長輩資料時出現一次 |
 
 ### shared/ — 共用模組
 
@@ -79,7 +79,7 @@ app/
 
 | 檔案 | 功能 |
 |------|------|
-| `api_config.dart` | API 端點設定：baseUrl（可透過 `--dart-define=API_BASE_URL` 覆寫）、各 endpoint 路徑 |
+| `api_config.dart` | 後端連線設定：`API_BASE_URL`／`USE_BACKEND`／`COGNITO_USER_POOL_ID`／`COGNITO_APP_CLIENT_ID`，全部由 `--dart-define` 覆寫 |
 
 #### shared/models/
 
@@ -106,6 +106,7 @@ app/
 | `api_error_codes.dart` | 錯誤碼常數定義（對應 docs/api.md 的 error codes） |
 | `auth_service.dart` | 認證服務：Cognito 登入/註冊/登出/還原、管理 JWT token 與使用者身分 |
 | `auth_backend.dart` | 認證後端介面抽象（可切換 Cognito 與 Demo 實作） |
+| `cognito_auth_backend.dart` | 真實 Cognito User Pool 實作（SRP 登入、驗證碼、ID token 自動換新） |
 | `demo_auth_backend.dart` | Demo 模式認證實作（離線展示用） |
 | `demo_repository.dart` | Demo 模式資料倉庫（提供假資料供離線展示） |
 | `demo_data.dart` | Demo 模式假資料定義 |
@@ -187,6 +188,10 @@ app/
 | `elder_lang_toggle_test.dart` | 說話語言切換；重點是長者選華語時切得回來（不被照護者設的 `lang_preference` 蓋掉） |
 | `elder_text_lang_test.dart` | 畫面文字語言切換；重點是兩顆鈕互不連動，以及切換後另一顆的標題要跟著換 |
 | `routine_delete_test.dart` | 刪除例行公事走 `DELETE /routines/{id}`，不是舊的 `PATCH active:false` |
+| `elder_dialect_test.dart` | 客語腔調切換；重點是**寫失敗要講出來**——腔調只讀長者檔案，沒寫進去等於沒生效 |
+| `setup_fields_test.dart` | 初次設定的出生年／居住地區／腔調；兩條儲存路徑都驗（已登入與註冊流程） |
+| `address_region_test.dart` | 管理頁改居住地區；空字串不給存（PATCH 沒有清空欄位的語意） |
+| `create_elder_test.dart` | `POST /elders` 資料層，以及「照護者端不建立長輩」這條規則 |
 
 ---
 
@@ -213,15 +218,29 @@ cd build/web && python -m http.server 8080
 
 ### 接真後端
 
-資料來源收斂在 `CareRepository` 一個介面後面，切換是一個 `--dart-define`：
+登入與資料各自收斂在一個介面後面（`AuthBackend`／`CareRepository`），切換都只是 `--dart-define`：
 
 ```bash
 flutter run \
-  --dart-define=API_BASE_URL=https://xxx.execute-api.ap-northeast-1.amazonaws.com \
-  --dart-define=USE_BACKEND=true
+  --dart-define=API_BASE_URL=https://xxxxxxxxxx.execute-api.us-west-2.amazonaws.com/v1 \
+  --dart-define=USE_BACKEND=true \
+  --dart-define=COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx \
+  --dart-define=COGNITO_APP_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-不帶 `USE_BACKEND` 就是 demo（`DemoRepository`），帶了走 `ApiRepository`；畫面兩邊共用，不需要改任何一行。本機 RAG PoC 則是模擬器連 `10.0.2.2:8000`、桌面／網頁用 `--dart-define=API_BASE_URL=http://localhost:8000`。
+四個值分別來自 `terraform output` 的 `api_base_url`、`cognito_user_pool_id`、`cognito_user_pool_client_id`（`USE_BACKEND` 自己填 true）。App Client 沒有 secret，這些值本來就會被打包進 App，不是機密。
+
+兩個開關獨立：
+
+| 帶了什麼 | 登入 | 畫面資料 |
+|---|---|---|
+| 什麼都不帶 | demo 假帳號（驗證碼固定 `123456`） | demo 假資料 |
+| 只有 `COGNITO_*` | 真 Cognito | demo 假資料 |
+| 全部四個 | 真 Cognito | 真後端 |
+
+中間那格是排查用的：登入過了但畫面壞掉，就知道問題不在認證。**`USE_BACKEND=true` 一定要配 `COGNITO_*`**——真 API 每條路由都掛 Cognito authorizer，沒有 token 全部 401。
+
+本機 RAG PoC 則是模擬器連 `10.0.2.2:8000`、桌面／網頁用 `--dart-define=API_BASE_URL=http://localhost:8000`。
 
 提交前請確保：
 ```bash
@@ -236,26 +255,19 @@ flutter test       # 所有測試通過
 
 **已完成**
 
+- **Cognito 登入**：`CognitoAuthBackend` 走 SRP 真連 User Pool，含註冊、信箱驗證碼、ID token 過期自動換新
+- **正式 `/chat`**：`USE_BACKEND=true` 時走 `POST /chat`（含 session 與 Polly 語音回覆）。RAG PoC 的 `/ask` 只剩 demo 模式在用
 - 長者模式：語音問答免手持迴圈、今日行程與手動完成、農民曆撕曆頁首、連結家人
 - 兩種語言的輸入路徑都通了：華語裝置端辨識送 `text`、客語錄音送 `audio` 由後端辨識（api.md 兩種都收）
-- `POST /chat` 已接上（`CareRepo.chat()` → `ApiRepository` → `ChatSession`）；RAG PoC 的 `/ask` 只剩 demo 模式在用
-- 照護者模式：長輩管理（健康狀況／生活習慣／家人／例行公事增刪改）、每日摘要、統計、事件時間軸
-- 長者端可自行切換**說話語言**（華語／客語）與**畫面文字**（一般漢字／客語漢字），兩者獨立
+- 照護者模式：長輩管理（健康狀況／生活習慣／居住地區／家人／例行公事增刪改）、每日摘要、統計、事件時間軸
+- 長者端可自行切換**說話語言**、**客語腔調**（六腔）與**畫面文字**（一般漢字／客語漢字），三者獨立
 - demo 資料完整，不接後端可跑完整個流程
 
 **未完成**
 
-- **Cognito 登入**：目前是本機 demo 帳號（`DemoAuthBackend`），換裝置就沒有身分記錄。見 `auth_service.dart` 檔尾的 `TODO(cognito)`
+- **`elder_accounts` 對應表沒有人寫**：註冊時選「長輩」的帳號拿到的 token 不會有 `elder_id` claim，後端一律視為照護者。畫面仍會進長者模式，資料也存取得到（首次設定的 `POST /elders` 會把建立者綁進 `caregiver_ids`，等於自己是自己的照護者），但這不是設計上的正解
 - **`POST /elders`**：首次設定只寫本機（`setup_screen.dart`），尚未建到後端
-- **`elder_accounts` 表（sub → elder_id）**：目前沒有任何程式碼寫入。長者帳號登入後要靠它對應到自己是哪一位長輩——這是後端的部分
 
-## 後端上線的切換順序
-
-順序不能顛倒，**Cognito 先於一切**，沒有 token 其餘端點一律 401：
-
-1. 部署 terraform，拿到 API endpoint 與 Cognito User Pool ID / Client ID
-2. 接 amplify_auth_cognito，`ApiClient` 的 `tokenProvider` 指向真 token
-3. 首次設定改呼叫 `POST /elders`，並寫入 `elder_accounts`
-4. 最後才切 `--dart-define=USE_BACKEND=true`——它只是最後一個開關，不是中間步驟
-
-切過去之後 `DemoRepository` / `DemoData` / `DemoAuthBackend` 就可以整批移除。
+剩下的順序：先補 `elder_accounts`（長者帳號才拿得到 `elder_id` claim），再讓首次設定
+改呼叫 `POST /elders`。兩件都好了之後 `DemoRepository` / `DemoData` / `DemoAuthBackend`
+就可以整批移除。

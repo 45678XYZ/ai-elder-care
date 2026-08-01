@@ -26,7 +26,7 @@ class ApiConfig {
   /// 後端上線後用 `--dart-define=USE_BACKEND=true` 一次切換全部畫面：
   ///
   /// ```
-  /// flutter run --dart-define=API_BASE_URL=https://xxx.execute-api.ap-northeast-1.amazonaws.com \
+  /// flutter run --dart-define=API_BASE_URL=https://xxx.execute-api.us-west-2.amazonaws.com/v1 \
   ///             --dart-define=USE_BACKEND=true
   /// ```
   ///
@@ -34,4 +34,22 @@ class ApiConfig {
   /// 不帶這個 flag 重開就能回到可以完整走完流程的假資料，不必改程式碼重新編譯邏輯。
   static const bool useBackend =
       bool.fromEnvironment('USE_BACKEND', defaultValue: false);
+
+  /// Cognito User Pool ID（如 `us-west-2_xxxxxxxxx`），由 `terraform output
+  /// cognito_user_pool_id` 取得。
+  ///
+  /// **這個值是不是空的，決定登入走真 Cognito 還是 demo 假帳號**
+  /// （見 `AuthService.backend`）——所以不給預設值。不帶這個 define 跑起來的 App
+  /// 一定是純本機的假流程，不會半連半不連。
+  ///
+  /// region 不另外設：pool ID 的前綴就是 region，SDK 自己解得出來。
+  static const String cognitoUserPoolId =
+      String.fromEnvironment('COGNITO_USER_POOL_ID');
+
+  /// Cognito App Client ID，由 `terraform output cognito_user_pool_client_id` 取得。
+  ///
+  /// 對應的 client 沒有 secret（`generate_secret = false`），行動端才能安全內嵌——
+  /// 這個值本來就會被打包進 App，不是機密。
+  static const String cognitoAppClientId =
+      String.fromEnvironment('COGNITO_APP_CLIENT_ID');
 }

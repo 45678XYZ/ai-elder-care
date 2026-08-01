@@ -32,9 +32,12 @@ tfplan
 *.tfplan
 
 # --- AI tool configs (local, per-developer) ---
-# 給自己看的交接筆記與 AI 助手約束檔，不進版控。
+# 給自己看的交接筆記，不進版控。
+#
+# app/CLAUDE.md **不在這裡**：它雖然是 AI 助手的約束檔，實際上是全隊在維護的
+# 技術約束文件（登入用哪個套件、UI 硬性規格等），別人也會改。排除它會讓隊友
+# 的修改從 repo 消失。
 HANDOFF.md
-CLAUDE.md
 .claude/
 .codex/
 .cursor/
@@ -70,6 +73,3 @@ backend/local_runner/data/
 backend/local_runner/outputs/
 backend/local_runner/storage/
 .env.local
-
-#claude
-app/CLAUDE.md

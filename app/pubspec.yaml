@@ -38,7 +38,11 @@ dependencies:
   timezone: ^0.11.1
   # 取得裝置目前時區名稱，餵給 timezone 初始化
   flutter_timezone: ^5.1.0
-  # TODO: Cognito 登入 SDK（amplify_flutter + amplify_auth_cognito）
+  # Cognito 登入（SRP）。選純 Dart 版而非 amplify_flutter：只需要 user pool 的
+  # 註冊／驗證碼／登入這幾支 API，Amplify 會連帶要求 amplify_outputs.json 與
+  # Android/iOS 原生設定（minSdk、Podfile），為了四個方法動到建置設定不划算。
+  # SRP 對應 terraform/cognito.tf 只開 ALLOW_USER_SRP_AUTH 的設定。
+  amazon_cognito_identity_dart_2: ^4.0.0
 
 dev_dependencies:
   flutter_test:

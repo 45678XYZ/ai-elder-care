@@ -3,7 +3,9 @@ import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/api_config.dart';
 import 'auth_backend.dart';
+import 'cognito_auth_backend.dart';
 import 'demo_auth_backend.dart';
 import 'notification_service.dart';
 import 'session_store.dart';
@@ -35,8 +37,8 @@ class CognitoIdentity {
 /// 給 [ApiClient] 當 Bearer，並依 token 的 `elder_id` claim 決定進長者或照護者模式——
 /// 判定與後端 `auth.py` 完全一致。
 ///
-/// 目前只實作「解析 ID token → 身分／角色」這段純邏輯（不需後端或 User Pool）；實際登入
-/// 需接上 Cognito SDK 與 pool 設定，見檔尾 TODO。
+/// 實際跟 Cognito 講話的是 [backend]（[CognitoAuthBackend]），本類只管登入狀態的
+/// 持久化、角色判定與註冊時暫存資料的兌現。
 class AuthService {
   AuthService();
 
@@ -44,9 +46,9 @@ class AuthService {
   /// 不該讓各畫面各持一份。
   static final AuthService instance = AuthService();
 
-  /// 實際跟 Cognito 講話的實作。目前是 [DemoAuthBackend]，
-  /// User Pool 部署後換成 Cognito 實作即可，畫面不用改。
-  AuthBackend backend = DemoAuthBackend();
+  /// 實際跟 Cognito 講話的實作。預設由 [defaultAuthBackend] 依設定決定；
+  /// 測試可直接覆寫成假的。
+  AuthBackend backend = defaultAuthBackend();
 
   /// 持久化的 key。登入狀態要跨啟動保留——長輩不會每天重新登入一次。
   static const _kIdToken = 'auth_id_token';
@@ -71,10 +73,32 @@ class AuthService {
   /// 否則照護者的手機借長輩登入，會直接被丟進照護者模式。
   String? _chosenRoleSub;
 
-  /// 目前的 Cognito ID token；未登入為 null。供 [ApiClient] 的 `tokenProvider` 取用。
+  /// 上次拿到的 Cognito ID token；未登入為 null。
+  ///
+  /// 這一份**可能已經過期**——它只用來解身分（[identity]），claim 讀得出來就夠。
+  /// 要拿去打 API 請用 [freshIdToken]。
   String? get idToken => _idToken;
 
   bool get isSignedIn => _idToken != null;
+
+  /// 取一份現在確定有效的 ID token 給 [ApiClient] 當 Bearer；沒登入為 null。
+  ///
+  /// Cognito 的 ID token 效期只有一小時，而登入狀態是跨啟動保留的，所以不能沿用
+  /// [signIn] 當下那一份——每次呼叫 API 前都問一次 backend，它會在過期時用 refresh
+  /// token 換新（見 [AuthBackend.currentIdToken]）。
+  ///
+  /// backend 回 null（refresh token 也過期了）時退回 [_idToken]：拿一份過期 token 去打
+  /// 會換到 401，而 401 至少是明確的「請重新登入」；不帶 Authorization header 反而會被
+  /// API Gateway 當成匿名請求，錯誤訊息更難懂。
+  Future<String?> freshIdToken() async {
+    final fresh = await backend.currentIdToken();
+    if (fresh != null && fresh != _idToken) {
+      _idToken = fresh;
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_kIdToken, fresh);
+    }
+    return fresh ?? _idToken;
+  }
 
   /// App 啟動時還原登入狀態。
   ///
@@ -313,22 +337,28 @@ class AuthService {
     }
   }
 
-  // ---- 以下需接上 Cognito SDK 與 User Pool 設定，尚未實作 ----
-
-  // TODO(cognito): 接 amplify_auth_cognito，需 terraform/cognito.tf 提供 User Pool ID /
-  //   App Client ID / region。App 端不需要為 elder_id 做任何設定——長者身分存在後端的
-  //   elder_accounts 表（sub→elder_id），由 pre-token trigger 在發 token 時注入。
-  // TODO(cognito): signIn(email, password) → 設 _idToken；signUp(...)；signOut() → 清 _idToken。
-  // TODO(cognito): token 自動更新——過期時用 refresh token 換新（或每次 API 呼叫前取最新）。
-  // TODO(cognito): 接上後，[ApiClient] 建構時 tokenProvider 指向 `() async => idToken`
-  //   （務必給 ID token，非 access token——sub 與 custom:elder_id 只在 ID token 內）。
-
   // ---- 角色來源的後端缺口 ----
 
-  // TODO(backend): 目前沒有任何程式碼寫入 elder_accounts 表（sub→elder_id）。註冊時選
-  //   「長輩」只有在 demo 後端底下才會讓 token 帶 elder_id（見 [declarePendingRole]）；
-  //   正解是註冊／首次設定時由後端建立長者資料並寫入 elder_accounts，
-  //   之後 pre-token trigger 才注得進 claim。
+  // TODO(backend): 目前沒有任何程式碼寫入 elder_accounts 表（sub→elder_id），所以接上真
+  //   Cognito 後，註冊時選「長輩」的帳號拿到的 token 不會有 elder_id claim，後端一律視為
+  //   照護者。畫面仍會進長者模式（[effectiveRole] 退回本機宣告），資料也存取得到——
+  //   首次設定的 `POST /elders` 會把建立者自己綁進 `caregiver_ids`，等於「自己是自己的
+  //   照護者」。正解是那一步同時寫入 elder_accounts，之後 pre-token trigger 才注得進 claim。
   // TODO(backend): 照護者身分只存在本機（[_kChosenRole]），換裝置或清除 App 資料就會再被問
   //   一次「請問你是？」。正解是後端記錄使用者的 role，App 端只讀不猜。
 }
+
+/// 依設定決定登入要走真 Cognito 還是 demo 假帳號。
+///
+/// 判準是 [ApiConfig.cognitoUserPoolId] 有沒有給：不帶 `--dart-define` 直接
+/// `flutter run` 就是純本機的假流程（demo 當天真後端連不上時的退路，
+/// 見 [ApiConfig.useBackend] 的說明），帶了才會真的連上 AWS。
+///
+/// 兩個開關刻意分開：[ApiConfig.useBackend] 管資料要不要走真 API，這裡管登入。
+/// 合成一個的話沒辦法「用真帳號登入、但畫面資料走假的」——排查是誰壞掉時很需要這一格。
+AuthBackend defaultAuthBackend() => ApiConfig.cognitoUserPoolId.isEmpty
+    ? DemoAuthBackend()
+    : CognitoAuthBackend(
+        userPoolId: ApiConfig.cognitoUserPoolId,
+        clientId: ApiConfig.cognitoAppClientId,
+      );
