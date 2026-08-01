@@ -41,8 +41,6 @@ flowchart TB
         asrproviders["AWS ASR providers<br/>Transcribe zh-TW Streaming<br/>CE 備援 + Formo 六腔固定 prompt"]
         brain["AgentCore Runtime<br/>LangGraph 對話大腦 + 託管長期記憶"]
         model["Bedrock foundation model<br/>chat structured output + batch extraction"]
-        embed["Bedrock embedding model<br/>concept retrieval + turn segmentation"]
-        vectors[("S3 Vectors<br/>UCO concept index")]
         rules["deterministic safety rules"]
         tts["後端 TTS 模組<br/>語言/六腔路由 + 同語言備援"]
         ttsmodels["TTS providers<br/>OmniVoice / VoxHakka / BreezyVoice / Polly"]
@@ -74,9 +72,6 @@ flowchart TB
     closer -->|enqueue after closed| queue
     queue --> batch
     batch -->|batch extraction| model
-    batch -->|text embedding| embed
-    embed -->|query vector| vectors
-    vectors -->|Top-K candidate concepts| batch
     batch -->|normal events + batch state| ddb
     queue -->|重試耗盡| dlq
     dlq -->|DLQ event source| dlqreconciler

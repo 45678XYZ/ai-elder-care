@@ -36,8 +36,7 @@ logger = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-TAXONOMY_ASSETS_DIR = ASSETS_DIR / "taxonomy"
+TAXONOMY_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "taxonomy"
 
 EXTRACTION_PROMPT_GUIDED = "prompt_guided"
 EXTRACTION_STRUCTURED_OUTPUT = "structured_output"
