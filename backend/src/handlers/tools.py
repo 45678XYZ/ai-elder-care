@@ -45,8 +45,25 @@ def _get_cognito_client():
     return _cognito_client
 
 
+def _get_elder_own_sub(elder_id: str) -> str | None:
+    """查 elder_accounts 表取得長者本人的 sub，用以排除自己不收到 SNS 通知。"""
+    try:
+        table = db.get_dynamodb_resource().Table(db.TABLE_ELDER_ACCOUNTS)
+        # elder_accounts 以 sub 為 key，沒有 elder_id 的 GSI，只能 scan。
+        # 但每位長者只有一筆，表很小，可接受。
+        resp = table.scan(
+            FilterExpression="elder_id = :eid",
+            ExpressionAttributeValues={":eid": elder_id},
+            Limit=1,
+        )
+        items = resp.get("Items", [])
+        return items[0]["sub"] if items else None
+    except Exception:
+        return None
+
+
 def _get_caregiver_emails(elder_id: str) -> list[str]:
-    """從 elder 的 caregiver_ids 查 Cognito 取得每位照護者的 email。"""
+    """從 elder 的 caregiver_ids 查 Cognito 取得每位照護者的 email（排除長者本人）。"""
     elder = db.get_elder(elder_id)
     if not elder:
         return []
@@ -54,9 +71,13 @@ def _get_caregiver_emails(elder_id: str) -> list[str]:
     if not caregiver_ids or not _USER_POOL_ID:
         return []
 
+    elder_sub = _get_elder_own_sub(elder_id)
+
     emails = []
     client = _get_cognito_client()
     for sub in caregiver_ids:
+        if sub == elder_sub:
+            continue
         try:
             resp = client.admin_get_user(
                 UserPoolId=_USER_POOL_ID,
