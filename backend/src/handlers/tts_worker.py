@@ -48,6 +48,11 @@ S3_BUCKET_NAME = os.environ.get("S3_AUDIO_BUCKET", "e-hakka-care-audio")
 # 又從頭合成一次——重試的成本在這裡是好幾分鐘的 GPU 時間。
 SYNTHESIS_BUDGET_SECONDS = float(os.environ.get("TTS_WORKER_BUDGET_SECONDS", "540"))
 
+# 佇列的 maxReceiveCount（見 terraform/tts_worker.tf 的 redrive_policy）。
+# 兩邊必須一致：這個值只用來認出「這是最後一次投遞」，好在訊息掉進 DLQ 之前把 turn 的
+# pending 標記收乾淨。設得比實際大就永遠認不出來，設得比實際小則會提早放棄重試機會。
+MAX_RECEIVE_COUNT = int(os.environ.get("TTS_MAX_RECEIVE_COUNT", "2"))
+
 # 這些類別再投幾次也不會成功：設定沒核准、語言不支援、文字不合法。
 # 交回 SQS 只會佔用佇列並最終進 DLQ，因此直接 ACK 並留下 log。
 _PERMANENT_CATEGORIES = frozenset(
@@ -87,8 +92,28 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         except Exception:
             # 不記錄 raw exception：可能含 endpoint、回覆文字或 SDK response。
             logger.warning("TTS 暫時失敗，交回 SQS 重投：message_id=%s", message_id)
+            # 這是最後一次投遞：交回去之後訊息就進 DLQ，而 DLQ 沒有 consumer，
+            # 不會再有人清掉 turn 的 pending 標記——App 會一路等到 presigned URL 過期，
+            # 畫面上就是「正在準備聲音」再也不動。先把 turn 收乾淨，再照樣交回 SQS
+            # 讓它進 DLQ 留存證據；兩件事不衝突，而少了前者長輩就只能對著畫面等。
+            if _is_final_attempt(record):
+                _mark_unavailable(record)
             failures.append({"itemIdentifier": message_id})
     return {"batchItemFailures": failures}
+
+
+def _is_final_attempt(record: dict[str, Any]) -> bool:
+    """這次投遞是不是 DLQ 前的最後一次。
+
+    取不到或解析不出 `ApproximateReceiveCount` 時回 False：寧可漏收一次 pending 標記
+    （App 等到 URL 過期），也不要在還有重試機會時就把 turn 標成沒有音訊——那會讓
+    原本救得回來的一句話提早放棄。
+    """
+    raw = (record.get("attributes") or {}).get("ApproximateReceiveCount")
+    try:
+        return int(raw) >= MAX_RECEIVE_COUNT
+    except (TypeError, ValueError):
+        return False
 
 
 def _mark_unavailable(record: dict[str, Any]) -> None:

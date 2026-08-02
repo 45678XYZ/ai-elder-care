@@ -8,6 +8,13 @@
 # chat 只負責入列並立刻回文字；worker 用 Lambda 能跑 15 分鐘的預算把 MP3 寫進 S3，
 # 再把 key 補回 turn。契約見 docs/api.md 的 reply_audio_status。
 
+# 重試次數同時是佇列的 redrive 設定與 worker 的判斷依據，因此只留一份。
+# worker 靠它認出「這是最後一次投遞」，好在訊息掉進 DLQ 之前把 turn 的 pending 標記
+# 收乾淨（見 backend/src/handlers/tts_worker.py 的 _is_final_attempt）。
+locals {
+  tts_max_receive_count = 2
+}
+
 resource "aws_sqs_queue" "tts_dlq" {
   name = "${var.project_name}-tts-dlq"
 
@@ -36,7 +43,7 @@ resource "aws_sqs_queue" "tts" {
     deadLetterTargetArn = aws_sqs_queue.tts_dlq.arn
     # 合成很貴，重試次數壓低：provider 暫時性故障靠這兩次吸收，再失敗就讓它進 DLQ，
     # 不要用整個 GPU 佇列去換一段長者其實已經看得到文字的音訊。
-    maxReceiveCount = 2
+    maxReceiveCount = local.tts_max_receive_count
   })
 }
 
@@ -84,6 +91,9 @@ module "tts_worker" {
     # 快速失敗。留 60 秒給函數自己收尾，避免 Lambda 先被砍導致訊息重投、整段重做。
     TTS_SAGEMAKER_READ_TIMEOUT_SECONDS = tostring(var.tts_worker_timeout - 60)
     TTS_WORKER_BUDGET_SECONDS          = tostring(var.tts_worker_timeout - 60)
+
+    # 必須與上面佇列的 redrive_policy 同值，worker 才認得出最後一次投遞。
+    TTS_MAX_RECEIVE_COUNT = tostring(local.tts_max_receive_count)
   }
 }
 
