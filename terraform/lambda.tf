@@ -844,7 +844,12 @@ resource "aws_iam_role_policy_attachment" "api_routines_logs" {
 
 data "aws_iam_policy_document" "api_routines_data" {
   # 版本不可變：建立走 PutItem，改版走 transact_write_items（關閉舊 current + 寫新版），
-  # 因此需要 PutItem 與 UpdateItem——transaction 在 IAM 上檢查的是底層那兩個動作
+  # 因此需要 PutItem 與 UpdateItem——transaction 在 IAM 上檢查的是底層那兩個動作。
+  #
+  # DELETE 是真的硬刪：db.delete_routine 用 batch_writer 刪掉所有版本（BatchWriteItem）
+  # 再寫 tombstone。少了這兩個動作，讀寫都正常、只有刪除會在 AccessDenied 當下拋出
+  # 未被接住的 ClientError，對外變成 500 INTERNAL_ERROR。DeleteItem 一併放行：
+  # batch_writer 只有一筆時仍走 BatchWriteItem，但單筆刪除的路徑不該依賴這個細節。
   statement {
     sid    = "RoutinesWrite"
     effect = "Allow"
@@ -853,6 +858,8 @@ data "aws_iam_policy_document" "api_routines_data" {
       "dynamodb:GetItem",
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:BatchWriteItem",
       "dynamodb:Query",
     ]
 

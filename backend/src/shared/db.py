@@ -1040,12 +1040,6 @@ def delete_routine(routine_id: str, *, deleted_by: str, client_request_id: str) 
     versions = list_routine_versions(routine_id)
 
     table = get_dynamodb_resource().Table(TABLE_ROUTINES)
-    with table.batch_writer() as batch:
-        for v in versions:
-            if int(v["version"]) == TOMBSTONE_VERSION:
-                continue
-            batch.delete_item(Key={"routine_id": routine_id, "version": int(v["version"])})
-
     tombstone = {
         "routine_id": routine_id,
         "version": TOMBSTONE_VERSION,
@@ -1055,7 +1049,21 @@ def delete_routine(routine_id: str, *, deleted_by: str, client_request_id: str) 
         "deleted_at": int(time.time()),
         "ttl": int(time.time()) + TOMBSTONE_TTL_DAYS * 86400,
     }
-    table.put_item(Item=tombstone)
+
+    # 與本檔其餘寫入一致地把 ClientError 收成 DBError：這裡漏掉的話，缺權限之類的錯誤
+    # 會以裸 ClientError 冒到 handler 的 catch-all，CloudWatch 只剩 traceback 而沒有
+    # 「刪除例行公事失敗」這條線索（api_routines 角色缺 BatchWriteItem 就是這樣被埋掉的）。
+    try:
+        with table.batch_writer() as batch:
+            for v in versions:
+                if int(v["version"]) == TOMBSTONE_VERSION:
+                    continue
+                batch.delete_item(Key={"routine_id": routine_id, "version": int(v["version"])})
+
+        table.put_item(Item=tombstone)
+    except ClientError as e:
+        raise DBError(f"刪除例行公事失敗: {e.response['Error']['Message']}")
+
     return tombstone
 
 
