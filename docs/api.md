@@ -133,6 +133,7 @@ response 前只執行：
   "transcript": "我吃過血壓藥了，明天下午三點小明要帶我去看醫生",
   "reply_text": "有按時吃藥真棒！明天下午三點小明帶你去看醫生，我幫你記下來了，明天會提醒你。",
   "reply_audio_url": "https://<s3-presigned-url>",
+  "reply_audio_status": "pending",
   "routines_updated": true
 }
 ```
@@ -143,8 +144,22 @@ response 前只執行：
 | `session_id` | 本 turn 首次接納時實際使用的 session；相同 `client_request_id` replay 一律回原 ID，即使該 session 後續已 closing/closed。只有全新 ID 在指定原 session idle、closing、closed 或達上限時才會取得新 ID |
 | `transcript` | audio 的 ASR 結果；text 則原樣回傳 |
 | `reply_text` | AI 回覆 |
-| `reply_audio_url` | 15 分鐘 S3 presigned URL；TTS 全部失敗、音訊無法儲存或簽發時為 `null`，但文字 turn 仍 completed |
+| `reply_audio_url` | 15 分鐘 S3 presigned URL；`reply_audio_status` 為 `unavailable` 或簽發失敗時為 `null`，但文字 turn 仍 completed |
+| `reply_audio_status` | `pending`｜`ready`｜`unavailable`，見下方說明 |
 | `routines_updated` | 本次 response 前已成功建立、修改、停用 routine 或完成 occurrence 時為 true，否則為 false |
+
+語音合成是非同步的。自建 TTS 模型合成一段回覆要數十秒到數分鐘，而本 API 走 API Gateway
+REST、整條請求上限 29 秒，因此 `/chat` 只回文字並把合成工作入列，音訊稍後才寫進
+`reply_audio_url` 指向的位置。
+
+| `reply_audio_status` | 意義 | App 的行為 |
+|---|---|---|
+| `pending` | 合成已入列，音訊尚未就緒 | URL 目前會回 404；在 15 分鐘效期內重試，取得 200 後播放 |
+| `ready` | 音訊已存在 | 直接播放 |
+| `unavailable` | 本輪不會有音訊（無可用 provider、語言不支援或入列失敗） | 只呈現文字，不必等待 |
+
+以相同 `client_request_id` 重送時，狀態同樣反映當下：合成還沒完成回 `pending`，完成後
+回 `ready`。turn 只在音訊真的寫入 S3 之後才保存 object key，因此 `ready` 保證可播放。
 
 `routines_updated` 必須反映已提交的業務結果，不得只代表模型曾提出候選。App 收到 true 後可背景呼叫 `GET /routines` 更新定義與當日狀態。一般 events 尚未產生不影響 200 response；回覆失敗時沿用通用錯誤格式。
 
