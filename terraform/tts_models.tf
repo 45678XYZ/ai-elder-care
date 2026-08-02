@@ -47,15 +47,23 @@ locals {
         languages     = "zh-TW"
         dialects      = ""
         speaker       = ""
-        instance_type = "ml.g4dn.4xlarge"
+        # A10G 而非 T4：實測 g4dn.4xlarge 上每段文字要 20-25 秒，一則多段回覆動輒破分鐘。
+        # 換 g5.4xlarge 約快 2-3 倍。合成仍然遠超過同步請求能等的長度，因此是非同步路徑
+        # 的補強而不是替代（見 tts_worker.tf）。
+        instance_type = "ml.g5.4xlarge"
       }
     } : {}
   )
 
-  # 2026-07-22 競賽帳號的 SageMaker real-time endpoint instance 配額。
+  # 競賽帳號的 SageMaker real-time endpoint instance 配額（2026-08-02 查核）。
+  #
+  # 這些額度是帳號層級、與 ASR endpoint 共用的：ASR 目前佔用 ml.g5.2xlarge×2、
+  # ml.g5.xlarge×2、ml.g4dn.2xlarge×2，因此那三種機型不列在這裡，避免 TTS 佔走之後
+  # ASR 的六腔端點建不起來。
   tts_endpoint_instance_quotas = {
     "ml.g4dn.xlarge"  = 2
     "ml.g4dn.4xlarge" = 1
+    "ml.g5.4xlarge"   = 1
   }
   tts_requested_instance_types = [
     for model in values(local.tts_remote_models) : model.instance_type

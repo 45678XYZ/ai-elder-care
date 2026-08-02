@@ -299,7 +299,8 @@ class TestTerraformSpeechInfrastructureContract:
         """三個 TTS 模型使用逐模型固定機型且不建立 autoscaling。"""
         source = _terraform_source("tts_models.tf")
         assert source.count('instance_type = "ml.g4dn.xlarge"') == 2
-        assert source.count('instance_type = "ml.g4dn.4xlarge"') == 1
+        # BreezyVoice 用 A10G：T4 上每段文字要 20-25 秒，多段回覆動輒破分鐘。
+        assert source.count('instance_type = "ml.g5.4xlarge"') == 1
         assert source.count("initial_instance_count = 1") == 1
         assert 'check "tts_endpoint_instance_quotas"' in source
         assert "aws_appautoscaling_target" not in source

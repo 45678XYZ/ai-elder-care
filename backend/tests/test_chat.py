@@ -20,10 +20,21 @@ REPLY = "阿蘭嬤，太棒了！我已經幫您登記好血壓藥囉。"
 
 
 class DummyTTSFacade:
-    def synthesize(self, **kwargs):
-        from src.shared.tts import SynthesizedAudio
+    """合成已移出同步路徑，chat 只問「這輪會不會有音訊」。"""
 
-        return SynthesizedAudio(b"mock-mp3-bytes", "test_tts")
+    def is_available(self, language, dialect):
+        return True
+
+
+class DummySqsClient:
+    """記錄 chat 送出的合成工作，供測試檢查入列內容。"""
+
+    def __init__(self):
+        self.messages = []
+
+    def send_message(self, **kwargs):
+        self.messages.append(kwargs)
+        return {"MessageId": "msg-1"}
 
 
 def _make_event(body_dict, elder_id=ELDER):
@@ -102,9 +113,9 @@ def stack(monkeypatch):
         )
         monkeypatch.setattr(chat.db, "get_elder", lambda elder_id: {"elder_id": elder_id})
         monkeypatch.setattr(chat, "get_tts_facade", lambda: DummyTTSFacade())
-        monkeypatch.setattr(
-            chat, "upload_audio_to_s3", lambda audio, conv_id: f"tts/{conv_id}.mp3"
-        )
+        monkeypatch.setattr(chat, "TTS_QUEUE_URL", "https://sqs.example.com/tts")
+        sqs = DummySqsClient()
+        monkeypatch.setattr(chat, "get_sqs_client", lambda: sqs)
         monkeypatch.setattr(
             chat, "presign_audio", lambda key: f"https://s3.example.com/{key}" if key else None
         )
@@ -274,8 +285,9 @@ def test_first_turn_creates_a_session_and_completes(stack):
     assert turn["request_status"] == turns.STATUS_COMPLETED
     assert turn["elder_transcript"] == TRANSCRIPT
     assert turn["ai_respond_text"] == REPLY
-    # 音訊只存 object key，URL 每次重新簽發
-    assert turn["ai_respond_audio_s3_key"] == f"tts/{body['conversation_id']}.mp3"
+    # 合成非同步進行；key 由 worker 在 MP3 真的寫進 S3 之後才補上
+    assert "ai_respond_audio_s3_key" not in turn
+    assert turn["ai_respond_audio_pending"] is True
     assert "ai_respond_audio_url" not in turn
 
     session = sessions.get_session(ELDER, body["session_id"])
@@ -423,18 +435,17 @@ def test_expired_lease_is_taken_over_and_completed(stack, monkeypatch):
 def test_tts_failure_completes_text_turn_and_frees_the_session(stack, monkeypatch):
     chat, db, sessions, turns, _ = stack
 
-    class BrokenTTSFacade:
-        def synthesize(self, **kwargs):
-            from src.shared.tts import TtsErrorCategory, TypedTtsError
+    class NoProviderTTSFacade:
+        def is_available(self, language, dialect):
+            return False
 
-            return TypedTtsError(
-                TtsErrorCategory.PROVIDER_UNAVAILABLE, "provider down", True
-            )
-
-    monkeypatch.setattr(chat, "get_tts_facade", lambda: BrokenTTSFacade())
+    monkeypatch.setattr(chat, "get_tts_facade", lambda: NoProviderTTSFacade())
     response = post(chat)
     assert response["statusCode"] == 200
-    assert body_of(response)["reply_audio_url"] is None
+    body = body_of(response)
+    # 沒有可用 provider 時不入列，也不讓 App 空等一段不會來的音訊
+    assert body["reply_audio_url"] is None
+    assert body["reply_audio_status"] == "unavailable"
 
     turn = turns.get_turn(ELDER, turns.conversation_id_for(ELDER, REQUEST_ID))
     assert turn["request_status"] == turns.STATUS_COMPLETED
@@ -451,32 +462,53 @@ def test_tts_failure_replays_the_completed_text_result(stack, monkeypatch):
     chat, _, _, _, calls = stack
 
     class BrokenTTSFacade:
-        def synthesize(self, **kwargs):
-            raise RuntimeError("polly down")
+        def is_available(self, language, dialect):
+            raise RuntimeError("tts config exploded")
 
     monkeypatch.setattr(chat, "get_tts_facade", lambda: BrokenTTSFacade())
-    post(chat)
-    monkeypatch.setattr(chat, "get_tts_facade", lambda: DummyTTSFacade())
+    first = body_of(post(chat))
+    # TTS 爆掉不影響文字 turn：內容與副作用都是真的
+    assert first["reply_text"] == REPLY
+    assert first["reply_audio_status"] == "unavailable"
 
+    monkeypatch.setattr(chat, "get_tts_facade", lambda: DummyTTSFacade())
     response = post(chat)
     assert response["statusCode"] == 200
-    assert body_of(response)["reply_audio_url"] is None
+    # 冪等重送不重跑 Agent，也不會把已終態的 turn 改成 pending
+    assert body_of(response)["reply_audio_status"] == "unavailable"
     assert calls == [TRANSCRIPT]
 
 
-def test_unstored_audio_does_not_become_a_dead_link(stack, monkeypatch):
-    """存不進 S3 就不留 key：帶著 key 提交成 completed，之後每次重播都是一條死連結。"""
+def test_pending_audio_is_not_committed_as_a_key(stack):
+    """合成還沒完成就不留 key：帶著 key 提交成 completed，之後每次重播都是一條死連結。"""
     chat, _, _, turns, _ = stack
-    monkeypatch.setattr(chat, "upload_audio_to_s3", lambda audio, conv_id: None)
 
     body = body_of(post(chat))
-    assert body["reply_audio_url"] is None
-    # 回覆內容與副作用都是真的，這一輪仍然成立
+    # URL 有簽出來讓 App 輪詢，但狀態明確標示音訊還沒就緒
+    assert body["reply_audio_status"] == "pending"
+    assert body["reply_audio_url"] is not None
     assert body["reply_text"] == REPLY
 
     turn = turns.get_turn(ELDER, body["conversation_id"])
     assert turn["request_status"] == turns.STATUS_COMPLETED
+    # key 要等 worker 真的把 MP3 寫進 S3 才由它補上
     assert "ai_respond_audio_s3_key" not in turn
+    assert turn["ai_respond_audio_pending"] is True
+
+
+def test_enqueued_synthesis_carries_what_the_worker_needs(stack):
+    """入列內容缺一不可：worker 靠它決定寫到哪個 key、補寫哪個 turn。"""
+    chat, _, _, _, _ = stack
+    body = body_of(post(chat))
+
+    messages = chat.get_sqs_client().messages
+    assert len(messages) == 1
+    payload = json.loads(messages[0]["MessageBody"])
+    assert payload["elder_id"] == ELDER
+    assert payload["conversation_id"] == body["conversation_id"]
+    assert payload["object_key"] == f"tts/{body['conversation_id']}.mp3"
+    assert payload["text"] == REPLY
+    assert payload["language"] == "zh-TW"
 
 
 def test_bedrock_failure_is_recorded_as_failed(stack, monkeypatch):

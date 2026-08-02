@@ -16,13 +16,14 @@ import '../../theme/app_theme.dart';
 import '../widgets/greeting_slot.dart';
 
 /// 對話迴圈階段。
-enum _Phase { idle, listening, thinking, speaking }
+enum _Phase { idle, listening, thinking, preparingVoice, speaking }
 
 /// S3 `/elder/chat` — 長者模式語音陪伴主畫面。
 ///
 /// 免手持迴圈：裝置端 ASR 聆聽（zh-TW）→ 送 `CareRepo.chat()` → 唸出回覆 →
 /// 唸完自動再聆聽（見 docs/framework.md）。回覆優先播後端合成的 `reply_audio_url`，
-/// 沒有才退回裝置端 TTS（見 [_speakReply]）。
+/// 沒有才退回裝置端 TTS（見 [_speakReply]）。後端合成是非同步的，回應當下音訊通常還在
+/// 生成中，因此 [_speakReply] 會先等它就緒；等太久就不等了，改用裝置端 TTS。
 ///
 /// 回覆帶 `routines_updated=true` 時走 [RoutineSync.refresh]：長輩用講的完成或新增行程，
 /// 後端會寫進 routines，但今日畫面與本地通知是 App 自己的，不重整就看不到。
@@ -51,6 +52,13 @@ class _ChatScreenState extends State<ChatScreen>
   late final AnimationController _pulse;
 
   _Phase _phase = _Phase.idle;
+
+  /// 等後端語音的上限。超過就改用裝置端 TTS 唸。
+  ///
+  /// 這個值是在「聽到台灣口音」與「不要讓長輩對著安靜的畫面等」之間取捨。免手持迴圈
+  /// 是靠「唸完自動再聆聽」串起來的，中間空太久對長輩來說跟當機沒兩樣；但自建模型
+  /// 合成一段回覆本來就要數十秒（見 docs/tts/framework.md），設太短等於永遠用不到。
+  static const _voiceWaitTimeout = Duration(seconds: 25);
 
   /// 免手持迴圈是否開啟；為 true 時每次唸完回覆會自動再聆聽。
   bool _conversationActive = false;
@@ -613,7 +621,7 @@ class _ChatScreenState extends State<ChatScreen>
         _setPhase(_Phase.speaking);
       });
       _scrollToBottom();
-      await _speakReply(reply);
+      await _speakReply(reply, seq);
     } on ApiException catch (_) {
       if (!mounted || seq != _turnSeq) return;
       setState(() => _conversationActive = false); // 出錯就停迴圈，避免一直重打
@@ -640,13 +648,30 @@ class _ChatScreenState extends State<ChatScreen>
   /// 後端那把聲音才是長輩該聽到的（客語裝置端 TTS 根本唸不出來），但 presigned URL
   /// 有時效、也可能載不動。這種時候寧可用裝置端唸出同一段文字，也不要讓長輩對著
   /// 一個安靜的畫面等——免手持迴圈是靠「唸完自動再聆聽」串起來的，沒有聲音等於斷掉。
-  Future<void> _speakReply(ChatReply reply) async {
+  Future<void> _speakReply(ChatReply reply, int seq) async {
     if (reply.replyAudioUrl.isNotEmpty) {
-      try {
-        await _audio.playUrl(reply.replyAudioUrl);
-        return;
-      } catch (_) {
-        // 落到下面的裝置端 TTS
+      var ready = reply.replyAudioStatus == ChatAudioStatus.ready;
+
+      if (reply.replyAudioStatus == ChatAudioStatus.pending) {
+        // 等的時候畫面不能還寫著「我正在說」——那段時間是安靜的，長輩會以為當機。
+        if (mounted) setState(() => _setPhase(_Phase.preparingVoice));
+        ready = await _audio.waitUntilReady(
+          reply.replyAudioUrl,
+          timeout: _voiceWaitTimeout,
+        );
+        // 等待期間長輩按了停止（或又開了新的一輪）：這份回應已經沒人要了。
+        // 少了這道檢查，按下停止之後這裡照樣會把階段拉回 speaking 並唸出來。
+        if (!mounted || seq != _turnSeq) return;
+        setState(() => _setPhase(_Phase.speaking));
+      }
+
+      if (ready) {
+        try {
+          await _audio.playUrl(reply.replyAudioUrl);
+          return;
+        } catch (_) {
+          // 落到下面的裝置端 TTS
+        }
       }
     }
     await _audio.speak(reply.replyText);
@@ -677,6 +702,7 @@ class _ChatScreenState extends State<ChatScreen>
   String _statusText(_Phase p) => switch (p) {
         _Phase.listening => t('我在聽，說完停一下'),
         _Phase.thinking => t('聽到了，正在想…'),
+        _Phase.preparingVoice => t('正在準備聲音…'),
         _Phase.speaking => t('我正在說'),
         _Phase.idle => _conversationActive ? t('準備中…') : t('按一下就可以說話'),
       };
@@ -1025,7 +1051,10 @@ class _MicOrb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pulsing = !reduceMotion &&
-        (phase == _Phase.listening || phase == _Phase.speaking);
+        (phase == _Phase.listening ||
+            phase == _Phase.speaking ||
+            // 等後端語音那段畫面是安靜的；外環繼續動，長輩才看得出還在進行中。
+            phase == _Phase.preparingVoice);
     return Semantics(
       button: onTap != null,
       enabled: onTap != null,
@@ -1033,6 +1062,7 @@ class _MicOrb extends StatelessWidget {
         _Phase.idle => t('開始說話'),
         _Phase.listening => t('聆聽中，點一下結束'),
         _Phase.thinking => t('思考中，請稍等'),
+        _Phase.preparingVoice => t('準備聲音中，請稍等'),
         _Phase.speaking => t('回覆中，點一下停止'),
       },
       child: GestureDetector(
@@ -1096,7 +1126,7 @@ class _MicOrb extends StatelessWidget {
       );
     }
     final icon = switch (phase) {
-      _Phase.speaking => Icons.graphic_eq,
+      _Phase.speaking || _Phase.preparingVoice => Icons.graphic_eq,
       _Phase.listening => Icons.mic,
       _ => Icons.mic_none,
     };

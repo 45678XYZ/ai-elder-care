@@ -25,9 +25,33 @@ Agent reply_text + lang + profile dialect + deadline + correlation
         ▼
  SynthesizedAudio | TypedTtsError
         │
-        ├─ 成功：上傳 S3，API 回 presigned URL
-        └─ 失敗：turn 仍 completed，reply_audio_url=null
+        ├─ 成功：上傳 S3，再把 object key 補回 turn
+        └─ 失敗：turn 仍 completed，reply_audio_status=unavailable
 ```
+
+## 合成不在請求路徑上
+
+自建模型合成一段回覆要數十秒到數分鐘，而 `POST /chat` 走 API Gateway REST，整條請求上限
+29 秒。在同步路徑上這些 provider 永遠等不到、永遠 fallback，等於白建。更關鍵的是逾時不會
+取消：SageMaker 不因呼叫端斷線而停止推論，容器仍會把那段合成做完，於是每個逾時的請求都在
+序列化的 endpoint 上多排一份沒人收得到的工作，積壓只會愈來愈深。
+
+因此 `/chat` 只做兩件事：問 `TtsFacade.is_available()` 這輪會不會有音訊，然後把工作送進
+SQS，立刻回文字。實際合成由 `tts_worker` Lambda 完成（可跑 15 分鐘），寫入 S3 之後再把
+object key 補回 turn。
+
+```text
+POST /chat ──→ is_available? ──→ SQS ──→ tts_worker ──→ S3 物件
+     │                                        │
+     └─ 立刻回文字 + reply_audio_status        └─ 成功後才把 key 寫進 turn
+```
+
+key 必須等物件真的存在才寫進 turn：turn 帶著 key 就代表「這句話有音檔」，之後每次重播都會
+依它簽發 presigned URL，指向不存在的物件時長者只會拿到一條播不出來的連結。App 端的狀態
+契約見 [`docs/api.md`](../api.md) 的 `reply_audio_status`。
+
+Chat 與 worker 的 SageMaker read timeout 刻意不同（`TTS_SAGEMAKER_READ_TIMEOUT_SECONDS`）：
+chat 端短逾時讓不可能及時回應的 provider 快速失敗，worker 端則真的等它做完。
 
 ## 語言與 provider 順序
 
@@ -41,7 +65,9 @@ Terraform 預設不建立遠端 TTS endpoint。中文在未核准台灣華語模
 
 三個自託管 provider 使用獨立 enable／approval gate，可同時建立；每個 endpoint 固定一台且
 不建立 autoscaling：OmniVoice、VoxHakka 各使用 `ml.g4dn.xlarge`，BreezyVoice 使用
-`ml.g4dn.4xlarge`。Instance 建立不代表模型通過 production gate。
+`ml.g5.4xlarge`。BreezyVoice 用 A10G 而非 T4，是因為實測 `ml.g4dn.4xlarge` 上每段文字要
+20-25 秒；換機型約快 2-3 倍，但仍遠超過同步請求能等的長度，因此是非同步路徑的補強而不是
+替代。Instance 建立不代表模型通過 production gate。
 
 ## 六腔設定
 

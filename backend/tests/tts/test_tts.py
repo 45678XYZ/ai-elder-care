@@ -33,7 +33,11 @@ def _gate(value=True):
 
 
 def _config():
-    return parse_tts_config(
+    return parse_tts_config(_config_dict())
+
+
+def _config_dict():
+    return (
         {
             "schema_version": 1,
             "routes": {
@@ -260,3 +264,48 @@ def test_polly_uses_configured_engine_and_voice():
     assert isinstance(result, SynthesizedAudio)
     assert client.kwargs["Engine"] == "neural"
     assert client.kwargs["VoiceId"] == "Zhiyu"
+
+
+# ─────────────────────────────────────────────────────────────────
+# 非同步 TTS：合成前的可用性判定
+# ─────────────────────────────────────────────────────────────────
+def _facade_with(config, calls=None):
+    registry = {
+        "omni": _Provider("omni", None, calls if calls is not None else []),
+        "vox": _Provider("vox", None, calls if calls is not None else []),
+    }
+    return build_facade(config, registry)
+
+
+def test_is_available_is_true_for_an_approved_route():
+    """chat 靠這個判斷要不要讓 App 等音訊，不能為了問而先合成一次。"""
+    calls = []
+    facade = _facade_with(_config(), calls)
+
+    assert facade.is_available(Language.HAK, HakkaDialect.SIXIAN) is True
+    # 判定不得觸發任何 provider 呼叫
+    assert calls == []
+
+
+def test_is_available_is_false_when_the_gate_is_not_approved():
+    raw = _config_dict()
+    raw["model_metadata"]["omni"]["approved_for_production"] = False
+    raw["model_metadata"]["omni"]["production_gate"] = _gate(False)
+    raw["model_metadata"]["vox"]["approved_for_production"] = False
+    raw["model_metadata"]["vox"]["production_gate"] = _gate(False)
+    facade = _facade_with(parse_tts_config(raw))
+
+    assert facade.is_available(Language.HAK, HakkaDialect.SIXIAN) is False
+
+
+def test_is_available_is_false_for_an_unrouted_dialect():
+    facade = _facade_with(_config())
+
+    assert facade.is_available(Language.HAK, HakkaDialect.DAPU) is False
+
+
+def test_is_available_requires_a_dialect_for_hakka():
+    """客語沒帶腔調時 synthesize 會被擋下，可用性判定必須給同樣的答案。"""
+    facade = _facade_with(_config())
+
+    assert facade.is_available(Language.HAK, None) is False
