@@ -20,13 +20,13 @@ true，除非另取得可用授權。模型頁宣告或第三方聲稱不等於 
 
 推論容器與部署／驗收步驟：
 
-- BreezyVoice：[`tts-container/breezyvoice/README.md`](../../tts-container/breezyvoice/README.md)
-- OmniVoice：[`tts-container/omnivoice/README.md`](../../tts-container/omnivoice/README.md)
+- BreezyVoice：[`tts-container/breezyvoice/README.md`](../../../tts-container/breezyvoice/README.md)
+- OmniVoice：[`tts-container/omnivoice/README.md`](../../../tts-container/omnivoice/README.md)
 
 兩者都是 zero-shot 模型，音色來自打包在 model artifact 內的固定參考音檔，該錄音的授權
 與同意證明屬於 `license_cleared` 的一部分。VoxHakka 尚未建立容器。
 
 BreezyVoice 的推論容器與部署／驗收步驟見
-[`tts-container/breezyvoice/README.md`](../../tts-container/breezyvoice/README.md)。它是
+[`tts-container/breezyvoice/README.md`](../../../tts-container/breezyvoice/README.md)。它是
 zero-shot 模型，音色來自打包在 model artifact 內的固定參考音檔，該錄音的授權與同意證明
 屬於 `license_cleared` 的一部分。OmniVoice 與 VoxHakka 尚未建立容器。

@@ -21,7 +21,8 @@
 - **Turn**：一次長者輸入與 AI 回覆的對話輪次；每個 Turn 具有 `client_request_id`、穩定的 `conversation_id` 與 terminal 狀態。
 - **Session**：一組可接納 Turn 的對話範圍；Session 依序經過 `active`、`closing`、`closed`，closed 後輸入快照不可變。
 - **Realtime path**：Chat API 在回應前執行的 ASR、對話、Agent tool calling、routine 變更、潛在安全事件與 TTS 流程。
-- **Batch pipeline**：Session closed 後執行的 snapshot、static topic chunk、事件萃取、分類、去重、SQS retry／DLQ recovery 與摘要補齊流程。
+- **Batch pipeline**：Session closed 後執行的 snapshot、`direct_seven` 事件萃取、canonical 收斂、去重、SQS retry／DLQ recovery 與摘要補齊流程。
+- **Direct Seven Pipeline**：唯一的萃取 pipeline（`direct_seven`）。不分塊、不做概念檢索、不做前置分類；對 frozen turns 依 `SEVEN_BATCH_CHAR_LIMIT` 在 turn 邊界貪婪分批，每批一次 LLM 呼叫直接萃取七大高階類別，再經共用尾段完成時序解析、canonical identity、slot 去重與型別驗證。
 - **AgentCore Runtime**：執行 LangGraph 對話大腦、託管長期記憶、衛教 RAG 與 tool calling 的 AWS runtime；不在 Lambda 執行。
 - **Routine**：照護者或對話大腦建立的不可變版本化例行公事計畫；完成狀態由 canonical completion event 衍生。
 - **Canonical Event**：以穩定 canonical key 產生、可跨 realtime、batch 與 manual 路徑冪等收斂的事件紀錄。
@@ -41,7 +42,7 @@
 1. **Flutter App**：`app/lib/elder/`、`app/lib/caregiver/`、`app/lib/shared/`、`app/lib/theme/` 與 `app/lib/app_router.dart` 已形成登入、角色選擇、長者模式、照護者模式、API models、API services、audio、notification、session 與 demo repository 的完整模組；`app/test/` 已包含 auth、first-run、chat session、routine、health note、caregiver link、screen smoke 與語音相關行為測試。
 2. **Backend**：`backend/src/handlers/` 已包含 chat、session closer、batch extractor、DLQ reconciler、elders、events、routines、summaries、stats、tools 與 Cognito trigger handlers；`backend/src/agentcore_runtime/`、`backend/src/extraction/`、`backend/src/shared/asr/`、`backend/src/shared/tts/` 與共用 auth／db／models／sessions／turns／responses／metrics 模組已存在。
 3. **Backend 測試**：`backend/tests/` 已涵蓋 Chat、DynamoDB data layer、events、routines／extraction、Module B end-to-end、ASR provider／router／remote endpoint／telemetry／Terraform contract 與 TTS Terraform contract／行為測試。
-4. **Terraform IaC**：`terraform/` 已包含 API Gateway、Cognito、Lambda、DynamoDB、S3、SQS、EventBridge、CloudWatch、Bedrock Knowledge Base、S3 Vectors、AgentCore Runtime、ASR 與 TTS provider configuration／model resources。
+4. **Terraform IaC**：`terraform/` 已包含 API Gateway、Cognito、Lambda、Lambda config parameters（SSM）、DynamoDB、S3、SQS、EventBridge、CloudWatch、Bedrock Knowledge Base、Bedrock IAM、AgentCore Runtime、ASR 與 TTS provider configuration／model resources。
 5. **資料與文件**：`data/personas/`、`data/scenarios/`、`data/knowledge/`、`docs/framework.md`、`docs/api.md`、`docs/pii.md`、`docs/user-journey.md`、ASR／TTS framework、model catalog、security、ADR 與 deliverables 文件已描述產品資料流、契約與安全邊界。
 
 上述證據以檔案存在、模組分工與測試覆蓋範圍表示 main 的完成狀態；本階段不把未合併的 `eval/` 或其他工作分支內容納入判定。
@@ -132,14 +133,14 @@
 
 #### Acceptance Criteria
 
-1. WHEN Session 完成 close，THE Batch pipeline SHALL 以 immutable ordered snapshot 建立 static topic chunk manifest，並將 normal events 的 materialization 工作送入 SQS。
-2. WHEN Batch pipeline 萃取一般生活資訊，THE Batch pipeline SHALL 先依可配置 taxonomy 與 concept retrieval 分類，再以 canonical key、台灣日界與 event slot 規則產生事件。
+1. WHEN Session 完成 close，THE Batch pipeline SHALL 以 immutable ordered snapshot 與 snapshot hash 作為萃取的唯一輸入，並將 normal events 的 materialization 工作送入 SQS。
+2. WHEN Batch pipeline 萃取一般生活資訊，THE Direct Seven Pipeline SHALL 依字元上限在 turn 邊界分批、每批一次直接萃取七大高階類別，再以可配置 taxonomy 驗證類別，並以 canonical key、台灣日界與 event slot 規則產生事件。
 3. WHILE Batch pipeline 處理同一 frozen snapshot，THE Batch pipeline SHALL 在記憶體內合併指定時間槽內相同 Subject 與 Predicate 的重複資訊，並聯集 evidence conversation IDs。
-4. WHEN chunk manifest 首次成功保存，THE Batch pipeline SHALL 以條件式寫入固定 manifest、core range、ordinal 與 chunk ID，並讓 retry、duplicate delivery 與 DLQ replay 重用既有 manifest。
+4. WHEN retry、duplicate delivery、DLQ replay 或人工 replay 重新處理同一 frozen snapshot，THE Direct Seven Pipeline SHALL 產生完全相同的 turn 分批與 canonical event identity，並讓事件以條件式寫入收斂而不重複建立。
 5. WHEN Batch pipeline 萃取到疑似 routine completion，THE Batch pipeline SHALL 產生一般事件的 `suspected_routine_id` 標記，並讓 routine occurrence 仍只由 canonical completion event 判定。
 6. IF batch worker 遇到 retryable error，THEN SQS consumer SHALL 讓訊息依 retry／redrive 流程重試，並讓 session batch state 保持可恢復狀態。
 7. IF DLQ reconciler 收到與 frozen session snapshot hash 相符且尚未 terminal 的訊息，THEN DLQ reconciler SHALL 條件式收斂 batch failed 狀態、清除 lease 並發送安全化告警。
-8. WHEN 人工 replay 重新啟動 failed session，THE Batch pipeline SHALL 先以 snapshot hash 將 `failed` 轉回 `pending`，再從 frozen state 與既有 manifest 重建工作。
+8. WHEN 人工 replay 重新啟動 failed session，THE Batch pipeline SHALL 先以 snapshot hash 將 `failed` 轉回 `pending`，再從 frozen state 重建工作，不重算 snapshot 也不改寫既有事件 identity。
 9. WHEN Batch pipeline 建立重複 canonical event，THE Batch pipeline SHALL 以 conditional write 回傳既有結果或記錄衝突，並保持 event identity 與既有事實欄位穩定。
 
 **Main 完成證據：** `backend/src/handlers/batch_extractor.py`、`dlq_reconciler.py`、`session_closer.py`、`backend/src/extraction/`、`backend/tests/test_batch_extractor.py`、`test_extraction_*.py`、`test_conversations_data_layer.py`、`terraform/sqs.tf`、`eventbridge.tf`、`backend/src/shared/db.py`。
@@ -168,7 +169,7 @@
 #### Acceptance Criteria
 
 1. THE 智慧長照系統 SHALL 以 `docs/api.md` 作為 Flutter App 與 backend 的唯一 API contract，並使用統一 JSON response、錯誤 code、ID prefix、時間格式與分頁規則。
-2. THE 智慧長照系統 SHALL 將 elders、conversations、events、daily_summaries 與 routines 依 framework 定義保存於 DynamoDB，並讓長期記憶由 AgentCore 託管服務管理。
+2. THE 智慧長照系統 SHALL 將 elders、conversations、events、daily_summaries 與 routines 依 framework 定義保存於 DynamoDB，並以 caregiver-lookup、elder_accounts 兩張支援表提供 `cg_` 對外識別反查與長者帳號到 `elder_id` 的對應；長期記憶由 AgentCore 託管服務管理。
 3. WHEN API 回傳語音音訊，THE 智慧長照系統 SHALL 只回傳短效 presigned URL，並讓 DynamoDB 保存 S3 object key 而非公開 URL。
 4. WHEN 系統保存 DynamoDB 或 S3 資料，THE 智慧長照系統 SHALL 啟用傳輸 HTTPS 與靜態加密邊界，並依 PII retention policy 管理保存與刪除。
 5. WHEN 系統建立 demo、seed 或測試資料，THE 智慧長照系統 SHALL 使用模擬 persona、合成音訊與非真實健康內容。
@@ -182,14 +183,14 @@
 
 #### Acceptance Criteria
 
-1. THE Terraform IaC SHALL 定義 API Gateway、Cognito、Lambda、DynamoDB、S3、SQS、EventBridge、CloudWatch、Bedrock Knowledge Base、S3 Vectors 與 AgentCore Runtime 所需資源及其 IAM 邊界。
+1. THE Terraform IaC SHALL 定義 API Gateway、Cognito、Lambda、SSM config parameters、DynamoDB、S3、SQS、EventBridge、CloudWatch、Bedrock Knowledge Base 與 AgentCore Runtime 所需資源及其 IAM 邊界。
 2. WHEN Terraform 的 ASR／TTS endpoint enable flag 為關閉，THE Terraform IaC SHALL 保持自託管 GPU endpoint 不建立，並保留受控 managed provider 的產品路徑。
 3. WHEN Terraform 設定自託管 ASR／TTS provider，THE Terraform IaC SHALL 將 route、provider、語言／腔調、approval gate 與 endpoint 能力組合成唯一的 `ASR_CONFIG_JSON` 或 `TTS_CONFIG_JSON` 設定來源。
 4. IF 自託管模型的 license、access、capacity、runtime 或 approval gate 未完成，THEN Terraform 與 runtime SHALL 讓該 provider 維持 disabled 或 fail-closed 狀態。
 5. WHEN Terraform 啟用 batch、summary、session sweep 或 alerting 資源，THE Terraform IaC SHALL 配置對應的 SQS retry／DLQ、EventBridge schedule、lease、CloudWatch metrics 與 SNS 告警邊界。
 6. THE 智慧長照系統 SHALL 以 Terraform `.tf` 與 Terraform lock file 作為交付格式，並讓本機 OpenTofu 驗證不改變交付物的 registry／hash 內容。
 
-**Main 完成證據：** `terraform/providers.tf`、`versions.tf`、`api_gateway.tf`、`cognito.tf`、`lambda.tf`、`dynamodb.tf`、`s3.tf`、`sqs.tf`、`eventbridge.tf`、`cloudwatch.tf`、`agentcore.tf`、`bedrock_kb.tf`、`s3_vectors.tf`、`asr_lambda_config.tf`、`asr_models.tf`、`tts_lambda_config.tf`、`tts_models.tf`、`terraform/variables.tf`、`terraform/.terraform.lock.hcl`。
+**Main 完成證據：** `terraform/providers.tf`、`versions.tf`、`api_gateway.tf`、`cognito.tf`、`lambda.tf`、`lambda_config_parameters.tf`、`dynamodb.tf`、`s3.tf`、`sqs.tf`、`eventbridge.tf`、`cloudwatch.tf`、`agentcore.tf`、`bedrock_kb.tf`、`bedrock_iam.tf`、`asr_lambda_config.tf`、`asr_models.tf`、`tts_lambda_config.tf`、`tts_models.tf`、`terraform/variables.tf`、`terraform/outputs.tf`、`terraform/.terraform.lock.hcl`。
 
 ### Requirement 10：產品文件、展示旅程與完成可追溯性
 

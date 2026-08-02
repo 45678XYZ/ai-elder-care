@@ -3,9 +3,9 @@
 `MediaTek-Research/BreezyVoice` 的 SageMaker real-time endpoint 容器。用途是把 `zh-TW`
 路由從 Polly `Zhiyu`（`cmn-CN`，非台灣口音）換成台灣華語。
 
-- 契約：[`docs/tts/sagemaker-inference-contract.md`](../../docs/tts/sagemaker-inference-contract.md)
-- 授權與核准狀態：[`docs/tts/model-catalog.md`](../../docs/tts/model-catalog.md)
-- 安全與 PII：[`docs/tts/security-and-pii.md`](../../docs/tts/security-and-pii.md)
+- 契約：[`docs/tts/sagemaker-inference-contract.md`](../../docs/features/tts/sagemaker-inference-contract.md)
+- 授權與核准狀態：[`docs/tts/model-catalog.md`](../../docs/features/tts/model-catalog.md)
+- 安全與 PII：[`docs/tts/security-and-pii.md`](../../docs/features/tts/security-and-pii.md)
 
 ## 先讀這段：聲音從哪裡來
 
@@ -103,7 +103,7 @@ aws sagemaker-runtime invoke-endpoint \
   /tmp/out.mp3 && afplay /tmp/out.mp3
 ```
 
-[`docs/tts/model-catalog.md`](../../docs/tts/model-catalog.md) 要求下列證據齊全才能把
+[`docs/tts/model-catalog.md`](../../docs/features/tts/model-catalog.md) 要求下列證據齊全才能把
 `tts_breezyvoice_approved` 設為 true：
 
 - [ ] 繁體中文輸入不出現錯字、破音字或簡體發音

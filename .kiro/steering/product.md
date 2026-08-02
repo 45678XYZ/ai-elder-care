@@ -44,7 +44,7 @@ inclusion: always
 
 談功能現況前先確認這兩件還沒好（詳見 [app/README.md](../../app/README.md) 的「目前狀態」）：
 
-- **`elder_accounts` 對應表沒有人寫入**：註冊時選「長輩」的帳號拿不到 `elder_id` claim，後端一律當照護者。畫面仍會進長者模式、資料也存取得到（首次設定會把建立者綁進 `caregiver_ids`，等於自己是自己的照護者），但這不是設計上的正解。
 - **首次設定尚未呼叫 `POST /elders`**：`setup_screen.dart` 目前只寫本機。
+- **因此實務上沒有長者帳號被綁定**：後端已經支援——`POST /elders` 帶 `self_register=true` 會呼叫 `db.bind_elder_account()` 寫入 `elder_accounts`，pre-token-generation trigger 再據此注入 `elder_id` claim。但 App 沒呼叫這個端點，所以註冊時選「長輩」的帳號拿不到 claim，後端一律當照護者。畫面仍會進長者模式、資料也存取得到（建立者被綁進 `caregiver_ids`，等於自己是自己的照護者），但這不是設計上的正解。
 
-順序是先補 `elder_accounts`，再讓首次設定改呼叫 `POST /elders`；兩件都好了才能移除 `DemoRepository` / `DemoData` / `DemoAuthBackend`。
+修法是讓首次設定改呼叫 `POST /elders`（長者自建時帶 `self_register=true`），完成後 `DemoRepository` / `DemoData` / `DemoAuthBackend` 才能整批移除。

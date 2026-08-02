@@ -8,8 +8,8 @@
 - ASR 參考：`feature/asr-lambda@bcb035a43332f085405d6b5388d4eafd925b8866`
 - Merge commit：`feature/asr-lambda@6a01712`（main → ASR branch）
 - Frontend 參考：`feature/app-screens-and-reminders@1e90c0c346a1a5a713a2dac6f672384e8b8efb91`
-- 公開 API 契約：[`docs/api.md`](api.md)
-- 系統架構：[`docs/framework.md`](framework.md)
+- 公開 API 契約：[`docs/api.md`](../api.md)
+- 系統架構：[`docs/framework.md`](../framework.md)
 - ASR 架構：[`docs/asr/framework.md`](asr/framework.md)
 
 本計畫依 2026-07-31 的 repo 狀態制定。原始規劃將兩個 feature branch 只視為需求、

@@ -61,7 +61,7 @@ SageMaker container 文件、Terraform 與程式碼只保留各自的操作或�
 
 每個 endpoint 固定一台，不建立 autoscaling。六腔共用同一個映像與同一份 model artifact，
 腔調由 `FORMO_PROMPT_ID` 逐 endpoint 注入。推論容器與部署／驗收步驟見
-[`asr-container/formospeech/README.md`](../../asr-container/formospeech/README.md)。
+[`asr-container/formospeech/README.md`](../../../asr-container/formospeech/README.md)。
 
 模型來源：
 

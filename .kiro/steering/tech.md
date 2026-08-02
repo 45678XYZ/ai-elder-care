@@ -100,7 +100,7 @@ App Client 沒有 secret，這四個值本來就會被打包進 App，不是機�
 
 1. **`docs/api.md` 是前後端唯一契約。** 改 API 行為就在同一個變更裡改它，不自創欄位名。規格見 [docs/api.md](../../docs/api.md)。
 2. **所有 API 回應走 `src.shared.responses`。** 不各自手刻 status code 與 error 結構。見 [docs/conventions.md](../../docs/conventions.md)。
-3. **ASR/TTS remote-only，未核准一律 fail closed。** Lambda 不跑模型推論；CE/Formo 每個模型都要逐一通過 staging/runtime、授權、存取、配額與容量核准，沒核准就不准走。客語 TTS 失敗不得改用中文 voice。見 [docs/adr/asr-remote-only.md](../../docs/adr/asr-remote-only.md)、[docs/adr/tts-remote-only.md](../../docs/adr/tts-remote-only.md)、[docs/asr/framework.md](../../docs/asr/framework.md)、[docs/tts/framework.md](../../docs/tts/framework.md)。
+3. **ASR/TTS remote-only，未核准一律 fail closed。** Lambda 不跑模型推論；CE/Formo 每個模型都要逐一通過 staging/runtime、授權、存取、配額與容量核准，沒核准就不准走。客語 TTS 失敗不得改用中文 voice。見 [docs/features/adr/asr-remote-only.md](../../docs/features/adr/asr-remote-only.md)、[docs/features/adr/tts-remote-only.md](../../docs/features/adr/tts-remote-only.md)、[docs/features/asr/framework.md](../../docs/features/asr/framework.md)、[docs/features/tts/framework.md](../../docs/features/tts/framework.md)。
 4. **Session 狀態只能 `active` → `closing` → `closed`。** closed 後 frozen turns、counts、snapshot hash 都不可再動；batch worker 只能改 session 上明列的 batch 控制／結果欄位，不得 reopen。見 [docs/framework.md](../../docs/framework.md)。
 5. **canonical key 與 `event_id` 推導方式寫入後不可變更。** 改了會讓同一事件算出不同 ID，既有事件失去冪等收斂並產生重複紀錄。
 6. **events 七類與 summary `sections` 一一對應。** 新增高階類別必須同步 `sections`、`docs/api.md` 與摘要生成器；未知類別退回 `other` 並告警，不得靜默丟棄。

@@ -273,7 +273,7 @@
         "timestamp": 1785557888178
       }
     ],
-    "4.6 確認 immutable snapshot、chunk manifest、SQS retry/DLQ、extraction 與 replay recovery 的 main 證據": [
+    "4.6 確認 immutable snapshot、direct_seven 萃取、SQS retry/DLQ 與 replay recovery 的 main 證據": [
       {
         "executionId": "af7255c4-f90a-42ee-8c94-2e23a487b473",
         "chatSessionId": "sess_941b7c0a-3a91-483a-b865-7c8d1eb203c4",
@@ -309,7 +309,7 @@
         "timestamp": 1785557894748
       }
     ],
-    "4.9 確認 Property 16「Chunk manifest retry reuse」的既有 domain/test 證據": [
+    "4.9 確認 Property 16「Turn 分批與 retry 確定性」的既有 domain/test 證據": [
       {
         "executionId": "af7255c4-f90a-42ee-8c94-2e23a487b473",
         "chatSessionId": "sess_941b7c0a-3a91-483a-b865-7c8d1eb203c4",

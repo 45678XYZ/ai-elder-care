@@ -33,8 +33,8 @@
 2. **API ingress**：Cognito JWT 驗證後由 API Gateway `/v1` 將請求路由至 Lambda。所有公開 request/response、錯誤、ID、時間、分頁與 enum 以 `docs/api.md` 為準。
 3. **Realtime Lambda path**：`chat.py` 處理 text/audio、Turn idempotency、session routing、ASR、AgentCore invocation、TTS 與 atomic terminal commit；資料 handlers 處理 elders、caregivers、routines、events、summaries、stats。
 4. **AgentCore Runtime**：`backend/src/agentcore_runtime/` 執行 LangGraph 對話大腦、託管長期記憶、衛教 RAG 與 tool calling。它不與一般 Lambda 共用部署包；tool calling 透過 tools Lambda 寫入 routine mutation、canonical completion event 與 safety event。
-5. **Offline materialization**：session closer 將 closed session 凍結為 immutable ordered snapshot 後送 SQS；batch extractor 依 static chunk manifest、taxonomy、concept retrieval、canonical key 與 in-memory dedup 產生一般生活事件，DLQ reconciler 負責安全化失敗收斂與告警。
-6. **AWS persistence/IaC**：DynamoDB 保存 elders、conversations、events、daily_summaries、routines；S3 保存 TTS 音檔與衛教文件；SQS/EventBridge/CloudWatch/SNS 支援 batch、summary、sweep、metrics 與 alerting；Terraform 定義資源、IAM 與 provider gate。
+5. **Offline materialization**：session closer 將 closed session 凍結為 immutable ordered snapshot 後送 SQS；batch extractor 以 `direct_seven` pipeline（依字元上限在 turn 邊界分批、每批一次七大類萃取）搭配 taxonomy 驗證、canonical key 與 in-memory dedup 產生一般生活事件，DLQ reconciler 負責安全化失敗收斂與告警。
+6. **AWS persistence/IaC**：DynamoDB 保存 elders、conversations、events、daily_summaries、routines，以及 caregiver-lookup、elder_accounts 兩張識別支援表；S3 保存 TTS 音檔、衛教文件與 Lambda 部署包；SQS/EventBridge/CloudWatch/SNS 支援 batch、summary、sweep、metrics 與 alerting；Terraform 定義資源、IAM 與 provider gate。
 
 簡化資料流如下：
 
@@ -147,11 +147,11 @@ Turn 是 request idempotency 與 business commit 單位；Session 是 immutable 
 - close 與 reserve 競爭由 conditional transition 決定：reserve 先成功則 close 等待；close 先進 closing 則新 request 必須使用新的 active Session。
 - closed persistence 與 SQS SendMessage 非原子；若中間失敗，`BATCH#PENDING` recovery sweep 重投。consumer 依 session ID + snapshot hash + lease + conditional writes 達成可恢復的 at-least-once semantics，不假設 exactly-once。
 
-### 3.6 Batch extractor、SQS、DLQ 與 static chunks
+### 3.6 Batch extractor、SQS、DLQ 與 direct_seven 萃取
 
-Session closed 後，batch planner 對 immutable ordered input 建立 compact `chunk_manifest`。manifest 保存 chunk ID、ordinal、core range 與必要 context range，不複製逐字稿、不建立公開 chunks resource。每個 turn 恰好落在一個 core range；context overlap 只供理解，context-only turn 不可 emit event。
+Session closed 後，batch extractor 以 immutable ordered snapshot 與 `session_snapshot_hash` 作為唯一輸入。`direct_seven` pipeline 不分塊、不做概念檢索、不做前置分類，也不落地任何 chunk manifest：它依 `SEVEN_BATCH_CHAR_LIMIT` 在 turn 邊界貪婪累積成連續且互不重疊的批次，每批送一次 LLM 直接萃取七大高階類別，批次的 reference datetime 取該批最後一個 turn 的時間，evidence 取該批所有 turn 的 conversation ID。
 
-manifest 第一次成功保存使用 attribute-not-exists 條件；retry、duplicate delivery、DLQ replay 與人工 replay 都重用既有 manifest。chunk ID 由 snapshot hash、first/last core turn ID 與 ordinal 的 stable hash 產生，與模型 topic label 或 chunk delivery 無關。
+分批完全由 frozen turns 與字元上限決定，因此 retry、duplicate delivery、DLQ replay 與人工 replay 都會得到相同批次與相同 canonical event identity；冪等由「確定性輸入 + 確定性分批 + conditional Put」保證，不依賴另存一份 manifest 狀態。事件的 `source_chunk_id` 在此 pipeline 下為 null。
 
 worker lifecycle：
 
@@ -159,9 +159,9 @@ worker lifecycle：
 - retryable error 由 worker throw 交給 SQS retry/redrive，不先把 session 標成 failed。
 - permanent validation/conflict 可條件式寫 `failed`、清 lease、保存安全化 error。
 - DLQ reconciler 只有在 session snapshot hash 相符且尚未 terminal 時才收斂 failed、清 lease、發安全化告警；hash 不符不得誤改 session。
-- 人工 replay 先條件式做 `failed → pending`，再從 frozen state 與既有 manifest 重建工作；正常 worker 不自行 reopen failed。
+- 人工 replay 先條件式做 `failed → pending`，再從 frozen state 重建工作；正常 worker 不自行 reopen failed。
 
-事件 extraction 先以 configurable taxonomy 與 Bedrock embedding/S3 Vectors concept retrieval 取得候選，再依台灣日界、`EVENT_SLOT_MINUTES`、Subject、Predicate 產生 canonical key。Session 內同時間槽且同 Subject/Predicate 的資訊先在記憶體合併，保留最完整 detail 並聯集 evidence conversation IDs。疑似 routine completion 只在 normal event 的 `structured_detail.suspected_routine_id` 標記，不寫 completion event。
+事件 extraction 由 LLM 一次輸出七大高階類別的事件草稿，再以 configurable taxonomy 驗證類別（未知或無法映射退回 `other`），並依台灣日界、`EVENT_SLOT_MINUTES`、normalized Subject 與 Predicate 產生 canonical key。Session 內同時間槽且同 Subject/Predicate 的資訊先在記憶體合併，保留最完整 detail 並聯集 evidence conversation IDs；謂語的語義合併可選用 Bedrock embedding（`EMBEDDING_MODEL_ID`／`EMBEDDING_DIM`），沒有 embedder 時退回不合併，不影響 canonical key 的確定性。早於 reference date 的歷史回憶、缺少可用謂語或未通過型別驗證的草稿一律丟棄並計入 dropped。疑似 routine completion 只在 normal event 的 `structured_detail.suspected_routine_id` 標記，不寫 completion event。
 
 ### 3.7 Summary、events、stats 與 caregiver read model
 
@@ -181,10 +181,12 @@ Summary generator 同時支援 EventBridge schedule 與 `POST /summaries/generat
 | Table | Key / index | 角色 |
 |---|---|---|
 | `elders` | PK `elder_id` | persona、語言／六腔、health notes、family、caregiver binding |
-| `conversations` | PK `elder_id`, SK `record_id`; time/session/state GSIs | Turn、Session metadata、frozen snapshot、chunk manifest |
+| `conversations` | PK `elder_id`, SK `record_id`; time/session/state GSIs | Turn、Session metadata、frozen snapshot 與 batch 狀態 |
 | `events` | PK `elder_id`, SK `event_id`; `events-by-time` GSI | normal、routine completion、safety canonical events |
 | `daily_summaries` | PK `elder_id`, SK `date` | 帶 `data_status` 的每日衍生快照 |
 | `routines` | PK `routine_id`, SK `version`; current/history GSIs | 不可變 routine definitions/versions |
+| `caregiver-lookup` | 以 `cg_` short ID 與 Cognito `sub` 互查 | 對外照護者識別與 `sub` 的雙向反查，讓 API 不必回傳 `sub` |
+| `elder_accounts` | PK `sub` | 長者帳號到 `elder_id` 的對應，供 pre-token-generation trigger 注入 claim |
 
 Long-term memory 不在上述 tables 中，使用 AgentCore managed service。
 
@@ -196,18 +198,18 @@ Long-term memory 不在上述 tables 中，使用 AgentCore managed service。
 - normal event identity 固定由台灣日期、slot、normalized Subject、normalized Predicate 決定；不使用 chunk、track、模型版本或自然語言 detail。
 - `created_at`、server-owned binding、ID 與 routine history 不可由公開 patch 覆寫；成功 mutation 才更新 `updated_at`。
 - `events`、`routines`、`daily_summaries` 不保存公開音訊 URL；TTS 只在 S3 保存音訊，DynamoDB 保存 object key，API 動態簽發 15 分鐘 presigned URL。
-- event API 不暴露 `canonical_event_key`、`extraction_track`、`concept_id`、`taxonomy_version`、chunk、revision、evidence internals；summary API 只暴露契約允許的 `data_status` 與 pending count。
+- event API 不暴露 `canonical_event_key`、`extraction_track`、`taxonomy_version`、`structured_detail`、`source_chunk_id`、revision、evidence internals；summary API 只暴露契約允許的 `data_status` 與 pending count。
 
 ## 5. 基礎設施與設定邊界
 
-Terraform 由 `terraform/providers.tf`、`versions.tf`、`api_gateway.tf`、`cognito.tf`、`lambda.tf`、`dynamodb.tf`、`s3.tf`、`sqs.tf`、`eventbridge.tf`、`cloudwatch.tf`、`agentcore.tf`、`bedrock_kb.tf`、`s3_vectors.tf`、ASR/TTS config/model files 與 `variables.tf` 組成。
+Terraform 由 `terraform/providers.tf`、`versions.tf`、`api_gateway.tf`、`cognito.tf`、`lambda.tf`、`lambda_config_parameters.tf`、`dynamodb.tf`、`s3.tf`、`sqs.tf`、`eventbridge.tf`、`cloudwatch.tf`、`agentcore.tf`、`bedrock_kb.tf`、`bedrock_iam.tf`、ASR/TTS config/model files、`variables.tf` 與 `outputs.tf` 共 20 個 `.tf` 組成。
 
 資源邊界包括：
 
 - API Gateway + Cognito JWT、Lambda execution roles 與最小 IAM。
-- DynamoDB tables/indexes、S3 TTS/knowledge objects、SQS queue/DLQ、EventBridge schedules、CloudWatch metrics/alarms、SNS alert topic。
-- Bedrock Knowledge Base、S3 Vectors concept index、AgentCore Runtime 與 managed memory integration。
-- `ASR_CONFIG_JSON`、`TTS_CONFIG_JSON` 是唯一語音 route 設定來源；包含 route、provider、language/dialect、enable/approval/capability 組合。
+- DynamoDB tables/indexes、S3 TTS/knowledge/deployment objects、SQS queue/DLQ、EventBridge schedules、CloudWatch metrics/alarms、SNS alert topic。
+- Bedrock Knowledge Base、Bedrock invoke IAM、AgentCore Runtime 與 managed memory integration。
+- `ASR_CONFIG_JSON`、`TTS_CONFIG_JSON` 是唯一語音 route 設定來源；包含 route、provider、language/dialect、enable/approval/capability 組合。兩份設定相加超過 Lambda 4 KB 環境變數上限，實際由 `lambda_config_parameters.tf` 寫入 SSM Parameter Store，Lambda 只拿到參數名稱並由 `shared/config_source.py` 讀取；讀取失敗 fail closed。
 - `asr_enable_endpoints=false` 或 TTS endpoint 未啟用時，不建立自託管 GPU endpoint；managed provider path 保留。未通過 license、access、quota/capacity、runtime 或 approval 的 provider 不得被 runtime 當成 fallback。
 - batch/summary/session sweep 透過 SQS retry/DLQ、EventBridge schedule、lease env、CloudWatch metrics 與 SNS 告警互相對應。
 - 交付格式固定為 Terraform `.tf` 與 Terraform `.terraform.lock.hcl`。本機若使用 OpenTofu 只作驗證，不能把 registry/hash 改寫成 OpenTofu 交付物；本階段不執行 apply/destroy。
@@ -218,7 +220,7 @@ Terraform 由 `terraform/providers.tf`、`versions.tf`、`api_gateway.tf`、`cog
 - 所有 API 以 Cognito JWT 做認證授權；傳輸 HTTPS；DynamoDB/S3 靜態加密；依 retention policy 管理保存與刪除。
 - demo、seed、test 與競賽 AWS 帳號只使用 synthetic persona、合成音訊、非真實健康內容；不得匯入真實長者聲音、逐字稿、個資或健康資料。
 - audio 只在 Lambda memory 內處理；ASR 不使用 batch transcription 或 S3 暫存；TTS 合成文字／音訊不進 log，不蒐集聲紋。
-- allowlist telemetry 可觀測 chat latency、structured output failure、safety rule hit、session turn/input bytes、chunk count、batch attempts、SQS duplicate/DLQ、partial ratio、summary backfill latency、dedup merge rate、type/concept distribution 與 embedding/retrieval latency；不記錄原始內容。
+- allowlist telemetry 可觀測 chat latency、structured output degraded、safety rule hit、session turn/input bytes、`direct_seven` batch count、LLM call count 與 token 用量、model latency、dropped events、unmatched predicates、unmapped type count、dedup merge rate、type distribution、batch attempts、SQS duplicate/DLQ、partial ratio 與 summary backfill latency；不記錄原始內容。
 - 不由 telemetry 推導模型性能保證；本 consolidated spec 的語音完成證據限於 remote route、語言／腔調一致、approval gate、typed error、fallback 與 PII redaction。
 
 ## 7. 錯誤、恢復與一致性策略
@@ -254,12 +256,12 @@ Terraform 由 `terraform/providers.tf`、`versions.tf`、`api_gateway.tf`、`cog
 | Batch/extraction/recovery | `backend/src/handlers/batch_extractor.py`、`dlq_reconciler.py`、`backend/src/extraction/`、`backend/tests/test_batch_extractor.py`、`test_extraction_*.py` |
 | Events/summaries/stats | `backend/src/handlers/events.py`、`summaries.py`、`stats.py`、`summary_generator.py`、`backend/tests/test_events_handler.py`、`test_module_b_end_to_end.py` |
 | Persistence/API contract | `backend/src/shared/db.py`、`models.py`、`responses.py`、`docs/framework.md`、`docs/api.md`、`app/lib/shared/models/`、`api_client.dart`、`api_repository.dart` |
-| Terraform/AWS boundary | `terraform/*.tf`，特別是 API Gateway、Cognito、Lambda、DynamoDB、S3、SQS、EventBridge、CloudWatch、AgentCore、Bedrock KB、S3 Vectors、ASR/TTS config/model files 與 lock file |
+| Terraform/AWS boundary | `terraform/*.tf`，特別是 API Gateway、Cognito、Lambda、SSM config parameters、DynamoDB、S3、SQS、EventBridge、CloudWatch、AgentCore、Bedrock KB／IAM、ASR/TTS config/model files 與 lock file |
 | PII/synthetic data/docs | `docs/pii.md`、`data/personas/`、`data/scenarios/`、`data/knowledge/`、`docs/user-journey.md`、`docs/deliverables/user-journey.md`、`docs/adr/` |
 
 ### 8.2 驗證類型界線
 
-- **可寫成 correctness property 的 domain logic**：request hash/idempotency、provider gate decision、canonical identity、session state machine、dedup、manifest reuse、summary classifier/winner、event projection、stats reducer、API allowlist serializer。這些 property 以 mock/in-memory model 驗證，不代表對 AWS 執行 100 次。
+- **可寫成 correctness property 的 domain logic**：request hash/idempotency、provider gate decision、canonical identity、session state machine、dedup、turn 分批確定性、summary classifier/winner、event projection、stats reducer、API allowlist serializer。這些 property 以 mock/in-memory model 驗證，不代表對 AWS 執行 100 次。
 - **Example/edge**：同意與角色路由、登出、App close retry、未排程 routine、特定錯誤分支與畫面 presence。
 - **Integration**：API Gateway/Cognito、DynamoDB conditional/transaction/strong read、S3 presign、AgentCore/Knowledge Base、SQS/DLQ/EventBridge/CloudWatch/SNS 與 provider adapter。
 - **Smoke/contract audit**：Flutter screen inventory、Terraform resource/lock、文件 cross-link、synthetic data policy、remote-only 與不做模型性能測試的範圍檢查。
@@ -356,13 +358,13 @@ Terraform 由 `terraform/providers.tf`、`versions.tf`、`api_gateway.tf`、`cog
 
 ### Property 15：Frozen snapshot 內記憶體去重
 
-**For any** immutable ordered snapshot 中的事件集合，同一時間槽內相同 normalized Subject 與 Predicate 應合併為至多一筆，保留最完整 detail 並聯集 evidence conversation IDs；不同 slot 或不同 Subject/Predicate 不得被錯誤合併，context-only turn 不得 emit。
+**For any** immutable ordered snapshot 中的事件集合，同一時間槽內相同 normalized Subject 與 Predicate 應合併為至多一筆，保留最完整 detail 並聯集 evidence conversation IDs；不同 slot 或不同 Subject/Predicate 不得被錯誤合併，早於 reference date 的歷史回憶與缺少可用謂語的草稿不得 emit。
 
 **Validates: Requirements 6.3**
 
-### Property 16：Chunk manifest retry reuse
+### Property 16：Turn 分批與 retry 確定性
 
-**For any** frozen session snapshot 與任意 retry、duplicate delivery、DLQ replay 或 manual replay 序列，首次成功保存的 manifest、core ranges、ordinal 與 chunk IDs 必須保持完全相同；後續執行不得重新規劃或重新分配 core turns。
+**For any** frozen ordered turns 與任意字元上限，`plan_turn_batches` 應切出連續、互不重疊且覆蓋全部 turn 的批次，每個 turn 恰好屬於一個批次；**for any** retry、duplicate delivery、DLQ replay 或 manual replay 序列，同一 snapshot 必須得到完全相同的批次切分與 canonical event identity，不得因重跑而重新分配 turn 或產生新的 event ID。
 
 **Validates: Requirements 6.4, 6.8**
 

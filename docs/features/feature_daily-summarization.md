@@ -1,7 +1,7 @@
 # 每日摘要（Module B）實作計畫
 
-實作 `daily_summaries` 表與摘要功能。權威規範以 [framework.md](framework.md) 為最高原則，
-API 契約以 [api.md](api.md) 為準；本文件只描述實作決策與步驟，不覆寫兩者。
+實作 `daily_summaries` 表與摘要功能。權威規範以 [framework.md](../framework.md) 為最高原則，
+API 契約以 [api.md](../api.md) 為準；本文件只描述實作決策與步驟，不覆寫兩者。
 
 ## 1. 現況與落差
 

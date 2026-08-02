@@ -78,17 +78,17 @@
   - [x] 4.5 確認 Property 11「Closed Session replay 與新 request 分流」的既有 domain/test 證據
     - 核對 closed session 只 replay 既有 Turn，新的 client request ID 不追加 closed session 而導向新的 active session。
     - _Requirements: 4.7；Design: Property 11、3.5_
-  - [x] 4.6 確認 immutable snapshot、chunk manifest、SQS retry/DLQ、extraction 與 replay recovery 的 main 證據
-    - 追溯 `batch_extractor.py`、`dlq_reconciler.py`、`extraction/`、`db.py`、SQS/EventBridge Terraform 與既有 batch/extraction tests；只確認 manifest、lease、conditional write、retry/redrive、hash guard 與 replay ownership。
+  - [x] 4.6 確認 immutable snapshot、direct_seven 萃取、SQS retry/DLQ 與 replay recovery 的 main 證據
+    - 追溯 `batch_extractor.py`、`dlq_reconciler.py`、`extraction/pipeline.py`、`db.py`、SQS/EventBridge Terraform 與既有 batch/extraction tests；只確認 turn 分批、lease、conditional write、retry/redrive、hash guard 與 replay ownership。
     - _Requirements: 6.1–6.9；Design: 3.5、3.6、4.2、7_
   - [x] 4.7 確認 Property 14「Batch event canonicalization 與台灣日界」的既有 domain/test 證據
     - 核對 canonical event 僅依台灣日期、固定 slot、normalized Subject/Predicate 與 taxonomy version identity，不依賴 chunk、track、模型版本或 detail。
     - _Requirements: 6.2；Design: Property 14、3.6、4.2_
   - [x] 4.8 確認 Property 15「Frozen snapshot 內記憶體去重」的既有 domain/test 證據
-    - 核對同一時間槽與 Subject/Predicate 合併、detail 取最完整、evidence conversation IDs 聯集，且不同 slot、不同欄位與 context-only turn 不誤合併。
+    - 核對同一時間槽與 Subject/Predicate 合併、detail 取最完整、evidence conversation IDs 聯集，且不同 slot 與不同欄位不誤合併；歷史回憶與無謂語草稿計入 dropped 而非 emit。
     - _Requirements: 6.3；Design: Property 15、3.6、4.2_
-  - [x] 4.9 確認 Property 16「Chunk manifest retry reuse」的既有 domain/test 證據
-    - 核對首次成功保存的 manifest、core ranges、ordinal、chunk IDs 在 retry、duplicate、DLQ replay、manual replay 中完全重用，不重新分配 core turns。
+  - [x] 4.9 確認 Property 16「Turn 分批與 retry 確定性」的既有 domain/test 證據
+    - 核對 `plan_turn_batches` 切出連續、互不重疊且覆蓋全部 turn 的批次，且同一 frozen snapshot 在 retry、duplicate、DLQ replay、manual replay 中得到相同分批與相同 canonical event identity。
     - _Requirements: 6.4、6.8；Design: Property 16、3.6、7_
   - [x] 4.10 確認 Property 17「Batch 不擁有 routine completion」的既有 domain/test 證據
     - 核對疑似 routine completion 只能寫 normal event 的 `structured_detail.suspected_routine_id`，不可建立 completion event、修改 routine version 或 occurrence 狀態。
@@ -122,7 +122,7 @@
 
 - [x] 6. Terraform／security 完成證據確認
   - [x] 6.1 確認 Terraform AWS resource inventory、IAM boundary、queues/schedules/observability 與 lock file 的 main 證據
-    - 追溯 API Gateway、Cognito、Lambda、DynamoDB、S3、SQS、EventBridge、CloudWatch、Bedrock KB、S3 Vectors、AgentCore、SNS 及 `terraform/.terraform.lock.hcl`；不執行 apply/destroy。
+    - 追溯 API Gateway、Cognito、Lambda、SSM config parameters、DynamoDB、S3、SQS、EventBridge、CloudWatch、Bedrock KB／IAM、AgentCore、SNS 及 `terraform/.terraform.lock.hcl`；不執行 apply/destroy。
     - _Requirements: 9.1、9.5、9.6；Design: 5、8.1、8.2_
   - [x] 6.2 確認 Property 23「Terraform config serialization 唯一來源」的既有 contract 證據
     - 核對 `ASR_CONFIG_JSON`／`TTS_CONFIG_JSON` 序列化可保留 route、provider、language/dialect、approval、capability matrix，且 runtime 不依賴散落設定；不新增或執行模型測試。

@@ -15,4 +15,4 @@ provider、endpoint 與模型名稱不對 App 公開。
 | [implementation-plan.md](implementation-plan.md) | 已確認決策、範圍與驗收計畫 |
 | [../adr/tts-remote-only.md](../adr/tts-remote-only.md) | remote-only 與同語言備援決策 |
 
-程式現況見 [`backend/src/shared/tts/README.md`](../../backend/src/shared/tts/README.md)。
+程式現況見 [`backend/src/shared/tts/README.md`](../../../backend/src/shared/tts/README.md)。

@@ -23,11 +23,11 @@ AsrFacade → canonical_audio → AsrRouter → provider fallback → Transcript
 
 ## 修改導覽
 
-- 路由與執行邊界：[`docs/asr/framework.md`](../../../../docs/asr/framework.md)
-- 設定：[`docs/asr/config-schema.md`](../../../../docs/asr/config-schema.md)
-- 遠端 provider I/O：[`docs/asr/sagemaker-inference-contract.md`](../../../../docs/asr/sagemaker-inference-contract.md)
-- PII／遙測：[`docs/asr/security-and-pii.md`](../../../../docs/asr/security-and-pii.md)
-- 模型與核准：[`docs/asr/model-catalog.md`](../../../../docs/asr/model-catalog.md)
+- 路由與執行邊界：[`docs/asr/framework.md`](../../../../docs/features/asr/framework.md)
+- 設定：[`docs/asr/config-schema.md`](../../../../docs/features/asr/config-schema.md)
+- 遠端 provider I/O：[`docs/asr/sagemaker-inference-contract.md`](../../../../docs/features/asr/sagemaker-inference-contract.md)
+- PII／遙測：[`docs/asr/security-and-pii.md`](../../../../docs/features/asr/security-and-pii.md)
+- 模型與核准：[`docs/asr/model-catalog.md`](../../../../docs/features/asr/model-catalog.md)
 
 只讀與本次修改相關的文件。公開 API 契約仍以 `docs/api.md` 為準。
 

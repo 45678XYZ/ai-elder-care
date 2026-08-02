@@ -94,7 +94,7 @@ Formo endpoints。啟用時固定每個 endpoint 一台，不建立 autoscaling�
 | Transcribe／SageMaker request/response | [`sagemaker-inference-contract.md`](sagemaker-inference-contract.md) |
 | 音訊生命週期、遙測、日誌 | [`security-and-pii.md`](security-and-pii.md) |
 | 模型規格與核准狀態 | [`model-catalog.md`](model-catalog.md) |
-| 程式檔案職責與測試 | [`backend/src/shared/asr/README.md`](../../backend/src/shared/asr/README.md) |
+| 程式檔案職責與測試 | [`backend/src/shared/asr/README.md`](../../../backend/src/shared/asr/README.md) |
 | 現行架構決策 | [`docs/adr/asr-managed-transcribe-routing.md`](../adr/asr-managed-transcribe-routing.md) |
 
-公開 API 仍以 [`docs/api.md`](../api.md) 為準；provider 與 endpoint 細節不得外露。
+公開 API 仍以 [`docs/api.md`](../../api.md) 為準；provider 與 endpoint 細節不得外露。
