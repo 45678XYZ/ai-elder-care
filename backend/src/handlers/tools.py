@@ -83,9 +83,18 @@ _emergency_state: Dict[str, Dict[str, Any]] = {}
 _EMERGENCY_COOLDOWN_SECS = 300
 
 
+def _get_elder_name(elder_id: str) -> str:
+    """取得長者姓名，查不到時退回 elder_id。"""
+    elder = db.get_elder(elder_id)
+    if elder:
+        return elder.get("name") or elder.get("nickname") or elder_id
+    return elder_id
+
+
 def _build_emergency_email(elder_id: str, message_content: str, rag_content: str = "") -> str:
     """組裝「🚨 緊急警報」Email 內文（版面分級：人事時地在上，RAG 折疊至附錄）。"""
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    elder_name = _get_elder_name(elder_id)
     rag_section = ""
     if rag_content:
         rag_section = f"""
@@ -102,6 +111,7 @@ def _build_emergency_email(elder_id: str, message_content: str, rag_content: str
 ⚠️  若情況危急，請立即撥打 119，不要猶豫！
 
 【事件資訊】
+• 長者姓名：{elder_name}
 • 長者編號：{elder_id}
 • 通報時間：{now_str} (UTC+8)
 
@@ -120,6 +130,7 @@ def _build_emergency_email(elder_id: str, message_content: str, rag_content: str
 def _build_mitigation_email(elder_id: str, message_content: str) -> str:
     """組裝「⚠️ 長者自述緩解（待家屬確認）」Email 內文。"""
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    elder_name = _get_elder_name(elder_id)
     return f"""============================================================
 ⚠️  智慧長照 AI 關懷系統 - 長者自述緩解通知（待家屬確認）
 ============================================================
@@ -129,6 +140,7 @@ def _build_mitigation_email(elder_id: str, message_content: str) -> str:
 【長者自述】
 {message_content}
 
+• 長者姓名：{elder_name}
 • 長者編號：{elder_id}
 • 自述時間：{now_str} (UTC+8)
 
@@ -141,6 +153,7 @@ def _build_mitigation_email(elder_id: str, message_content: str) -> str:
 def _build_escalation_email(elder_id: str, message_content: str) -> str:
     """組裝「🚨🚨 狀況急遽惡化警報」Email 內文。"""
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    elder_name = _get_elder_name(elder_id)
     return f"""============================================================
 🚨🚨 智慧長照 AI 關懷系統 - 狀況急遽惡化緊急警報
 ============================================================
@@ -149,6 +162,7 @@ def _build_escalation_email(elder_id: str, message_content: str) -> str:
 【事件升級詳情】
 {message_content}
 
+• 長者姓名：{elder_name}
 • 長者編號：{elder_id}
 • 惡化通報時間：{now_str} (UTC+8)
 
