@@ -382,6 +382,44 @@ def test_notify_emergency_first_alert_success(monkeypatch):
     assert created_events[0]["type"] == "safety"
 
 
+def test_notify_emergency_survives_a_failing_elder_name_lookup(monkeypatch):
+    """查不到長者姓名不得攔下警報。
+
+    姓名只是信件內文的可讀性修飾，這條路卻是緊急通報。實際發生過：組信件時新增的
+    `get_elder` 查詢在缺 region 的環境拋出例外，整個 handle_notify_caregiver 就回
+    error——為了讓信裡好看一點，換到的是一封沒發出去的求救信。這個測試釘住的是
+    「修飾失敗不會升級成漏發」。
+    """
+    _reset_emergency_state()
+    created_events = _mock_create_event(monkeypatch)
+
+    # 信件內文只出現在寄出的那一刻，事件的 detail 是另一段摘要，驗不到姓名這一欄。
+    published = []
+
+    def _capture(_elder_id, _subject, body):
+        published.append(body)
+        return "msg_mock_123"
+
+    monkeypatch.setattr(tools, "_publish_to_caregivers", _capture)
+
+    def _boom(_elder_id):
+        raise RuntimeError("dynamodb unavailable")
+
+    monkeypatch.setattr(db, "get_elder", _boom)
+
+    res = tools.handle_notify_caregiver({
+        "elder_id": "eld_001",
+        "category": "emergency",
+        "message": "長者反映在浴室跌倒，腳部劇痛無法站立"
+    })
+
+    assert res["status"] == "success"
+    assert len(created_events) == 1
+    # 信照樣寄出，姓名那一欄退回編號
+    assert len(published) == 1
+    assert "長者姓名：eld_001" in published[0]
+    assert "長者反映在浴室跌倒" in published[0]
+
 
 # 情境二：emergency 冷卻期內重複呼叫 — 應被攔截 (throttled)
 def test_notify_emergency_cooldown_throttle(monkeypatch):
