@@ -12,6 +12,7 @@ import 'elder/screens/chat_screen.dart';
 import 'elder/screens/link_caregiver_screen.dart';
 import 'elder/screens/today_screen.dart';
 import 'shared/screens/consent_policy_screen.dart';
+import 'shared/screens/forgot_password_screen.dart';
 import 'shared/screens/role_select_screen.dart';
 import 'shared/screens/sign_in_screen.dart';
 import 'shared/screens/sign_up_screen.dart';
@@ -109,6 +110,9 @@ GoRouter buildRouter({String initialLocation = '/auth/sign-in'}) => GoRouter(
             return VerifyEmailScreen(email: email);
           },
         ),
+        GoRoute(
+            path: '/auth/forgot-password',
+            builder: (_, __) => const ForgotPasswordScreen()),
 
         // S1 首次設定。兩種情境共用同一個畫面，差別只在有沒有 extra（信箱）：
         // - 註冊流程（未登入）：註冊頁 push 進來並帶 email，資料先按 email 暫存

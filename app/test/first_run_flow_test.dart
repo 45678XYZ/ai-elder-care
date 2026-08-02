@@ -7,7 +7,7 @@ import 'package:e_hakka_care/shared/screens/sign_in_screen.dart';
 import 'package:e_hakka_care/shared/screens/sign_up_screen.dart';
 import 'package:e_hakka_care/shared/screens/verify_email_screen.dart';
 import 'package:e_hakka_care/shared/services/auth_service.dart';
-import 'package:e_hakka_care/shared/services/demo_auth_backend.dart';
+import 'package:e_hakka_care/shared/services/demo/demo_auth_backend.dart';
 import 'package:e_hakka_care/shared/services/session_store.dart';
 import 'package:e_hakka_care/shared/widgets/form_widgets.dart';
 import 'package:e_hakka_care/theme/app_theme.dart';

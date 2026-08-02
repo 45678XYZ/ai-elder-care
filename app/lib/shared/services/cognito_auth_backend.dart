@@ -66,6 +66,20 @@ class CognitoAuthBackend implements AuthBackend {
       });
 
   @override
+  Future<void> forgotPassword({required String email}) => _guard<void>(() async {
+        await _user(email).forgotPassword();
+      });
+
+  @override
+  Future<void> confirmNewPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) => _guard<void>(() async {
+        await _user(email).confirmPassword(code.trim(), newPassword);
+      });
+
+  @override
   Future<String> signIn({
     required String email,
     required String password,

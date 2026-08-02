@@ -2,18 +2,18 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/api_page.dart';
-import '../models/caregiver.dart';
-import '../models/chat_reply.dart';
-import '../models/daily_summary.dart';
-import '../models/elder.dart';
-import '../models/life_event.dart';
-import '../models/routine.dart';
-import '../models/stats.dart';
-import 'api_client.dart';
-import 'api_error_codes.dart';
-import 'api_exception.dart';
-import 'care_repository.dart';
+import '../../models/api_page.dart';
+import '../../models/caregiver.dart';
+import '../../models/chat_reply.dart';
+import '../../models/daily_summary.dart';
+import '../../models/elder.dart';
+import '../../models/life_event.dart';
+import '../../models/routine.dart';
+import '../../models/stats.dart';
+import '../api_client.dart';
+import '../api_error_codes.dart';
+import '../api_exception.dart';
+import '../care_repository.dart';
 import 'demo_data.dart';
 
 /// [CareRepository] 的假資料實作——`DemoData` 的固定資料，加上一層記憶體狀態。
