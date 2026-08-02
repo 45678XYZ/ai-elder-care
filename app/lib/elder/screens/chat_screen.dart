@@ -118,8 +118,24 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _onLangChanged() {
     if (!mounted) return;
-    // 講到一半換語言：先把在飛的那一輪收乾淨，否則新的輸入路徑會跟舊的搶麥克風。
-    unawaited(_stopConversation());
+    // **只有還在收音時才中斷這一輪。** 換語言等於換輸入路徑（華語走裝置端辨識、
+    // 客語走錄音），兩條同時開著會搶麥克風，所以那個階段非收掉不可。
+    //
+    // 其他階段一律讓這一輪把話講完，否則會殺掉「長輩用講的改語言」那一輪——而那一輪
+    // 的回覆正是「好，已經幫你換做客語了」。時序是：後端的 update_elder_profile 改掉
+    // `lang_preference` → [_handleQuestion] 的 refreshSelectedElder() 把新值同步回來
+    // → setLang() 發出 langRevision → 打到這裡。若在這裡呼叫 [_stopConversation]，
+    // 它第一件事就是 `_turnSeq++`，於是還在等音檔的 [_speakReply] 醒來後發現
+    // `seq != _turnSeq`，直接放棄播放。長輩剛要求換語言，聽到的卻是一片安靜。
+    //
+    // 非同步 TTS 之後音訊要等幾秒才就緒（實測 3.5 秒），這個窗口大到讓它在「切換
+    // 語言那一輪」幾乎每次都發生——而那正是任何人測試客語會做的第一件事。
+    //
+    // 不中斷也不會讓語言慢一輪：[_handleQuestion] 在開下一輪之前會 await
+    // `_profileRefresh`，下一次 [_listenTurn] 讀到的已經是新的 isHakka。
+    if (_phase == _Phase.listening) {
+      unawaited(_stopConversation());
+    }
     _initSpeech();
   }
 

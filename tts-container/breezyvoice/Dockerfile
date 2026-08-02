@@ -58,8 +58,8 @@ RUN git clone --recursive https://github.com/mtkresearch/BreezyVoice.git ${BREEZ
     && git checkout ${BREEZYVOICE_REF} \
     && git submodule update --init --recursive
 
-# 依上游 README：先移除可能被相依套件帶進來的 CPU 版 onnxruntime，再裝 GPU 版。
-RUN python3 -m pip uninstall -y onnxruntime || true
+# onnxruntime 的 CPU／GPU 版本之爭在所有 pip 安裝結束之後才收尾（見下方那一段）。
+# 這裡不處理：此刻移掉，後面的 requirements.txt 會原封不動再裝回來。
 
 # torch 與 torchaudio 必須來自同一個 CUDA build，否則 import torchaudio 會直接拋
 # RuntimeError。上游 requirements.txt 是 `--extra-index-url .../cu118` 搭配不帶 local
@@ -81,6 +81,22 @@ RUN python3 -m pip install --no-cache-dir -r ${BREEZYVOICE_REPO}/requirements.tx
 COPY requirements-serving.txt /tmp/requirements-serving.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements-serving.txt
 
+# onnxruntime 必須是 GPU 版，而且這一步一定要放在所有安裝的最後面。
+#
+# 上游 requirements.txt 有釘 `onnxruntime-gpu==1.16.0`，但同一份裡的 `g2pw` 沒有釘版本，
+# 而 g2pw 的相依會把 PyPI 上的 `onnxruntime`（CPU 版）一起帶進來。兩個套件散出同一個
+# `onnxruntime` 模組目錄，**後裝的覆蓋先裝的**，於是實際被 import 的是 CPU 版。
+#
+# 徵狀只有啟動時一行 warning：
+#   Specified provider 'CUDAExecutionProvider' is not in available provider names.
+#   Available providers: 'AzureExecutionProvider, CPUExecutionProvider'
+# 而 CosyVoice 的 speech tokenizer 與聲紋比對都走 onnx，那兩段就整段在 CPU 上跑——
+# GPU 使用率平均只有兩三成，合成一句話要一百多秒，但輸出完全正常。
+#
+# 1.16.0 是上游釘的版本，對應 CUDA 11.8 + cuDNN 8，與本映像的基底一致。
+RUN python3 -m pip uninstall -y onnxruntime onnxruntime-gpu \
+    && python3 -m pip install --no-cache-dir "onnxruntime-gpu==1.16.0"
+
 # 建置期煙霧測試：把「只有在 endpoint 啟動時才會炸」的相依問題提前到 build 失敗。
 # 這裡的每一項都對應一次實際發生過的 ping health check 失敗，不是預防性的檢查：
 #
@@ -89,26 +105,43 @@ RUN python3 -m pip install --no-cache-dir -r /tmp/requirements-serving.txt
 #    等到推論才發現模型根本沒載入。
 # 3. load_hyperpyyaml — ruamel.yaml 0.18+ 會在解析模型 hyperparams 時炸；用一份最小
 #    的 YAML 就能走到同一條程式路徑，不需要模型權重。
+# 4. torch.version.cuda 與 onnxruntime 的套件名 — 這兩項驗的是「有沒有掉回 CPU」。
+#    建置機沒有 GPU，驗不到 `torch.cuda.is_available()`，但驗得到 wheel 是為哪個 CUDA
+#    編的、以及散出 `onnxruntime` 模組的究竟是哪個套件。安靜掉回 CPU 的代價是慢 30 倍
+#    而輸出完全正常，光看 /ping 與音檔都察覺不到，所以要在這裡擋。
 #
 # 模型權重來自 model.tar.gz、build 時不存在，因此這裡驗不到載入模型本身；那一段要靠
 # scripts/verify_container.sh 在 GPU 機器上實際起容器打 /ping 才驗得到。
 RUN python3 -c "\
 import io; \
+from importlib.metadata import distributions; \
+import torch; \
 import torchaudio; \
 from cosyvoice.utils.file_utils import load_wav; \
 import transformers; \
 assert transformers.utils.is_torch_available(), 'transformers disabled the torch backend'; \
 from hyperpyyaml import load_hyperpyyaml; \
-assert load_hyperpyyaml(io.StringIO('probe: 1'))['probe'] == 1"
+assert load_hyperpyyaml(io.StringIO('probe: 1'))['probe'] == 1; \
+assert torch.version.cuda == '11.8', f'torch was built for CUDA {torch.version.cuda}, expected 11.8'; \
+installed = {(d.metadata['Name'] or '').lower() for d in distributions()}; \
+assert 'onnxruntime-gpu' in installed, 'onnxruntime-gpu is missing'; \
+assert 'onnxruntime' not in installed, 'the cpu onnxruntime is still installed and shadows the gpu build'"
 
 WORKDIR /opt/app
 
 # g2pW 首次使用會上網抓字典，且預設以「相對於工作目錄」的 G2PWModel/ 尋找。因此這一步
 # 必須在 WORKDIR 設定之後執行，否則字典會落在建置當下的目錄，執行期在 /opt/app 找不到
 # 而重新下載——endpoint 若沒有對外網路就會直接啟動失敗。
-RUN HF_HUB_OFFLINE=0 python3 -c "\
-from g2pw import G2PWConverter; \
-G2PWConverter(style='pinyin', enable_non_tradional_chinese=True)"
+#
+# 只呼叫 `download_model`，不建 `G2PWConverter`：後者在下載完之後會接著開一個
+# InferenceSession，而 g2pw 0.1.1 開 session 時完全不帶 providers，換上
+# onnxruntime-gpu 之後必定拋 ValueError（詳見 app/synthesizer.py 的
+# `_onnx_default_providers`）。字典本身在那之前就已經下載完成了，這裡只要它。
+RUN python3 -c "\
+import os; \
+from g2pw.api import download_model; \
+download_model('G2PWModel/'); \
+assert os.path.exists(os.path.join('G2PWModel', 'version')), 'g2pW dictionary was not downloaded'"
 
 COPY app/ /opt/app/app/
 COPY serve /usr/local/bin/serve
