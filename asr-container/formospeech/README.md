@@ -1,12 +1,12 @@
 # FormoSpeech Whisper-v3 推論容器（客語六腔）
 
 `formospeech/whisper-large-v3-taiwanese-hakka` 的 SageMaker real-time endpoint 容器，
-是六個客語腔調 route 的主力。依 [`eval/MODEL_SELECTION.md`](../../eval/MODEL_SELECTION.md)，
-客語 ASR 只有這個模型支援六腔（eval MOS 3.21/5、平均 0.65s/句）。
+是六個客語腔調 route 的主力。依模型選型結論（見 [`docs/features/model_selection_asr_tts.md`](../../docs/features/model_selection_asr_tts.md)），
+客語 ASR 只有這個模型支援六腔（MOS 3.21/5、平均 0.65s/句）。
 
-- 契約：[`docs/asr/sagemaker-inference-contract.md`](../../docs/asr/sagemaker-inference-contract.md)
-- 授權與核准狀態：[`docs/asr/model-catalog.md`](../../docs/asr/model-catalog.md)
-- 安全與 PII：[`docs/asr/security-and-pii.md`](../../docs/asr/security-and-pii.md)
+- 契約：[`docs/asr/sagemaker-inference-contract.md`](../../docs/features/asr/sagemaker-inference-contract.md)
+- 授權與核准狀態：[`docs/asr/model-catalog.md`](../../docs/features/asr/model-catalog.md)
+- 安全與 PII：[`docs/asr/security-and-pii.md`](../../docs/features/asr/security-and-pii.md)
 
 ## 一個映像、六個 endpoint
 
@@ -55,7 +55,7 @@ HF_TOKEN=hf_xxx ./scripts/package_model.sh --bucket e-hakka-care-asr-artifacts-<
 cd ../../terraform && terraform apply
 ```
 
-HF token 依 [`docs/asr/model-catalog.md`](../../docs/asr/model-catalog.md) 的存取規則，
+HF token 依 [`docs/asr/model-catalog.md`](../../docs/features/asr/model-catalog.md) 的存取規則，
 只可在本機／CI 的打包階段短暫注入，**不得進入映像、SageMaker environment 或 Lambda**。
 
 ## 驗收後才開 gate
@@ -76,13 +76,13 @@ aws sagemaker-runtime invoke-endpoint \
 ```
 
 六腔各驗一次，確認辨識品質與 P95 後，才依
-[`docs/adr/asr-formo-production-approval.md`](../../docs/adr/asr-formo-production-approval.md)
+[`docs/adr/asr-formo-production-approval.md`](../../docs/features/adr/asr-formo-production-approval.md)
 更新 production gate。建立 endpoint 不等於核准。
 
 ## 成本
 
 六個 endpoint 各固定一台、無 autoscaling，機型分配見
-[`docs/asr/model-catalog.md`](../../docs/asr/model-catalog.md)：
+[`docs/asr/model-catalog.md`](../../docs/features/asr/model-catalog.md)：
 
 | 機型 | 台數 | $/hr |
 |---|---|---|

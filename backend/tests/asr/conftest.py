@@ -1,8 +1,6 @@
 # ASR-only 測試設定
 # ─────────────────────────────────────────────────────────────────
 # 必要環境與執行指令：
-#   conda env create -f ../asr-lambda/environment.yml   # 首次建立
-#   conda activate asr-model
 #   python -m pip install -e ".[dev]"
 #   python -m pytest tests/asr -q
 # ─────────────────────────────────────────────────────────────────

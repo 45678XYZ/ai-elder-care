@@ -1,8 +1,0 @@
-chromadb
-sentence-transformers
-jieba
-rank-bm25
-fastapi
-uvicorn[standard]
-python-dotenv
-# 生成層待接 Bedrock（見 rag.py 的 _generate）；接上時補 boto3

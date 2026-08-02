@@ -85,8 +85,8 @@ flowchart TB
 
 - **語音對話迴圈**：App 錄音 → `POST /chat` 後端 ASR 辨識 → 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
-- **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論。`zh-TW` 以 Amazon Transcribe Streaming 為主力、Taiwan-Tongues CE 為備援；`hak:<六腔>` 以對應 Formo 固定-prompt SageMaker endpoint 為主力、共用 CE 為備援。CE/Formo 必須逐模型通過 staging/runtime、授權、存取、配額與容量核准，未核准時一律 fail closed；Transcribe 全程 memory-only，不使用 batch/S3。ASR 子系統完整架構見 [`docs/asr/framework.md`](asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
-- **後端 TTS** 同樣採 remote-only 與設定驅動 route。`lang` 明確決定中文或客語；客語六腔只讀 elder profile 並保存 turn 快照。客語失敗不得改用中文 voice；所有 TTS provider 失敗時仍提交文字 turn，`reply_audio_url=null`。完整規格見 [`docs/tts/framework.md`](tts/framework.md)。
+- **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論。`zh-TW` 以 Amazon Transcribe Streaming 為主力、Taiwan-Tongues CE 為備援；`hak:<六腔>` 以對應 Formo 固定-prompt SageMaker endpoint 為主力、共用 CE 為備援。CE/Formo 必須逐模型通過 staging/runtime、授權、存取、配額與容量核准，未核准時一律 fail closed；Transcribe 全程 memory-only，不使用 batch/S3。ASR 子系統完整架構見 [`docs/features/asr/framework.md`](features/asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
+- **後端 TTS** 同樣採 remote-only 與設定驅動 route。`lang` 明確決定中文或客語；客語六腔只讀 elder profile 並保存 turn 快照。客語失敗不得改用中文 voice；所有 TTS provider 失敗時仍提交文字 turn，`reply_audio_url=null`。完整規格見 [`docs/features/tts/framework.md`](features/tts/framework.md)。
 - AgentCore Runtime 的 tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：大腦在回應 chat Lambda 之前先呼叫 tools Lambda 寫入 completion event 或發送安全通知，並在回應 payload 明確回報 `routines_updated`。安全通知由 `notify_caregiver` tool 即時發送（寫 DynamoDB + SNS），不需額外旗標回傳。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
 - batch extractor 走 `direct_seven`：不分塊、不檢索、不做前置分類，直接對 frozen turns 依字元上限分批做七大類萃取（見下方「Direct Seven Pipeline」）。Bedrock embedding 只用在去重階段的謂語語義合併，由 `EMBEDDING_MODEL_ID`／`EMBEDDING_DIM` 指定；沒有 embedder 時退回不做語義合併，不影響 canonical key 的確定性。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
@@ -488,7 +488,6 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 e-hakka-care/
 ├── .kiro/          # Kiro 設定與 specs
 ├── app/            # Flutter
-├── asr-lambda/     # SageMaker inference container 開發文件與本機 conda 環境
 ├── backend/        # Python Lambda handlers、ASR/TTS 領域模組與 extraction pipeline
 │   └── src/shared/       # ASR/TTS 與其他跨 handler 共用模組
 ├── terraform/      # AWS IaC

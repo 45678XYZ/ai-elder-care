@@ -2,7 +2,7 @@
 
 本模組為系統的核心大腦與資料處理中樞，採用 **Python** 實作，以無伺服器 (Serverless) 架構部署至 AWS Lambda 與 Bedrock AgentCore Runtime。
 
-每個 handler 對應一組 API 資源，由 API Gateway（Cognito JWT authorizer）觸發；`summary_generator` 由 EventBridge Scheduler 每晚觸發。API 規格見 [docs/api.md](../docs/api.md)，語音子系統架構見 [ASR](../docs/asr/framework.md) 與 [TTS](../docs/tts/framework.md)。
+每個 handler 對應一組 API 資源，由 API Gateway（Cognito JWT authorizer）觸發；`summary_generator` 由 EventBridge Scheduler 每晚觸發。API 規格見 [docs/api.md](../docs/api.md)，語音子系統架構見 [ASR](../docs/features/asr/framework.md) 與 [TTS](../docs/features/tts/framework.md)。
 
 ## 模組功能
 
@@ -30,7 +30,6 @@ backend/
 │                                 # asr（Transcribe/SageMaker remote-only 語音辨識）、
 │                                 # tts（可切換華語／客語遠端語音合成）
 ├── local_runner/                 # 不連 AWS 的本機萃取／對話試跑腳本（見 local_runner/README.md）
-├── scripts/                      # 離線工具（分類體系檢視、謂語辭典草擬、事件身分驗證）
 ├── tests/                        # Pytest 單元測試與整合測試
 ├── pyproject.toml                # Python 專案配置（含 [dev] extras）
 ├── requirements.txt              # Lambda 執行期依賴（Terraform 打包用）
@@ -39,14 +38,6 @@ backend/
 ```
 
 詳細的逐檔說明請見 **[src/README.md](src/README.md)**。
-
-## scripts/ — 開發輔助腳本
-
-| 檔案 | 功能 |
-|------|------|
-| `draft_predicate_lexicon.py` | 草擬謂語辭典（canonical key 正規化用） |
-| `dump_taxonomy.py` | 匯出/檢視分類體系（除錯用） |
-| `resolve_event_identity.py` | 事件身分解析工具（驗證 canonical key 產生邏輯） |
 
 ## tests/ — 測試
 

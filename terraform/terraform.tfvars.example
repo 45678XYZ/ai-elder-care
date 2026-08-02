@@ -43,7 +43,7 @@ tavily_api_key = "tvly-請填入實際key"
 
 # --- 客語 TTS（OmniVoice）---
 #
-# 依 eval/MODEL_SELECTION.md，客語 TTS 用 OmniVoice（MOS 4.31）而非 VoxHakka（1.79）。
+# 依模型選型結論，客語 TTS 用 OmniVoice（MOS 4.31）而非 VoxHakka（1.79）。
 # 單一 endpoint 服務六腔，建置步驟見 tts-container/omnivoice/README.md。
 #
 # ⚠️ 開啟後會常駐一台 ml.g4dn.xlarge（無 autoscaling），約 US$0.74/hr。
@@ -68,7 +68,7 @@ tavily_api_key = "tvly-請填入實際key"
 # asr_formo_model_data_url  = "s3://e-hakka-care-asr-artifacts-<account>/asr/formospeech/model.tar.gz"
 # asr_enable_endpoints      = true
 #
-# Taiwan-Tongues-ASR-CE 備援。依 eval/MODEL_SELECTION.md，中文改用 Amazon Transcribe、
+# Taiwan-Tongues-ASR-CE 備援。依模型選型結論，中文改用 Amazon Transcribe、
 # 客語用 FormoSpeech，CE 兩邊都不是首選，而它固定佔一台 ml.g5.4xlarge（約 US$2.03/hr），
 # 因此預設關閉。開啟時才需要填 asr_ce_image_uri 與 asr_ce_model_data_url。
 # asr_enable_ce_endpoint = false

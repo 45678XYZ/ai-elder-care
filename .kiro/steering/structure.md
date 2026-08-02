@@ -11,14 +11,12 @@ inclusion: always
 ├── backend/          # Python Lambda handlers、對話大腦、ASR/TTS 領域模組、萃取 pipeline
 ├── terraform/        # AWS IaC（20 個 .tf，依資源領域分檔）
 ├── asr-container/    # ASR 推論容器原始碼（FormoSpeech 客語六腔）
-├── asr-lambda/       # SageMaker container 開發與 staging 相容性預檢
 ├── tts-container/    # TTS 推論容器原始碼（BreezyVoice 華語、OmniVoice 客語）
 ├── data/             # 模擬 persona、合成情境腳本、seed 腳本、knowledge/ 衛教文件
-├── docs/             # 架構、API、ASR/TTS、ADR、旅程、PII、慣例、交付文件
-├── eval/             # ASR/TTS 評測語料、notebook、情境與 demo 腳本
-├── experiments/      # 實驗性 PoC（rag-poc/，正式版已由 Bedrock KB 取代）
+├── docs/             # 架構、API、旅程、PII、慣例、交付文件
+│   └── features/     # 功能與子系統規格：asr/ tts/ adr/、摘要、模型選型、整併計畫
 ├── scripts/          # 全域工具腳本（知識庫上傳與同步）
-└── skills/           # 供 AI 工具使用的 repo skill
+└── .kiro/            # steering、specs 與 repo skill（skills/ 已移入 .kiro/skills/）
 ```
 
 ## backend/src/ 四層
@@ -59,19 +57,20 @@ Python `snake_case`／`PascalCase`／`UPPER_SNAKE_CASE`；Dart `lowerCamelCase`�
 | API 端點、request/response、錯誤格式（前後端唯一契約） | [docs/api.md](../../docs/api.md) |
 | 上述的易讀導覽版 | [docs/api-overview.md](../../docs/api-overview.md) |
 | 對話大腦 13 個工具的觸發條件與 I/O | [docs/llm_tools.md](../../docs/llm_tools.md) |
-| 每日摘要排程、partial/complete、backfill | [docs/feature_daily-summarization.md](../../docs/feature_daily-summarization.md) |
+| 每日摘要排程、partial/complete、backfill | [docs/features/feature_daily-summarization.md](../../docs/features/feature_daily-summarization.md) |
 | 命名、註解、風格與提交前檢查 | [docs/conventions.md](../../docs/conventions.md) |
 | 分支、Commit、PR | [docs/workflow.md](../../docs/workflow.md) |
 | PII 與安全政策 | [docs/pii.md](../../docs/pii.md) |
 | 使用者旅程 | [docs/user-journey.md](../../docs/user-journey.md) |
 | 本機不連 AWS 的測試路徑 | [docs/local_testing.md](../../docs/local_testing.md) |
-| ASR 子系統架構、設定 schema、模型目錄、推論契約、安全 | [docs/asr/](../../docs/asr/framework.md) |
-| TTS 子系統同上 | [docs/tts/](../../docs/tts/framework.md) |
-| remote-only、Transcribe 路由、模型核准等決策紀錄 | [docs/adr/](../../docs/adr/asr-remote-only.md) |
+| ASR 子系統架構、設定 schema、模型目錄、推論契約、安全 | [docs/features/asr/](../../docs/features/asr/framework.md) |
+| TTS 子系統同上 | [docs/features/tts/](../../docs/features/tts/framework.md) |
+| remote-only、Transcribe 路由、模型核准等決策紀錄 | [docs/features/adr/](../../docs/features/adr/asr-remote-only.md) |
+| ASR／TTS 模型選型比較 | [docs/features/model_selection_asr_tts.md](../../docs/features/model_selection_asr_tts.md) |
 | 交付版旅程、資料應用、前端資料流 | [docs/deliverables/](../../docs/deliverables/user-journey.md) |
-| App → 後端待辦需求（腔調／語言改由工具寫入） | [docs/request_elder-lang-dialect-via-tool.md](../../docs/request_elder-lang-dialect-via-tool.md) |
-| ASR／Agent／前端相容性整併計畫 | [docs/asr-agentcore-frontend-integration-plan.md](../../docs/asr-agentcore-frontend-integration-plan.md) |
+| App → 後端待辦需求（腔調／語言改由工具寫入） | [docs/features/request_elder-lang-dialect-via-tool.md](../../docs/features/request_elder-lang-dialect-via-tool.md) |
+| ASR／Agent／前端相容性整併計畫 | [docs/features/asr-agentcore-frontend-integration-plan.md](../../docs/features/asr-agentcore-frontend-integration-plan.md) |
 
-逐檔說明看各目錄自己的 README：[app/README.md](../../app/README.md)、[backend/README.md](../../backend/README.md)、[backend/src/README.md](../../backend/src/README.md)、[backend/src/shared/asr/README.md](../../backend/src/shared/asr/README.md)、[backend/src/shared/tts/README.md](../../backend/src/shared/tts/README.md)、[data/README.md](../../data/README.md)、[docs/README.md](../../docs/README.md)、[eval/README.md](../../eval/README.md)、[asr-container/README.md](../../asr-container/README.md)、[tts-container/README.md](../../tts-container/README.md)。App 設計規範見 [app/design-system/MASTER.md](../../app/design-system/MASTER.md)。
+逐檔說明看各目錄自己的 README：[app/README.md](../../app/README.md)、[backend/README.md](../../backend/README.md)、[backend/src/README.md](../../backend/src/README.md)、[backend/src/shared/asr/README.md](../../backend/src/shared/asr/README.md)、[backend/src/shared/tts/README.md](../../backend/src/shared/tts/README.md)、[data/README.md](../../data/README.md)、[docs/README.md](../../docs/README.md)、[asr-container/README.md](../../asr-container/README.md)、[tts-container/README.md](../../tts-container/README.md)。App 設計規範見 [app/design-system/MASTER.md](../../app/design-system/MASTER.md)。
 
 改文件或搬動頂層檔案／目錄時，順手更新引用它的地方（README 結構樹、文件清單、交叉連結），別讓索引長出死連結。

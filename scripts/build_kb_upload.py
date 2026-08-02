@@ -52,7 +52,7 @@ def parse_kb_file(path: Path) -> tuple[str, str, str]:
     不處理的話 BOM 會留在第一行前面，前綴比對會失敗，而且會被一起索引進去。
 
     格式不符直接拋錯而不是猜：少了來源那行就標不出出處，衛教內容拿不出依據
-    比拿錯依據更該擋下來。這與 experiments/rag-poc/ingest.py 的處理一致。
+    比拿錯依據更該擋下來。
     """
     lines = path.read_text(encoding="utf-8-sig").splitlines()
     if len(lines) < 2:
