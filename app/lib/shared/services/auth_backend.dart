@@ -21,6 +21,17 @@ abstract interface class AuthBackend {
   /// 重寄驗證碼。Cognito 對此有頻率限制，過快會拿到 [AuthErrorCode.limitExceeded]。
   Future<void> resendCode({required String email});
 
+  /// 發送重設密碼驗證碼到信箱。Cognito 的 ForgotPassword API。
+  /// 不論信箱是否存在都靜默成功（不洩漏帳號是否註冊過）。
+  Future<void> forgotPassword({required String email});
+
+  /// 用驗證碼確認新密碼。Cognito 的 ConfirmForgotPassword API。
+  Future<void> confirmNewPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  });
+
   /// 登入，回傳 **ID token**（不是 access token——`sub` 與 `elder_id` claim 只在 ID token 內，
   /// 見 [AuthService.parseIdentity]）。
   Future<String> signIn({required String email, required String password});

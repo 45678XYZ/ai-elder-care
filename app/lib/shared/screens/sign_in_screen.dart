@@ -159,7 +159,15 @@ class _SignInScreenState extends State<SignInScreen> {
                 const SizedBox(height: AppSpacing.sm),
                 FieldNote(_passwordError!, isError: true),
               ],
-              const SizedBox(height: AppSpacing.xl),
+              const SizedBox(height: AppSpacing.md),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextLink(
+                  label: '忘記密碼？',
+                  onTap: _busy ? null : () => context.push('/auth/forgot-password'),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
 
               BigButton(label: '登入', busy: _busy, onPressed: _submit),
 

@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
 import 'auth_backend.dart';
 import 'cognito_auth_backend.dart';
-import 'demo_auth_backend.dart';
+import 'demo/demo_auth_backend.dart';
 import 'notification_service.dart';
 import 'session_store.dart';
 

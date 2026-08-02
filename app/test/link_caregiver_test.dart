@@ -2,8 +2,8 @@
 import 'package:e_hakka_care/elder/screens/link_caregiver_screen.dart';
 import 'package:e_hakka_care/shared/models/caregiver.dart';
 import 'package:e_hakka_care/shared/services/care_repository.dart';
-import 'package:e_hakka_care/shared/services/demo_data.dart';
-import 'package:e_hakka_care/shared/services/demo_repository.dart';
+import 'package:e_hakka_care/shared/services/demo/demo_data.dart';
+import 'package:e_hakka_care/shared/services/demo/demo_repository.dart';
 import 'package:e_hakka_care/shared/services/session_store.dart';
 import 'package:e_hakka_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';

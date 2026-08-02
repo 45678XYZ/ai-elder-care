@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../theme/app_theme.dart';
 import '../services/auth_backend.dart';
 import '../services/auth_service.dart';
-import '../services/demo_auth_backend.dart';
+import '../services/password_validator.dart' as pw;
 import '../widgets/form_widgets.dart';
 import 'sign_in_screen.dart' show looksLikeEmail;
 
@@ -98,7 +98,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     // 密碼規則在送出前就檢查：規則寫在畫面上，就不該讓人送出後才被打回票。
     // 訊息刻意不重述規則（那一行本來就一直在下面），只講「這裡有問題」。
     final passwordError =
-        DemoAuthBackend.isPasswordValid(password) ? null : '密碼格式錯誤';
+        pw.isPasswordValid(password) ? null : '密碼格式錯誤';
 
     // 身分不給預設值，所以未選就得擋下來——猜錯的代價是整個 App 進錯模式。
     // `role == null` 寫在條件裡（而不是先算成訊息）才能讓下面的 role 被推導成非 null。
