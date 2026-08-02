@@ -1,118 +1,6 @@
-# API 概覽（高階說明）
+# API 概覽
 
-本文件是 `docs/api.md` 的易讀版本，適合初次了解系統的人閱讀。技術細節請參閱原始規格。
-
----
-
-## 系統簡介
-
-這是一套長者照護 AI 系統的後端 API。系統有兩種使用者：
-
-- **長者**：透過語音或文字與 AI 對話，回報日常生活狀況
-- **照護者（家人）**：透過 App 管理長者資料、查看摘要與統計
-
-所有 API 路徑前綴為 `/v1`，需要登入後取得的 token 才能使用。
-
----
-
-## 核心功能模組
-
-### 1. 對話（POST /chat）
-
-長者用語音或文字跟 AI 聊天。AI 會：
-- 理解長者說的話（支援國語與客語）
-- 即時回覆文字與語音
-- 自動記錄重要事項（如：吃藥、看醫生的約定）
-- 偵測安全風險（如：跌倒）並立即通知照護者
-
-每段對話屬於一個「Session（對話時段）」。Session 結束後，系統會在背景整理出生活事件。
-
-### 2. Session 關閉（POST /chat/sessions/{id}/close）
-
-當長者離開對話畫面時，App 會關閉 Session。關閉後：
-- 不再接受新的對話輸入
-- 背景開始整理這段對話中提到的生活事件
-
-即使 App 忘記關閉，系統也會自動偵測閒置的 Session 並關閉。
-
-### 3. 長者資料管理
-
-| 操作 | 說明 |
-|------|------|
-| 建立長者 | 照護者填寫基本資料（姓名、語言偏好等） |
-| 查看長者 | 取得長者的完整個人資料 |
-| 更新長者 | 修改基本資料 |
-| 新增健康註記 | 記錄健康狀況（如「高血壓」「膝蓋痛」） |
-| 刪除健康註記 | 移除過時的健康紀錄 |
-
-健康註記有兩種來源：照護者手動輸入、或 AI 從對話中自動補充。前端會標示來源，方便照護者確認 AI 補充的內容是否正確。
-
-### 4. 綁定照護者
-
-一位長者可以有多位家人照護。綁定流程：
-
-1. 照護者在自己的 App 看到自己的短 ID（如 `cg_7f3a91c2`）
-2. 家人在長輩手機上輸入這個 ID
-3. 綁定完成，該照護者就能看到長輩的資料
-
-目前不支援解除綁定（避免誤操作造成照護者失去長輩資訊的存取）。
-
-### 5. 每日摘要（GET /summaries）
-
-系統每天自動產生長者的生活摘要，涵蓋七大類：
-
-| 類別 | 內容範例 |
-|------|----------|
-| 飲食 (diet) | 三餐正常 |
-| 活動 (activity) | 下午散步 30 分鐘 |
-| 睡眠 (sleep) | 昨晚睡七小時 |
-| 用藥 (medication) | 血壓藥已按時服用 |
-| 身心狀況 (wellbeing) | 提到膝蓋痛 |
-| 安全 (safety) | 無異常 |
-| 其他 (other) | 無 |
-
-摘要還包含：
-- 例行公事完成狀況
-- 需要注意的警示（如「多次提到膝蓋痛」）
-- 資料完整度指標（是否還有對話尚未處理完畢）
-
-照護者也可手動觸發生成摘要（POST /summaries/generate）。
-
-### 6. 生活事件（GET /events）
-
-從對話中萃取出的具體事件紀錄，每筆包含：
-- 時間
-- 類別（同摘要七大類）
-- 描述內容
-- 來源（對話或手動記錄）
-
-照護者可依日期、類別篩選查看。
-
-### 7. 例行公事（Routines）
-
-照護者可為長者設定每日/每週/一次性的任務：
-
-| 操作 | 說明 |
-|------|------|
-| 建立 | 設定任務名稱、頻率、時間、是否提醒 |
-| 修改 | 更新任務內容 |
-| 刪除 | 移除不需要的任務 |
-| 手動完成 | 照護者或長者確認已完成 |
-| 查看當日行程 | 列出今天的任務與完成狀態 |
-
-AI 對話中如果長者提到做了某件事（如「我吃藥了」），系統會自動將對應的例行公事標記為完成。
-
-排程類型：
-- **每日 (daily)**：每天固定時間
-- **每週 (weekly)**：每週指定某天
-- **一次性 (once)**：只有某一天
-
-### 8. 統計（GET /stats）
-
-提供照護者快速了解長者的互動狀況：
-- 今日互動次數與最後互動時間
-- 近 N 天的互動趨勢
-- 各項例行公事的完成率
+所有端點前綴 `/v1`，認證帶 `Authorization: Bearer <Cognito ID Token>`。
 
 ---
 
@@ -120,28 +8,429 @@ AI 對話中如果長者提到做了某件事（如「我吃藥了」），系�
 
 | 項目 | 說明 |
 |------|------|
-| 認證 | 所有請求需帶登入 token，系統自動判斷身分與權限 |
-| 時間格式 | 統一使用台灣時間 (UTC+8) |
-| 分頁 | 列表超過一頁時，回傳翻頁 token，帶入下次請求即可翻頁 |
-| 錯誤 | 統一格式，包含錯誤代碼與訊息 |
-| 重複請求保護 | 重要操作帶有請求 ID，重送不會造成重複動作 |
-| 權限 | 長者只能存取自己的資料；照護者只能存取已綁定的長者 |
+| 格式 | `application/json; charset=utf-8` |
+| 時間 | ISO 8601 含時區，日界以台灣時間 (+08:00) 為準 |
+| ID 前綴 | `eld_`（長者）、`rtn_`（routine）、`evt_`（事件）、`cnv_`（turn）、`ses_`（session）、`cg_`（照護者）、`hn_`（健康註記） |
+| 分頁 | `?limit=`（預設 50）+ `?next_token=`（不透明字串，原樣帶回） |
+| 權限 | 長者只能存取自己；照護者只能存取已綁定長者 |
+
+### 錯誤格式
+
+```json
+{ "error": { "code": "ELDER_NOT_FOUND", "message": "找不到指定的長者" } }
+```
+
+| HTTP | code 範例 | 時機 |
+|------|-----------|------|
+| 400 | `INVALID_PARAMETER`、`AUDIO_TOO_LONG`、`ROUTINE_NOT_SCHEDULED` | 格式錯誤或不合規則 |
+| 401 | `UNAUTHORIZED` | token 缺漏或無效 |
+| 403 | `FORBIDDEN` | 越權存取 |
+| 404 | `ELDER_NOT_FOUND`、`SESSION_NOT_FOUND`、`ROUTINE_NOT_FOUND` 等 | 資源不存在或不屬於該使用者 |
+| 409 | `REQUEST_IN_PROGRESS`、`IDEMPOTENCY_CONFLICT` | 請求衝突 |
+| 429 | `THROTTLED` | 超過節流上限 |
+| 500 | `INTERNAL_ERROR` | 伺服器錯誤 |
+
+---
+
+## 對話
+
+### POST /chat
+
+長者送出一句話，取得 AI 即時回覆。`text` 與 `audio` 擇一必填。
+
+**Request**
+
+```json
+{
+  "client_request_id": "ad381d1e-2b96-4dc2-83ac-c58ab0b934db",
+  "elder_id": "eld_a1b2c3d4e5f6",
+  "session_id": "ses_01J8...",
+  "lang": "zh-TW",
+  "text": "我吃過血壓藥了"
+}
+```
+
+| 欄位 | 型別 | 說明 |
+|------|------|------|
+| client_request_id | string | 必填，UUID；重送沿用 |
+| elder_id | string | 必填 |
+| session_id | string | 選填；首輪省略由後端建立 |
+| lang | `zh-TW` \| `hak` | 必填，決定 ASR/TTS 語言 |
+| text | string | 與 audio 擇一 |
+| audio.data | string | base64，≤ 60 秒 |
+| audio.format | `m4a` \| `wav` | — |
+
+**Response 200**
+
+```json
+{
+  "conversation_id": "cnv_8f25b1...",
+  "session_id": "ses_01J8NEW...",
+  "transcript": "我吃過血壓藥了",
+  "reply_text": "有按時吃藥真棒！",
+  "reply_audio_url": "https://<s3-presigned-url>",
+  "routines_updated": true
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| conversation_id | 本 turn ID |
+| session_id | 實際使用的 session（可能是新建的） |
+| transcript | audio 的 ASR 結果；text 原樣回傳 |
+| reply_text | AI 回覆文字 |
+| reply_audio_url | 15 分鐘 presigned URL；失敗時為 `null` |
+| routines_updated | 本次有 routine 異動時為 `true` |
+
+### POST /chat/sessions/{session_id}/close
+
+關閉 session，觸發背景 batch 處理。Body 為空 `{}`。
+
+**Response 200**
+
+```json
+{
+  "session_id": "ses_01J8...",
+  "status": "closed",
+  "closed_at": "2026-07-14T09:20:00+08:00",
+  "batch_status": "pending"
+}
+```
+
+---
+
+## 長者資料
+
+### GET /elders
+
+照護者取得已綁定長者列表；長者帳號只回自己。
+
+**Response**
+
+```json
+{
+  "items": [{
+    "elder_id": "eld_a1b2c3d4e5f6",
+    "name": "陳阿蘭",
+    "nickname": "阿蘭嬤",
+    "birth_year": 1948,
+    "gender": "female",
+    "lang_preference": "zh-TW",
+    "hakka_dialect": "htia_sixian",
+    "address_region": "台北市大安區",
+    "health_notes": [
+      { "note_id": "hn_9c1f2a4b7d3e", "text": "高血壓", "source": "caregiver", "created_at": "2026-07-01T10:00:00+08:00" }
+    ],
+    "family": [
+      { "relation": "兒子", "name": "陳志明", "note": "每週三來訪" }
+    ],
+    "habit_note": "早睡早起，喜歡去公園散步",
+    "created_at": "2026-07-01T10:00:00+08:00",
+    "updated_at": "2026-07-01T10:00:00+08:00"
+  }]
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| gender | `male` \| `female` \| `other` |
+| lang_preference | `zh-TW` \| `hak` |
+| hakka_dialect | `htia_sixian` \| `htia_hailu` \| `htia_dapu` \| `htia_raoping` \| `htia_zhaoan` \| `htia_nansixian` |
+| health_notes[].source | `caregiver`（手動）\| `agent`（AI 補充） |
+
+### POST /elders
+
+照護者建立長者。`name` 必填，建立者自動綁定。Response 201。
+
+### PATCH /elders/{elder_id}
+
+部分更新，不可傳 server-owned 欄位。Response 200。
+
+### POST /elders/{elder_id}/health_notes
+
+```json
+{ "text": "膝關節退化" }
+```
+
+原子 append，不與 Agent 寫入衝突。Response 201 回完整長者物件。
+
+### DELETE /elders/{elder_id}/health_notes/{note_id}
+
+依 note_id 移除。Response 200 回完整長者物件；找不到回 404 `HEALTH_NOTE_NOT_FOUND`。
+
+---
+
+## 綁定照護者
+
+### GET /me
+
+照護者取得自己的短 ID 與名稱。
+
+```json
+{ "caregiver_id": "cg_7f3a91c2", "name": "陳志明" }
+```
+
+### POST /elders/{elder_id}/caregivers
+
+長者本人輸入照護者 ID 完成綁定。
+
+```json
+{ "caregiver_id": "cg_7f3a91c2" }
+```
+
+**Response 201（新綁定）/ 200（已綁定）**
+
+```json
+{ "caregiver_id": "cg_7f3a91c2", "name": "陳志明", "linked_at": "2026-07-14T09:06:00+08:00" }
+```
+
+### GET /elders/{elder_id}/caregivers
+
+列出已綁定照護者，按 `linked_at` 由舊到新。
+
+```json
+{
+  "items": [
+    { "caregiver_id": "cg_7f3a91c2", "name": "陳志明", "linked_at": "...", "is_self": false }
+  ]
+}
+```
+
+---
+
+## 每日摘要
+
+### GET /summaries?elder_id=&from=&to=
+
+`from`/`to` 含首尾，預設最近 7 天。
+
+**Response**
+
+```json
+{
+  "items": [{
+    "elder_id": "eld_a1b2c3d4e5f6",
+    "date": "2026-07-14",
+    "overview": "三餐正常並按時服藥；仍有一段對話等待整理。",
+    "sections": {
+      "diet": "三餐正常",
+      "activity": "下午散步 30 分鐘",
+      "sleep": "昨晚睡七小時",
+      "medication": "血壓藥已按時服用",
+      "wellbeing": "提到膝蓋痛",
+      "safety": null,
+      "other": null
+    },
+    "routines": {
+      "completed": 1,
+      "missed": 1,
+      "items": [
+        { "routine_id": "rtn_001", "title": "吃血壓藥", "status": "done" }
+      ]
+    },
+    "alerts": ["今日多次提到膝蓋疼痛"],
+    "interaction_count": 6,
+    "data_status": "partial",
+    "pending_session_count": 1,
+    "generated_at": "2026-07-14T20:00:12+08:00"
+  }]
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| sections | 固定七類，無資料為 `null` |
+| data_status | `complete`（全部 batch 完成）\| `partial`（仍有待處理 session） |
+| pending_session_count | 尚未完成 batch 的 session 數 |
+| alerts | 無警訊為 `[]` |
+
+### POST /summaries/generate
+
+```json
+{ "elder_id": "eld_a1b2c3d4e5f6", "date": "2026-07-14" }
+```
+
+同步生成，Response 200 回單一摘要物件。
+
+---
+
+## 生活事件
+
+### GET /events?elder_id=&from=&to=&type=
+
+`from`/`to` 預設今天；`type` 選填。按 `ts` 最新優先。
+
+**Response**
+
+```json
+{
+  "items": [{
+    "event_id": "evt_01J8...",
+    "elder_id": "eld_a1b2c3d4e5f6",
+    "ts": "2026-07-14T09:05:00+08:00",
+    "type": "medication",
+    "detail": "已服用血壓藥",
+    "source": "conversation",
+    "conversation_id": "cnv_01J8...",
+    "routine_id": "rtn_001"
+  }]
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| type | `diet` \| `activity` \| `sleep` \| `medication` \| `wellbeing` \| `safety` \| `other` |
+| source | `conversation` \| `manual` |
+| routine_id | 選填，對應 routine 完成時才有 |
+
+---
+
+## 例行公事
+
+### GET /routines?elder_id=
+
+回所有生效定義。
+
+```json
+{
+  "items": [{
+    "routine_id": "rtn_001",
+    "elder_id": "eld_a1b2c3d4e5f6",
+    "title": "吃血壓藥",
+    "type": "medication",
+    "schedule": { "freq": "daily", "time": "09:00" },
+    "remind": true,
+    "created_by": "caregiver",
+    "active": true,
+    "created_at": "2026-07-01T10:05:00+08:00"
+  }]
+}
+```
+
+**schedule 格式**
+
+| freq | 欄位 |
+|------|------|
+| `daily` | `time` |
+| `weekly` | `weekday`（1-7，週一=1）、`time` |
+| `once` | `date`、`time` |
+
+### GET /routines?elder_id=&date=YYYY-MM-DD
+
+當日行程含完成狀態。
+
+```json
+{
+  "date": "2026-07-14",
+  "items": [{
+    "routine_id": "rtn_001",
+    "title": "吃血壓藥",
+    "type": "medication",
+    "scheduled_at": "2026-07-14T09:00:00+08:00",
+    "status": "done",
+    "created_by": "caregiver",
+    "completed_at": "2026-07-14T09:05:00+08:00",
+    "completed_by": "conversation"
+  }]
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| status | `pending` \| `done` \| `missed` |
+| completed_by | `conversation` \| `elder` \| `caregiver` |
+
+### POST /routines
+
+照護者建立。`client_request_id` 與 `title` 必填。
+
+```json
+{
+  "client_request_id": "5895c75e-...",
+  "elder_id": "eld_a1b2c3d4e5f6",
+  "title": "吃血壓藥",
+  "type": "medication",
+  "schedule": { "freq": "daily", "time": "09:00" },
+  "remind": true
+}
+```
+
+Response 201 回完整物件。
+
+### PATCH /routines/{routine_id}
+
+必須含 `client_request_id`，可更新 `title`、`type`、`schedule`、`remind`。Response 200。
+
+### DELETE /routines/{routine_id}?client_request_id=
+
+照護者可刪任一筆；長者只能刪 `created_by=conversation`。
+
+Response 200：`{ "deleted": true, "routine_id": "rtn_xxx" }`
+
+### POST /routines/{routine_id}/complete
+
+```json
+{ "date": "2026-07-14" }
+```
+
+`date` 預設今天。Response 200 回該日 occurrence 物件。已完成則冪等回 200。
+
+---
+
+## 統計
+
+### GET /stats?elder_id=&days=7
+
+`days` 預設 7，可帶 1–31。
+
+**Response**
+
+```json
+{
+  "elder_id": "eld_a1b2c3d4e5f6",
+  "today": {
+    "interaction_count": 6,
+    "last_interaction_at": "2026-07-14T15:22:00+08:00"
+  },
+  "period": {
+    "days": 7,
+    "interaction_count": 35,
+    "active_days": 7
+  },
+  "routines": {
+    "by_routine": [
+      { "routine_id": "rtn_001", "title": "吃血壓藥", "completed": 7, "total": 7 }
+    ]
+  },
+  "daily": [
+    { "date": "2026-07-14", "interaction_count": 6, "routines_completed": 1, "routines_total": 2 }
+  ]
+}
+```
 
 ---
 
 ## 端點總覽
 
-| 功能 | 端點 | 使用者 |
-|------|------|--------|
-| AI 對話 | `POST /chat` | 長者 |
-| 關閉對話 | `POST /chat/sessions/{id}/close` | 長者 |
-| 長者 CRUD | `GET/POST/PATCH /elders` | 兩端 |
-| 健康註記 | `POST/DELETE /elders/{id}/health_notes` | 照護者 |
-| 查看自己 ID | `GET /me` | 照護者 |
-| 綁定照護者 | `POST /elders/{id}/caregivers` | 長者 |
-| 查看已綁定家人 | `GET /elders/{id}/caregivers` | 兩端 |
-| 每日摘要 | `GET /summaries`、`POST /summaries/generate` | 照護者 |
-| 生活事件 | `GET /events` | 照護者 |
-| 例行公事 | `GET/POST/PATCH/DELETE /routines` | 兩端 |
-| 完成例行公事 | `POST /routines/{id}/complete` | 兩端 |
-| 統計 | `GET /stats` | 照護者 |
+| 方法 | 路徑 | 用途 | 使用者 |
+|------|------|------|--------|
+| POST | /chat | AI 對話 | 長者 |
+| POST | /chat/sessions/{id}/close | 關閉 session | 長者 |
+| GET | /elders | 長者列表 | 兩端 |
+| GET | /elders/{id} | 長者單筆 | 兩端 |
+| POST | /elders | 建立長者 | 照護者 |
+| PATCH | /elders/{id} | 更新長者 | 照護者 |
+| POST | /elders/{id}/health_notes | 新增健康註記 | 照護者 |
+| DELETE | /elders/{id}/health_notes/{note_id} | 刪除健康註記 | 照護者 |
+| GET | /me | 自己的照護者 ID | 照護者 |
+| POST | /elders/{id}/caregivers | 綁定照護者 | 長者 |
+| GET | /elders/{id}/caregivers | 已綁定家人 | 兩端 |
+| GET | /summaries | 每日摘要 | 照護者 |
+| POST | /summaries/generate | 手動生成摘要 | 照護者 |
+| GET | /events | 事件時間軸 | 照護者 |
+| GET | /routines | 定義/當日行程 | 兩端 |
+| POST | /routines | 建立 routine | 照護者 |
+| PATCH | /routines/{id} | 修改 routine | 照護者 |
+| DELETE | /routines/{id} | 刪除 routine | 兩端 |
+| POST | /routines/{id}/complete | 手動完成 | 兩端 |
+| GET | /stats | 統計 | 照護者 |
