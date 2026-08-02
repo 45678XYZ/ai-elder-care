@@ -29,7 +29,7 @@ variable "asr_enable_ce_endpoint" {
   description = <<-EOT
     是否一併建立 Taiwan-Tongues-ASR-CE 備援端點（需 asr_enable_endpoints 同時為 true）。
 
-    預設關閉：eval/MODEL_SELECTION.md 的結論是中文改用 Amazon Transcribe、客語用
+    預設關閉：模型選型結論是中文改用 Amazon Transcribe、客語用
     FormoSpeech，CE 兩邊都不是首選，而它固定佔一台 ml.g5.4xlarge。關閉時 ASR_CONFIG_JSON
     的 fallback_chain 會一併清空，Lambda 不會去呼叫不存在的 endpoint。
   EOT

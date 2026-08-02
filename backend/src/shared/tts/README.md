@@ -1,8 +1,8 @@
 # TTS 領域套件
 
-依修改範圍按需閱讀：路由／組裝見 [`docs/tts/framework.md`](../../../../docs/tts/framework.md)，
-設定見 [`config-schema.md`](../../../../docs/tts/config-schema.md)，provider I/O 見
-[`sagemaker-inference-contract.md`](../../../../docs/tts/sagemaker-inference-contract.md)。
+依修改範圍按需閱讀：路由／組裝見 [`docs/tts/framework.md`](../../../../docs/features/tts/framework.md)，
+設定見 [`config-schema.md`](../../../../docs/features/tts/config-schema.md)，provider I/O 見
+[`sagemaker-inference-contract.md`](../../../../docs/features/tts/sagemaker-inference-contract.md)。
 
 | 檔案 | 職責 |
 |---|---|

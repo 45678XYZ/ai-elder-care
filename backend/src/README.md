@@ -6,10 +6,10 @@
 
 ```
 src/
-├── handlers/             # AWS Lambda Handler（API 進入點）
-├── agentcore_runtime/    # 對話大腦（LangGraph 狀態機）
-├── extraction/           # 生活記錄萃取 Pipeline
-├── shared/               # 共用模組（DB、Auth、Models、Bedrock）
+├── handlers/             # AWS Lambda Handler（API 與排程／佇列進入點）
+├── agentcore_runtime/    # 對話大腦（LangGraph 狀態機），部署到 AgentCore Runtime 而非 Lambda
+├── extraction/           # 生活記錄萃取 Pipeline（direct_seven），只給 batch 用
+├── shared/               # 共用模組（DB、Auth、Models、Bedrock、ASR、TTS）
 └── __init__.py
 ```
 
@@ -58,31 +58,22 @@ src/
 
 端到端事件萃取模組，從 frozen turns 萃取結構化生活事件。純記憶體運算，不直接寫入 DynamoDB（DB 寫入由 batch_extractor.py 負責）。
 
+目前只有一條 pipeline：`direct_seven`——**不分塊、不檢索、不做 RAC 分類**。整個 session 的 frozen turns 依 `SEVEN_BATCH_CHAR_LIMIT` 在 turn 邊界貪婪分批，每批一次 LLM 呼叫萃取七大類事件，再交給共用尾段（SharedTail）收斂。
+
 | 檔案 | 功能 |
 |------|------|
-| `pipeline.py` | 編排器：串接所有萃取階段（chunk → retrieve → classify → prune → compose → extract → temporal → canonical → dedup） |
-| `chunker.py` | 對話分塊器：將長對話依主題切割成獨立 chunk |
-| `chunk_planner.py` | Chunk 計畫器：決定分塊策略、生成 ChunkManifest（重試時重用確保冪等）、計算 reference datetime |
-| `retriever.py` | 概念檢索：根據 chunk 內容從知識庫檢索相關概念，輔助後續分類 |
-| `classifier.py` | RAC 分類器：判定每個 chunk 的事件類型（diet / activity / sleep / medication / wellbeing / safety / other） |
-| `pruner.py` | HMLC 剪枝器：過濾低信心分類結果，保留高信心事件 |
-| `schema_composer.py` | 動態 Schema 組裝：根據分類結果，為每個 chunk 組裝對應的萃取 schema |
-| `extractor.py` | Single-Pass 萃取器：用 LLM 從 chunk 文字萃取結構化事件欄位 |
-| `temporal.py` | 時序解析與正規化：日期時間解析、台灣時區轉換、day_key 計算 |
-| `canonical.py` | Canonical 身分建構：正規化 subject/predicate、建構 canonical_event_key，確保同一事件重跑產生相同 ID |
-| `dedup.py` | Slot 去重：相同 canonical key 的事件僅保留信心值最高者 |
-| `segmenter.py` | Pairwise V2 分塊模型推理（基於 embedding 相似度的主題邊界偵測） |
-| `taxonomy.py` | 分類體系管理：載入與查詢 `assets/taxonomy/` 下的本體論、概念映射與同義詞辭典 |
-| `config.py` | 萃取 Pipeline 的環境設定與閾值參數 |
-| `models.py` | 萃取過程使用的 Pydantic 資料模型 |
+| `pipeline.py` | 本模組的主體，含四部分：`ExtractionConfig`（萃取設定與 `from_env()`）、七大類萃取的 prompt 與 schema 驗證／修復、`_SharedTail`（時序解析 → canonical key → slot 去重 → 型別驗證）、`DirectSevenPipeline` 編排器與 `plan_turn_batches` 分批 |
+| `temporal.py` | 時序解析與正規化：相對時間表達推導、台灣時區轉換、`observed_at` 絕對化 |
+| `canonical.py` | Canonical 身分建構：正規化 subject/predicate、建構 `canonical_event_key` 與 `event_id`，確保同一事件重跑產生相同 ID |
+| `dedup.py` | Slot 去重：同 subject + predicate 且落在同一時間桶的事件收斂為一筆，可選用 embedding 做謂語語義合併 |
+| `taxonomy.py` | 分類體系管理：載入與查詢 `assets/taxonomy/` 下的高階類別與謂語辭典 |
+| `models.py` | 萃取過程使用的資料模型（`Turn`／`ExtractedEvent`／`CanonicalEvent`／`DedupStats`） |
 
 ### extraction/assets/
 
 | 子目錄 | 說明 |
 |--------|------|
-| `taxonomy/` | 分類體系靜態資料：`unified_care_ontology.json`（統一照護本體論）、`high_level_types.json`（高層分類）、`concept_type_map.json`（概念到類型映射）、`predicate_lexicon.json`（謂語辭典）、`property_registry.json`（屬性註冊表）、`synonym_dictionary.json`（同義詞辭典） |
-| `segmenter/` | 分塊模型資料：`pairwise_v2.json`（Pairwise V2 模型參數） |
-| `retrieval/` | 概念檢索資料：`concept_chunks.jsonl`（概念塊索引） |
+| `taxonomy/` | 分類體系靜態資料：`high_level_types.json`（七大高階類別定義）、`predicate_lexicon.json`（謂語辭典與 alias） |
 
 ---
 
@@ -92,7 +83,7 @@ src/
 
 | 檔案 | 功能 |
 |------|------|
-| `db.py` | DynamoDB 統一存取層：提供 5 張表（elders / conversations / events / daily_summaries / routines）的讀寫介面。含條件式寫入、canonical event 冪等、Base64 分頁游標、Decimal 自動轉碼 |
+| `db.py` | DynamoDB 統一存取層：提供 7 張表（elders / conversations / events / daily_summaries / routines / caregiver-lookup / elder_accounts）的讀寫介面。含條件式寫入、canonical event 冪等、Base64 分頁游標、Decimal 自動轉碼 |
 | `auth.py` | 授權模組：從 Cognito JWT claims 取得呼叫者身分，驗證長者/照護者存取權限。長者只能存取自己，照護者只能存取綁定的長者 |
 | `models.py` | Pydantic 資料模型：定義所有 Request/Response schema（ChatRequest、ElderCreate、RoutineDefinition、EventCreate、DailySummaryCreate 等） |
 | `bedrock.py` | Bedrock 呼叫層：Converse API、structured outputs（含降級路徑）、embedding。錯誤分成 retryable 與 permanent 供 batch worker 決策 |
@@ -100,7 +91,10 @@ src/
 | `turns.py` | Turn 管理：對話輪次的生命週期（processing → completed / failed）、冪等判定與租約接管 |
 | `routines.py` | Routine 推導邏輯：occurrence 狀態不落地，由 canonical completion event 與寬限期即時推導（pending / done / missed） |
 | `summarizer.py` | 摘要生成共用邏輯：可計算事實由程式算（interaction_count、routine 統計）、自然語言由 Bedrock 模型寫。`POST /summaries/generate` 與排程 generator 共用 |
-| `tts.py` | TTS 語音合成抽象層：統一介面支援 AWS Polly（中文）與 OmniVoice（客語），含 fallback 降級防護 |
 | `metrics.py` | CloudWatch 指標發送：萃取/摘要/batch 各階段的 EMF 格式觀測指標 |
 | `responses.py` | API 回應格式工具：統一 200/4xx/5xx 的 response 結構與 error code 生成 |
 | `validation.py` | 請求驗證工具：參數校驗與格式檢查的通用 helper |
+| `config_source.py` | ASR／TTS 設定的解析與來源切換：設定 JSON 太大放不進 Lambda 環境變數（4 KB 上限）時改由 SSM Parameter Store 讀取。讀取失敗一律 fail closed |
+| `asr_http.py` | ASR 錯誤到 HTTP 回應的映射：把 provider 例外收斂成 `docs/api.md` 已定義的錯誤碼，且不讓內部細節外洩到回應訊息 |
+| `asr/` | Remote-only 語音辨識子套件：`canonical_audio`（音訊正規化）、`router`／`facade`（路由與備援鏈）、`providers`（Transcribe／SageMaker）、`config`／`composition`（設定與組裝）、`telemetry`、`types`。詳見 [shared/asr/README.md](shared/asr/README.md) |
+| `tts/` | 可切換華語／客語的遠端語音合成子套件：`router`（語言與六腔路由、同語言備援）、`providers`、`config`／`composition`、`types`。詳見 [shared/tts/README.md](shared/tts/README.md) |

@@ -1,12 +1,12 @@
 # OmniVoice 推論容器（客語六腔）
 
 `formospeech/omnivoice-hakka-community-1` 的 SageMaker real-time endpoint 容器，是六個
-客語 TTS route 的主力。依 [`eval/MODEL_SELECTION.md`](../../eval/MODEL_SELECTION.md)，
+客語 TTS route 的主力。依模型選型結論（見 [`docs/features/model_selection_asr_tts.md`](../../docs/features/model_selection_asr_tts.md)），
 OmniVoice 的 MOS 4.31/5 遠優於 VoxHakka 的 1.79/5，後者不納入部署。
 
-- 契約：[`docs/tts/sagemaker-inference-contract.md`](../../docs/tts/sagemaker-inference-contract.md)
-- 授權與核准狀態：[`docs/tts/model-catalog.md`](../../docs/tts/model-catalog.md)
-- 安全與 PII：[`docs/tts/security-and-pii.md`](../../docs/tts/security-and-pii.md)
+- 契約：[`docs/tts/sagemaker-inference-contract.md`](../../docs/features/tts/sagemaker-inference-contract.md)
+- 授權與核准狀態：[`docs/tts/model-catalog.md`](../../docs/features/tts/model-catalog.md)
+- 安全與 PII：[`docs/tts/security-and-pii.md`](../../docs/features/tts/security-and-pii.md)
 
 ## 先讀這段：聲音從哪裡來
 
@@ -112,7 +112,7 @@ aws sagemaker-runtime invoke-endpoint \
   /tmp/out.mp3 && afplay /tmp/out.mp3
 ```
 
-六腔各聽一次（換 `dialect`）。[`docs/tts/model-catalog.md`](../../docs/tts/model-catalog.md)
+六腔各聽一次（換 `dialect`）。[`docs/tts/model-catalog.md`](../../docs/features/tts/model-catalog.md)
 要求下列證據齊全才能把 `tts_omnivoice_approved` 設為 true：
 
 - [ ] 六腔發音正確，母語者可辨識腔調差異

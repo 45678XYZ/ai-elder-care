@@ -85,10 +85,10 @@ flowchart TB
 
 - **語音對話迴圈**：App 錄音 → `POST /chat` 後端 ASR 辨識 → 生成回覆 → 播放 → 自動再聆聽；`/chat` 不等待 session batch。
 - `POST /chat` 接受 `{text}` 或 `{audio}`，語言為 `zh-TW` 或 `hak`。text 直接進對話流程；audio 由後端 ASR 轉文字後走相同 realtime 快路徑。
-- **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論。`zh-TW` 以 Amazon Transcribe Streaming 為主力、Taiwan-Tongues CE 為備援；`hak:<六腔>` 以對應 Formo 固定-prompt SageMaker endpoint 為主力、共用 CE 為備援。CE/Formo 必須逐模型通過 staging/runtime、授權、存取、配額與容量核准，未核准時一律 fail closed；Transcribe 全程 memory-only，不使用 batch/S3。ASR 子系統完整架構見 [`docs/asr/framework.md`](asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
-- **後端 TTS** 同樣採 remote-only 與設定驅動 route。`lang` 明確決定中文或客語；客語六腔只讀 elder profile 並保存 turn 快照。客語失敗不得改用中文 voice；所有 TTS provider 失敗時仍提交文字 turn，`reply_audio_url=null`。完整規格見 [`docs/tts/framework.md`](tts/framework.md)。
+- **後端 ASR** 採 remote-only 架構：Lambda 不執行模型推論。`zh-TW` 以 Amazon Transcribe Streaming 為主力、Taiwan-Tongues CE 為備援；`hak:<六腔>` 以對應 Formo 固定-prompt SageMaker endpoint 為主力、共用 CE 為備援。CE/Formo 必須逐模型通過 staging/runtime、授權、存取、配額與容量核准，未核准時一律 fail closed；Transcribe 全程 memory-only，不使用 batch/S3。ASR 子系統完整架構見 [`docs/features/asr/framework.md`](features/asr/framework.md)；程式碼層見 [`backend/src/shared/asr/README.md`](../backend/src/shared/asr/README.md)。
+- **後端 TTS** 同樣採 remote-only 與設定驅動 route。`lang` 明確決定中文或客語；客語六腔只讀 elder profile 並保存 turn 快照。客語失敗不得改用中文 voice；所有 TTS provider 失敗時仍提交文字 turn，`reply_audio_url=null`。完整規格見 [`docs/features/tts/framework.md`](features/tts/framework.md)。
 - AgentCore Runtime 的 tool calling 是對話中 routine 變更與 safety 事件的主要處理路徑：大腦在回應 chat Lambda 之前先呼叫 tools Lambda 寫入 completion event 或發送安全通知，並在回應 payload 明確回報 `routines_updated`。安全通知由 `notify_caregiver` tool 即時發送（寫 DynamoDB + SNS），不需額外旗標回傳。一般生活事件仍由 session close 後的 batch pipeline 萃取，不透過 tool calling。
-- batch extractor 的分類前先做候選概念檢索：以 Bedrock embedding 取查詢向量，向 S3 Vectors 的概念索引取 Top-K 候選後才呼叫分類模型；同一個 embedding 供應者也用於 turn 切分。索引維度在建立時固定，因此 index 名稱帶模型與維度，模型抽換以新索引並存、切換環境變數完成。
+- batch extractor 走 `direct_seven`：不分塊、不檢索、不做前置分類，直接對 frozen turns 依字元上限分批做七大類萃取（見下方「Direct Seven Pipeline」）。Bedrock embedding 只用在去重階段的謂語語義合併，由 `EMBEDDING_MODEL_ID`／`EMBEDDING_DIM` 指定；沒有 embedder 時退回不做語義合併，不影響 canonical key 的確定性。
 - App 在使用者離開、停止免手持互動或切換對象時呼叫 close endpoint；未明確關閉的閒置 session 由 EventBridge 週期性收斂。
 
 ## API 一覽
@@ -463,13 +463,12 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 | `ROUTINE_GRACE_MINUTES` | occurrence 由 pending 轉 missed 的寬限，預設 120 |
 | `SESSION_MAX_TURNS`、`SESSION_MAX_INFLIGHT_TURNS`、`SESSION_MAX_INPUT_BYTES` | session 容量上限與自動 close 門檻 |
 | `TAXONOMY_VERSION` | 寫入 event 的分類體系版本 |
-| `CHUNKER_TYPE` | 分塊策略 |
-| `EXTRACTION_MODE`、`DISAGGREGATION_MODE` | 萃取的 schema 約束與分裂策略 |
-| `RAC_TOP_K` | 候選細分類節點數 |
+| `EXTRACTION_MODE` | 萃取的 schema 約束：`prompt_guided`（預設）或 `structured_output` |
+| `SEVEN_BATCH_CHAR_LIMIT` | `direct_seven` 單批送進 LLM 的字元上限，預設 12000；於 turn 邊界貪婪分批 |
 | `BEDROCK_MODEL_ID` | 對話模型（Converse modelId 或 inference profile）；預設為 Anthropic 在 Bedrock 的旗艦模型加 global cross-Region inference profile |
-| `BEDROCK_CLASSIFIER_MODEL_ID`、`BEDROCK_EXTRACTOR_MODEL_ID`、`BEDROCK_CHUNKER_MODEL_ID` | 分階段覆寫；留空沿用主模型。分類與分塊的 schema 固定、輸出短，可換較便宜的模型；萃取是品質瓶頸不建議降級 |
-| `EMBEDDING_MODEL_ID`、`EMBEDDING_DIM`、`CONCEPT_VECTOR_INDEX`、`CONCEPT_VECTOR_BUCKET` | embedding 供應者、維度與概念向量索引 |
-| `CHUNK_PLANNER_VERSION`、`BATCH_EXTRACTOR_VERSION` | 寫入 session／turn 的版本戳記 |
+| `BEDROCK_EXTRACTOR_MODEL_ID` | 萃取階段覆寫；留空沿用主模型。萃取是品質瓶頸，不建議降級 |
+| `EMBEDDING_MODEL_ID`、`EMBEDDING_DIM` | 去重階段做謂語語義合併的 embedding 供應者與維度 |
+| `BATCH_EXTRACTOR_VERSION` | 寫入 session 的 extractor 版本戳記 |
 | `METRICS_NAMESPACE`、`METRICS_ENABLED` | EMF 指標的 namespace 與開關；指標寫 stdout 由 CloudWatch Logs 解析，不需額外 IAM |
 | `BATCH_LEASE_SECONDS`、`SESSION_IDLE_MINUTES`、`SESSION_SWEEP_LIMIT` | batch lease 長度、idle close 門檻與單次 sweep 上限 |
 | `REQUEST_LEASE_SECONDS` | `/chat` turn 的 request lease 長度；必須大於 chat Lambda 的 timeout |
@@ -489,7 +488,6 @@ extraction 相關行為一律由環境變數驅動，不寫死在程式碼：
 e-hakka-care/
 ├── .kiro/          # Kiro 設定與 specs
 ├── app/            # Flutter
-├── asr-lambda/     # SageMaker inference container 開發文件與本機 conda 環境
 ├── backend/        # Python Lambda handlers、ASR/TTS 領域模組與 extraction pipeline
 │   └── src/shared/       # ASR/TTS 與其他跨 handler 共用模組
 ├── terraform/      # AWS IaC
