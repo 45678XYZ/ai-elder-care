@@ -339,9 +339,11 @@ module "chat" {
     AGENTCORE_RUNTIME_ARN   = aws_bedrockagentcore_agent_runtime.companion.agent_runtime_arn
     AGENTCORE_ENDPOINT_NAME = aws_bedrockagentcore_agent_runtime_endpoint.live.name
 
-    # ASR／TTS 的路由、核准與 endpoint 都由這兩份設定驅動（見 asr_lambda_config.tf、tts_lambda_config.tf）
-    ASR_CONFIG_JSON = local.asr_config_json
-    TTS_CONFIG_JSON = local.tts_config_json
+    # ASR／TTS 的路由、核准與 endpoint 都由這兩份設定驅動（見 asr_lambda_config.tf、
+    # tts_lambda_config.tf）。設定本身放在 SSM，這裡只傳參數名稱：兩份 JSON 相加會超過
+    # Lambda 的 4 KB 環境變數上限（見 lambda_config_parameters.tf）。
+    ASR_CONFIG_SSM_PARAMETER = aws_ssm_parameter.asr_config.name
+    TTS_CONFIG_SSM_PARAMETER = aws_ssm_parameter.tts_config.name
 
     TABLE_ELDERS               = aws_dynamodb_table.elders.name
     TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
