@@ -22,7 +22,8 @@ CONVERSATION = "cnv_1"
 OBJECT_KEY = f"tts/{CONVERSATION}.mp3"
 
 
-def _record(**overrides):
+def _record(receive_count=None, **overrides):
+    """組一則 SQS record；`receive_count` 對應 SQS 的 ApproximateReceiveCount。"""
     body = {
         "elder_id": ELDER,
         "conversation_id": CONVERSATION,
@@ -33,7 +34,11 @@ def _record(**overrides):
         "correlation_id": "corr-1",
     }
     body.update(overrides)
-    return {"messageId": "msg-1", "body": json.dumps(body, ensure_ascii=False)}
+    record = {"messageId": "msg-1", "body": json.dumps(body, ensure_ascii=False)}
+    if receive_count is not None:
+        # SQS 的 attribute 值一律是字串。
+        record["attributes"] = {"ApproximateReceiveCount": str(receive_count)}
+    return record
 
 
 class _Facade:
@@ -139,11 +144,34 @@ def test_retryable_failure_goes_back_to_the_queue(worker, monkeypatch):
     )
     monkeypatch.setattr(module, "get_tts_facade", lambda: facade)
 
-    result = module.handler({"Records": [_record()]}, None)
+    result = module.handler({"Records": [_record(receive_count=1)]}, None)
 
     assert result == {"batchItemFailures": [{"itemIdentifier": "msg-1"}]}
     # 沒有音訊就不能留下 key，否則之後每次重播都是一條死連結
     assert "ai_respond_audio_s3_key" not in _stored_turn(turns)
+    # 還有重試機會，就不能提早把 turn 標成沒有音訊——那句話還救得回來。
+    assert _stored_turn(turns)["ai_respond_audio_pending"] is True
+
+
+def test_final_attempt_clears_pending_but_still_reaches_the_dlq(worker, monkeypatch):
+    """最後一次投遞失敗：turn 要收乾淨，訊息仍要進 DLQ。
+
+    DLQ 沒有 consumer，pending 標記不在這裡收就再也沒人收——App 會一路等到 presigned
+    URL 過期，畫面停在「正在準備聲音」。但訊息還是得進 DLQ，否則失敗證據就消失了。
+    """
+    module, turns = worker
+    _put_completed_turn(turns)
+    facade = _Facade(
+        TypedTtsError(TtsErrorCategory.PROVIDER_UNAVAILABLE, "endpoint down", True)
+    )
+    monkeypatch.setattr(module, "get_tts_facade", lambda: facade)
+
+    result = module.handler({"Records": [_record(receive_count=2)]}, None)
+
+    assert result == {"batchItemFailures": [{"itemIdentifier": "msg-1"}]}
+    turn = _stored_turn(turns)
+    assert turn["ai_respond_audio_pending"] is False
+    assert "ai_respond_audio_s3_key" not in turn
 
 
 def test_route_not_approved_is_permanent_and_clears_pending(worker, monkeypatch):
