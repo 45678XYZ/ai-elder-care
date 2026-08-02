@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +37,35 @@ def _ensure_import_path() -> None:
             sys.path.insert(0, entry)
 
 
+@contextmanager
+def _onnx_default_providers(onnxruntime, providers):
+    """在這個區塊內，沒帶 `providers` 的 `InferenceSession` 會拿到預設值。
+
+    為什麼需要：g2pw 0.1.1（PyPI 上的最後一版，2022 年）建 `InferenceSession` 時完全
+    不帶 `providers`，而 ORT 從 1.9 起「只要 build 裡含 GPU provider 就必須明講
+    providers」，否則直接拋 ValueError。CPU 版的 onnxruntime 沒有 GPU provider，所以
+    一路相安無事；換成 onnxruntime-gpu 之後 g2pw 就必炸。上游 g2pW 的 master 已經補了
+    `use_cuda` 參數，但那份修正從未發版，PyPI 上仍然只有 0.1.1。
+
+    挑 CPU 是刻意的，不是將就：g2pw 那顆是做破音字消歧的小模型，CPU 綽綽有餘，而且這
+    正是換 onnxruntime-gpu 之前的行為，等於沒有改變它。真正需要 GPU 的是 CosyVoice
+    自己載入的 speech tokenizer 與聲紋比對，那兩處上游有明講 providers，不受這裡影響。
+
+    只包住建構那一小段、事後還原，避免影響 CosyVoice 之後自己開的 session。
+    """
+    original = onnxruntime.InferenceSession
+
+    def _session(*args, **kwargs):
+        kwargs.setdefault("providers", providers)
+        return original(*args, **kwargs)
+
+    onnxruntime.InferenceSession = _session
+    try:
+        yield
+    finally:
+        onnxruntime.InferenceSession = original
+
+
 class BreezyVoiceSynthesizer:
     """對 serving 層只暴露 `synthesize`；GPU 推論以 lock 串行化。"""
 
@@ -47,11 +77,28 @@ class BreezyVoiceSynthesizer:
 
         _ensure_import_path()
         try:
+            import onnxruntime
+            import torch
             from cosyvoice.utils.file_utils import load_wav
             from g2pw import G2PWConverter
             from single_inference import CustomCosyVoice, get_bopomofo_rare
         except Exception as exc:  # pragma: no cover - 僅在映像建置有誤時觸發
             raise SynthesisError("breezyvoice runtime is unavailable") from exc
+
+        # 沒有 GPU 就讓容器起不來，不要退回 CPU。
+        #
+        # 這條路徑上的降級不會拋例外，也不會讓音質變差，只會慢一到兩個數量級——
+        # /ping 照過、endpoint 照樣 InService，唯一的徵狀是長輩按下去之後一直沒有聲音，
+        # 而那時已經付了好幾天的 GPU 機時。兩項都實際發生過，所以兩項都要擋：
+        #
+        # - torch：cu118 與 cu121 的 wheel 裝錯、或主機驅動太舊，`is_available()` 回 False。
+        # - onnxruntime：CosyVoice 的 speech tokenizer 與聲紋比對走 onnx。CPU 版的
+        #   onnxruntime 會被相依悄悄帶進來並覆蓋 GPU 版（見 Dockerfile 的說明），
+        #   那兩段就整段掉回 CPU，而模型本身還在 GPU 上，從使用率看不出異常。
+        if not torch.cuda.is_available():
+            raise SynthesisError("cuda is unavailable; refusing to fall back to cpu")
+        if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
+            raise SynthesisError("onnxruntime has no cuda provider; refusing cpu")
 
         self._load_wav = load_wav
         self._get_bopomofo_rare = get_bopomofo_rare
@@ -62,9 +109,12 @@ class BreezyVoiceSynthesizer:
 
         self._model = CustomCosyVoice(str(weights_dir))
         # 與上游 single_inference.main() 相同的設定：輸出拼音、容忍簡體輸入。
-        self._bopomofo_converter = G2PWConverter(
-            style="pinyin", enable_non_tradional_chinese=True
-        )
+        # 外面那層是 g2pw 0.1.1 與 onnxruntime-gpu 的相容性修補，理由見
+        # [_onnx_default_providers]。
+        with _onnx_default_providers(onnxruntime, ["CPUExecutionProvider"]):
+            self._bopomofo_converter = G2PWConverter(
+                style="pinyin", enable_non_tradional_chinese=True
+            )
 
     def _load_prompt(self, speaker_dir: Path) -> tuple[object, str]:
         """載入聲紋音檔與逐字稿；同一個 speaker 只讀一次。"""
