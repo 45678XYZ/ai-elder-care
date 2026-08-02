@@ -352,6 +352,9 @@ module "chat" {
     ASR_CONFIG_VERSION = tostring(aws_ssm_parameter.asr_config.version)
     TTS_CONFIG_VERSION = tostring(aws_ssm_parameter.tts_config.version)
 
+    # 語音合成只入列不等待；實際合成由 tts_worker 完成（見 tts_worker.tf）。
+    TTS_QUEUE_URL = aws_sqs_queue.tts.id
+
     TABLE_ELDERS               = aws_dynamodb_table.elders.name
     TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
     TABLE_EVENTS               = aws_dynamodb_table.events.name
