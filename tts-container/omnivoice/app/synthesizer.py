@@ -38,12 +38,24 @@ class OmniVoiceSynthesizer:
         if not weights_dir.is_dir():
             raise SynthesisError("model weights are missing")
 
+        # 沒有 GPU 就讓容器起不來，不要退回 CPU。
+        #
+        # 這裡原本是 `"cuda:0" if torch.cuda.is_available() else "cpu"`，看起來是穩健的
+        # 降級，實際上是最糟的失敗方式：CPU 上照樣合成得出正確的音訊，只是慢 30 倍
+        # （89 個字要 177 秒）。/ping 會過、endpoint 會是 InService、音質聽不出差別，
+        # 於是它安靜地上線並持續收費，唯一的徵狀是長輩按下去之後一直沒有聲音。
+        # 實際踩過一次：映像裡的 torch 是 cu128 的 wheel，而主機驅動只到 CUDA 12.1。
+        #
+        # 起不來的話 SageMaker 會在 ping health check 判死，部署當下就看得到。
+        if not torch.cuda.is_available():
+            raise SynthesisError("cuda is unavailable; refusing to fall back to cpu")
+
         # 從已解壓的 artifact 載入，不在執行期回頭連 Hugging Face（endpoint 可能無外網，
         # 且 gated repo 的 token 依規定不得進入 SageMaker environment）。
         self._model = OmniVoice.from_pretrained(
             str(weights_dir),
-            device_map="cuda:0" if torch.cuda.is_available() else "cpu",
-            dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map="cuda:0",
+            dtype=torch.float16,
         )
 
     def _load_prompt(self, speaker_dir: Path) -> tuple[str, str]:
