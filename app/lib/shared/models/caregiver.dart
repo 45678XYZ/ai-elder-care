@@ -18,6 +18,7 @@ class Caregiver {
     required this.caregiverId,
     required this.name,
     this.linkedAt,
+    this.isSelf = false,
   });
 
   /// `cg_` 後接 8 個小寫十六進位字元。同一個帳號永遠是同一組，不會換，
@@ -31,11 +32,20 @@ class Caregiver {
   /// 首次綁定到某位長者的時間。`GET /me` 沒有這個欄位，所以可為 null。
   final DateTime? linkedAt;
 
+  /// 這一筆就是呼叫者本人（見 docs/api.md 的 `is_self`）。
+  ///
+  /// 自我註冊的長輩會在自己的「已連結家人」清單裡看到自己，而且沒有名字——
+  /// 建立長者資料時後端會把建立者的 sub 寫進 `caregiver_ids`，那時他還沒有
+  /// `elder_id` claim。App 認不出那是誰（`GET /me` 是照護者專屬端點），所以由
+  /// 後端標。
+  final bool isSelf;
+
   factory Caregiver.fromJson(Map<String, dynamic> json) => Caregiver(
         caregiverId: json['caregiver_id'] as String? ?? '',
         name: json['name'] as String? ?? '',
         linkedAt: json['linked_at'] == null
             ? null
-            : DateTime.tryParse(json['linked_at'] as String),
+            : DateTime.tryParse(json['linked_at'] as String)?.toLocal(),
+        isSelf: json['is_self'] as bool? ?? false,
       );
 }

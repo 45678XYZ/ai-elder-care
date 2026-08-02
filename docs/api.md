@@ -343,13 +343,15 @@ Response 201 回傳完整物件；`created_at` 與 `updated_at` 初始相同。
 ```json
 {
   "items": [
-    { "caregiver_id": "cg_7f3a91c2", "name": "陳志明", "linked_at": "2026-07-14T09:06:00+08:00" },
-    { "caregiver_id": "cg_2b8e04d5", "name": "陳淑芬", "linked_at": "2026-07-20T18:30:00+08:00" }
+    { "caregiver_id": "cg_7f3a91c2", "name": "陳志明", "linked_at": "2026-07-14T09:06:00+08:00", "is_self": false },
+    { "caregiver_id": "cg_2b8e04d5", "name": "陳淑芬", "linked_at": "2026-07-20T18:30:00+08:00", "is_self": false }
   ]
 }
 ```
 
-欄位同兌換的 response。沒有綁定時回 `{ "items": [] }`。
+其餘欄位同兌換的 response。沒有綁定時回 `{ "items": [] }`。
+
+`is_self` 為 true 代表這一筆就是呼叫者本人。自我註冊的長輩在 `POST /elders` 建自己的資料時，建立者的 sub 會自動寫進 `caregiver_ids`（那時他還沒有 `elder_id` claim、角色仍是照護者），所以他自己會出現在這份清單裡，而且因為沒有 caregiver lookup 記錄（那是 `GET /me` 才寫的）`name` 是空字串。這一筆不從回應中移除——`caregiver_ids` 是授權用的真實資料，少回一筆會讓畫面與實際綁定對不起來——由 App 依此標示為「自己」。
 
 目前不提供解除綁定：後果嚴重（照護者從此看不到長輩狀況），不該由長輩在自己手機上單獨完成，也不該由任一照護者單方面移除另一位。要做的話需要另外定義誰有權限、以及要不要雙方確認。
 

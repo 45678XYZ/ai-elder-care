@@ -58,7 +58,7 @@ class DailySummary {
         pendingSessionCount: json['pending_session_count'] as int? ?? 0,
         generatedAt: json['generated_at'] == null
             ? null
-            : DateTime.tryParse(json['generated_at'] as String),
+            : DateTime.tryParse(json['generated_at'] as String)?.toLocal(),
       );
 }
 

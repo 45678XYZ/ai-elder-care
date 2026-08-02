@@ -332,7 +332,7 @@ def handle_get_caregivers(event: Dict[str, Any]) -> Dict[str, Any]:
         return responses.error(400, "INVALID_PARAMETER", "未指定 elder_id")
 
     try:
-        auth.assert_can_access_elder(event, target_elder_id)
+        caller = auth.assert_can_access_elder(event, target_elder_id)
     except auth.AuthError as auth_err:
         return auth_err.response
 
@@ -346,17 +346,29 @@ def handle_get_caregivers(event: Dict[str, Any]) -> Dict[str, Any]:
     items = []
     for sub in caregiver_subs:
         info = lookup_map.get(sub)
+        # 呼叫者自己也在名單裡：自我註冊的長輩在 POST /elders 建自己的資料時，
+        # 建立者的 sub 會被自動寫進 caregiver_ids（見 _create_elder），而那時他還
+        # 沒有 elder_id claim、角色仍是照護者。他不是自己的照護者，但那筆確實存在，
+        # 而且查不到 caregiver lookup（那是 GET /me 才寫的）於是名字是空的——
+        # 長輩畫面上就會出現一張沒有名字的家人卡。
+        #
+        # 這裡不從清單裡拿掉：caregiver_ids 是授權用的真實資料，回應少一筆會讓
+        # 「畫面看到的」與「實際綁著的」對不起來。改成標出來，由前端顯示成「自己」。
+        # 比對 sub 就夠，不必再查 elder_accounts：能列這份清單的長者呼叫者就是本人。
+        is_self = sub == caller.user_id
         if info:
             items.append({
                 "caregiver_id": info["short_id"],
                 "name": info.get("name", ""),
                 "linked_at": info.get("created_at", ""),
+                "is_self": is_self,
             })
         else:
             items.append({
                 "caregiver_id": auth.caregiver_short_id(sub),
                 "name": "",
                 "linked_at": "",
+                "is_self": is_self,
             })
 
     return responses.json_response(200, {"items": items})

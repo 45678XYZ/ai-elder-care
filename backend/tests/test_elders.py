@@ -454,25 +454,67 @@ def test_post_caregiver_link_not_found(monkeypatch):
 # -----------------------------------------------------------------------------
 
 
-def test_get_caregivers_list(monkeypatch):
-    """列出已綁定照護者。"""
-    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: None)
-    monkeypatch.setattr(db, "get_elder", lambda eid: {"elder_id": "eld_001", "caregiver_ids": ["sub-1"]})
-    monkeypatch.setattr(db, "batch_get_caregivers_by_subs", lambda subs: {
-        "sub-1": {"short_id": "cg_aabbccdd", "name": "志明", "created_at": "2026-07-14T09:00:00+08:00"}
-    })
-
-    event = {
+def _caregivers_event(claims_sub):
+    return {
         "httpMethod": "GET",
         "resource": "/elders/{elder_id}/caregivers",
         "path": "/v1/elders/eld_001/caregivers",
         "pathParameters": {"elder_id": "eld_001"},
         "body": None,
-        "requestContext": {"authorizer": {"claims": {"sub": "sub-1"}}},
+        "requestContext": {"authorizer": {"claims": {"sub": claims_sub}}},
     }
-    resp = elders.handler(event, None)
+
+
+def _allow_access(monkeypatch, caller_sub, role=auth.ROLE_CAREGIVER):
+    """放行授權，並回傳一個真的 Caller——handler 要用它的 user_id 判斷 is_self。"""
+    caller = auth.Caller(role=role, user_id=caller_sub, elder_id=None)
+    monkeypatch.setattr(auth, "assert_can_access_elder", lambda ev, eid: caller)
+
+
+def test_get_caregivers_list(monkeypatch):
+    """列出已綁定照護者。"""
+    _allow_access(monkeypatch, "sub-other")
+    monkeypatch.setattr(db, "get_elder", lambda eid: {"elder_id": "eld_001", "caregiver_ids": ["sub-1"]})
+    monkeypatch.setattr(db, "batch_get_caregivers_by_subs", lambda subs: {
+        "sub-1": {"short_id": "cg_aabbccdd", "name": "志明", "created_at": "2026-07-14T09:00:00+08:00"}
+    })
+
+    resp = elders.handler(_caregivers_event("sub-other"), None)
     assert resp["statusCode"] == 200
     body = json.loads(resp["body"])
     assert len(body["items"]) == 1
     assert body["items"][0]["caregiver_id"] == "cg_aabbccdd"
+    assert body["items"][0]["is_self"] is False
+
+
+def test_get_caregivers_marks_self(monkeypatch):
+    """自我註冊的長輩會在自己的清單裡看到自己，那一筆要標 is_self。
+
+    成因：POST /elders 把建立者的 sub 寫進 caregiver_ids，而自我註冊時那個建立者
+    就是長輩本人（當下還沒有 elder_id claim）。他沒有 caregiver lookup 記錄
+    （那是 GET /me 才寫的），所以 name 是空字串——不標的話長輩畫面上會出現
+    一張沒有名字的家人卡。
+    """
+    _allow_access(monkeypatch, "sub-elder", role=auth.ROLE_ELDER)
+    monkeypatch.setattr(
+        db, "get_elder",
+        lambda eid: {"elder_id": "eld_001", "caregiver_ids": ["sub-elder", "sub-1"]},
+    )
+    # 自己查不到 lookup；真的被綁進來的家人一定查得到（綁定端點會先驗 lookup 存在）
+    monkeypatch.setattr(db, "batch_get_caregivers_by_subs", lambda subs: {
+        "sub-1": {"short_id": "cg_aabbccdd", "name": "志明", "created_at": "2026-07-14T09:00:00+08:00"}
+    })
+
+    resp = elders.handler(_caregivers_event("sub-elder"), None)
+    assert resp["statusCode"] == 200
+    items = json.loads(resp["body"])["items"]
+
+    me, family = items[0], items[1]
+    assert me["is_self"] is True
+    assert me["name"] == ""
+    assert me["caregiver_id"] == auth.caregiver_short_id("sub-elder")
+    # 不從清單裡拿掉：caregiver_ids 是授權用的真實資料，少回一筆會讓畫面與實際綁定對不起來
+    assert len(items) == 2
+    assert family["is_self"] is False
+    assert family["name"] == "志明"
 

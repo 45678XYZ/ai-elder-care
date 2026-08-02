@@ -388,6 +388,15 @@ class AppSession {
   /// 未接後端時由 demo 那份代答，它為了 demo 流程確實有存（見 `DemoRepository`）。
   Future<void> ensureCaregiversLoaded() async {
     if (linkedCaregivers.isNotEmpty) return;
+    await refreshCaregivers();
+  }
+
+  /// 不管有沒有載過，一律重拉一次。
+  ///
+  /// [ensureCaregiversLoaded] 載過就不再動，於是家人在另一台裝置上綁定之後，
+  /// 長輩這邊要整個 App 重開才看得到——而長輩不會重開 App，他就是一直開著。
+  /// 進「連結家人」頁時要看到的是現在的實況，那一頁存在的目的就是確認連上了沒有。
+  Future<void> refreshCaregivers() async {
     await ensureEldersLoaded();
     final elderId = selectedElderId;
     if (elderId == null) return;
