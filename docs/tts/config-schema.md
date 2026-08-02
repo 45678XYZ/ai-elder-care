@@ -12,6 +12,10 @@
 model gate 不完整時同樣 fail closed。來源解析見 `backend/src/shared/config_source.py`，
 參數由 `terraform/lambda_config_parameters.tf` 建立。
 
+設定只在 cold start 讀取一次並快取。因此改了 SSM 參數還不夠——必須同時讓函數換一版，
+否則既有的執行環境會抱著舊設定繼續服務。Terraform 以 `TTS_CONFIG_VERSION` 環境變數帶入
+參數版本號來保證這件事（見 `terraform/lambda.tf`）。
+
 ```json
 {
   "schema_version": 1,

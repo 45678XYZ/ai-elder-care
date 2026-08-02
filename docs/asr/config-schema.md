@@ -14,6 +14,10 @@
 AWS Region 是唯一不放在此 JSON 的執行設定；在 Lambda 由 runtime 自動注入 `AWS_REGION`，
 Terraform 不得重複設定該保留鍵。
 
+設定只在 cold start 讀取一次並快取。因此改了 SSM 參數還不夠——必須同時讓函數換一版，
+否則既有的執行環境會抱著舊設定繼續服務。Terraform 以 `ASR_CONFIG_VERSION` 環境變數帶入
+參數版本號來保證這件事（見 `terraform/lambda.tf`）。
+
 Parser：`backend/src/shared/asr/config.py`；來源解析：
 `backend/src/shared/config_source.py`；Terraform：`terraform/asr_lambda_config.tf`
 與 `terraform/lambda_config_parameters.tf`。
