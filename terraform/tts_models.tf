@@ -164,12 +164,19 @@ resource "aws_sagemaker_model" "tts" {
   primary_container {
     image          = each.value.image_uri
     model_data_url = each.value.model_data
+
+    # 空值的鍵一律不送。SageMaker 不保存空字串的環境變數，讀回來就少了那個鍵，於是
+    # 每次 plan 都出現差異、每次 apply 都重建 model——OmniVoice 的 TTS_DEFAULT_SPEAKER
+    # 與 BreezyVoice 的 TTS_DIALECTS 都會踩到。容器讀的是 `.get(key, "")`，
+    # 「鍵不存在」與「空字串」本來就等價，不送不會改變行為。
     environment = {
-      TTS_MODEL_ID        = each.value.model_id
-      TTS_MODEL_REVISION  = each.value.revision
-      TTS_LANGUAGES       = each.value.languages
-      TTS_DIALECTS        = each.value.dialects
-      TTS_DEFAULT_SPEAKER = each.value.speaker
+      for key, value in {
+        TTS_MODEL_ID        = each.value.model_id
+        TTS_MODEL_REVISION  = each.value.revision
+        TTS_LANGUAGES       = each.value.languages
+        TTS_DIALECTS        = each.value.dialects
+        TTS_DEFAULT_SPEAKER = each.value.speaker
+      } : key => value if value != ""
     }
   }
 }
