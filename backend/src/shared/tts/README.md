@@ -10,7 +10,7 @@
 | `config.py` | schema v1、provider/route、模型 production gate |
 | `providers.py` | Polly、SageMaker 與測試 mock adapter |
 | `router.py` | 輸入門檻、單一入口、能力 gate 與同語言 fallback |
-| `composition.py` | `TTS_CONFIG_JSON` 載入、受控模型 registry、warm-start facade |
+| `composition.py` | TTS 設定載入（env 或 SSM）、受控模型 registry、warm-start facade |
 
 絕對規則：remote-only；不從文字猜語言；客語必須有 profile 六腔；不做客語→中文
 fallback；不記錄文字或音訊；未核准模型不建立 provider；TTS 失敗由 Chat 轉成 nullable

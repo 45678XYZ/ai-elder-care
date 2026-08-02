@@ -152,6 +152,7 @@ cp .env.example .env
 | `cognito.tf` | Cognito User Pool（使用者認證與 JWT 發放） |
 | `api_gateway.tf` | API Gateway REST API（路由與 JWT 驗證） |
 | `lambda.tf` | Lambda Functions（chat / tools / elders / routines / events / summaries / stats / session_closer / batch_extractor / dlq_reconciler / daily_digest / summary_generator / pre_token / post_confirmation） |
+| `lambda_config_parameters.tf` | SSM Parameters（Chat Lambda 的 ASR／TTS 設定，內容太大放不進環境變數） |
 | `dynamodb.tf` | DynamoDB Tables（elders / conversations / events / daily_summaries / routines / elder_accounts） |
 | `sqs.tf` | SQS Queue + DLQ（batch 事件萃取佇列） |
 | `eventbridge.tf` | EventBridge Scheduler（idle session close / nightly summary / backfill / daily digest） |

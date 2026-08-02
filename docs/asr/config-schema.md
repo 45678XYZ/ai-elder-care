@@ -1,12 +1,22 @@
-# ASR_CONFIG_JSON 規格
+# ASR 設定規格
 
-`ASR_CONFIG_JSON` 是 Chat Lambda 唯一的 ASR 設定來源。未設定或空白時使用
-`default_config()`（僅本機／測試 `hak_mock`）；有值但 JSON 或 schema 無效時拋出
-`ConfigParseError`，不得退回預設值。AWS Region 是唯一不放在此 JSON 的執行設定；在
-Lambda 由 runtime 自動注入 `AWS_REGION`，Terraform 不得重複設定該保留鍵。
+這份 JSON 是 Chat Lambda 唯一的 ASR 設定來源，由下列兩個環境變數之一提供：
 
-Parser：`backend/src/shared/asr/config.py`；Terraform：
-`terraform/asr_lambda_config.tf`。
+| 環境變數 | 內容 | 適用 |
+|---|---|---|
+| `ASR_CONFIG_JSON` | JSON 本身 | 本機、測試，以及小到放得進環境變數的設定 |
+| `ASR_CONFIG_SSM_PARAMETER` | SSM 參數名稱 | 部署。六腔客語與 TTS 設定相加超過 Lambda 4 KB 的環境變數上限 |
+
+`ASR_CONFIG_JSON` 優先；兩者都未設定或空白時使用 `default_config()`（僅本機／測試
+`hak_mock`）。指定了 SSM 參數卻讀不到時拋出 `ConfigSourceError`，JSON 或 schema 無效時
+拋出 `ConfigParseError`；兩者都不得退回預設值。
+
+AWS Region 是唯一不放在此 JSON 的執行設定；在 Lambda 由 runtime 自動注入 `AWS_REGION`，
+Terraform 不得重複設定該保留鍵。
+
+Parser：`backend/src/shared/asr/config.py`；來源解析：
+`backend/src/shared/config_source.py`；Terraform：`terraform/asr_lambda_config.tf`
+與 `terraform/lambda_config_parameters.tf`。
 
 ## 最小結構
 

@@ -1,4 +1,5 @@
-# TTS_CONFIG_JSON 是 Chat Lambda 唯一的 TTS provider／route 設定來源。
+# 這份設定是 Chat Lambda 唯一的 TTS provider／route 設定來源。實際傳遞由
+# lambda_config_parameters.tf 寫入 SSM，Lambda 只拿到參數名稱。
 
 locals {
   tts_approval = {
