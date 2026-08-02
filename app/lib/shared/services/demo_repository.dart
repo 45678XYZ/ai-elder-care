@@ -73,6 +73,7 @@ class DemoRepository implements CareRepository {
         transcript: '（示範資料：錄了 ${_approxKb(audioBase64)} KB 的音檔，但語音辨識在後端，這裡聽不懂）',
         replyText: '我有收到你的聲音，不過現在還沒接上聽得懂的後端。',
         replyAudioUrl: '',
+        replyAudioStatus: ChatAudioStatus.unavailable,
         routinesUpdated: false,
       );
     }
@@ -89,6 +90,7 @@ class DemoRepository implements CareRepository {
       replyText: replyText,
       // demo 沒有 TTS 音檔；畫面在網址為空時退回裝置端 TTS。
       replyAudioUrl: '',
+      replyAudioStatus: ChatAudioStatus.unavailable,
       routinesUpdated: matched != null,
     );
   }
