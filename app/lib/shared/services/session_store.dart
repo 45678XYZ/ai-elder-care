@@ -243,8 +243,17 @@ class AppSession {
   /// 真實來源是 `GET /elders/{id}/caregivers`，這裡只是快取，見 [ensureCaregiversLoaded]。
   List<Caregiver> linkedCaregivers = const [];
 
-  /// 這台長者手機是否已經有家人連結。決定今天頁要不要顯示連結入口。
-  bool get hasLinkedCaregiver => linkedCaregivers.isNotEmpty;
+  /// 這台長者手機是否已經有**家人**連結。決定今天頁要不要顯示連結入口。
+  ///
+  /// 不算 [Caregiver.isSelf] 那一筆——本人不是自己的家人。自我註冊的長輩在
+  /// `POST /elders` 建自己的資料時，建立者的 sub 會被寫進 `caregiver_ids`
+  /// （見 api.md 的 `is_self`），於是他的「已連結」清單從一開始就非空。
+  ///
+  /// 用 `isNotEmpty` 判斷的話：App 剛開時清單還沒載入（[loadForAccount] 刻意不從
+  /// 本機讀），入口正常顯示；長輩點進連結頁那一趟會重拉清單，把「自己」那筆帶回來，
+  /// 回到今天頁重畫時入口就消失了——而他其實一個家人都還沒連上，從此再也找不到
+  /// 連結的入口，那是他連上家人的唯一路徑。
+  bool get hasLinkedCaregiver => linkedCaregivers.any((c) => !c.isSelf);
 
   /// 目前選定的長者物件；清單還沒載入或該 id 已不存在時為 null。
   Elder? get selectedElder {
