@@ -17,7 +17,7 @@ Live Demo 排練用的端到端對話腳本。每個情境以 tool 覆蓋為設�
 |------|------|
 | `_format.md` | 腳本格式規範與符號說明 |
 | `coverage_matrix.md` | 17 tools 覆蓋追蹤表 |
-| `caregiver/` | 照護者端場景（待規劃） |
+| `caregiver/cg_full_day.md` | 照護者完整使用日（21 動作，覆蓋全部 API） |
 
 ## 對應 Persona
 
