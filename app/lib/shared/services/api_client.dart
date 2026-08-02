@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
@@ -31,11 +31,33 @@ class ApiClient {
     String? baseUrl,
     http.Client? httpClient,
     Future<String?> Function()? tokenProvider,
-  })  : _baseUrl = baseUrl ?? ApiConfig.baseUrl,
+  })  : _baseUrl = _trimTrailingSlash(baseUrl ?? ApiConfig.baseUrl),
         _http = httpClient ?? http.Client(),
         _tokenProvider = tokenProvider;
 
   final String _baseUrl;
+
+  /// 正式端點的根位址；`/v1` 保證只出現一次。
+  ///
+  /// `terraform output api_base_url` 給的是 stage 的 invoke URL，而 stage 名稱就叫
+  /// `v1`（端點全掛在 root），所以那個值**本身就以 `/v1` 結尾**；本機 RAG PoC 沒有
+  /// stage 的概念，給的是 `http://host:8000`。兩種值都會被原樣貼進
+  /// `--dart-define=API_BASE_URL`，所以在這裡收斂，而不是要求每個人記得砍尾巴。
+  ///
+  /// 少了這道收斂會很難查：多一層 `/v1` 打到的是不存在的資源，API Gateway 找不到
+  /// 匹配的 method 就**退回用 SigV4 解 `Authorization`**，而我們送的是 `Bearer <JWT>`，
+  /// 於是每一頁都變成 `Invalid key=value pair (missing equal-sign) in Authorization
+  /// header`——看起來像登入壞了，其實是路徑錯了。
+  String get _v1Root => _baseUrl.endsWith('/v1') ? _baseUrl : '$_baseUrl/v1';
+
+  static String _trimTrailingSlash(String raw) {
+    var s = raw.trim();
+    while (s.length > 1 && s.endsWith('/')) {
+      s = s.substring(0, s.length - 1);
+    }
+    return s;
+  }
+
   final http.Client _http;
 
   /// 取得目前 Cognito ID Token；回傳 null 表示尚未登入。
@@ -404,7 +426,7 @@ class ApiClient {
     Map<String, String>? query,
     Object? body,
   }) async {
-    var uri = Uri.parse('$_baseUrl/v1$path');
+    var uri = Uri.parse('$_v1Root$path');
     if (query != null && query.isNotEmpty) {
       uri = uri.replace(queryParameters: query);
     }
