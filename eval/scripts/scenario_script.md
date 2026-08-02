@@ -26,7 +26,7 @@
 
 * **👵 林陳奶奶 (長者)**：  
   > 「早啊小安……昨晚有比較好睡啦，不過剛起身覺得頭有點暈暈的，沒什麼胃口吃早餐。」  
-  > *(💡 **ASR 技術備註**：Formo ASR 轉錄文字 ➔ feature_segmenter 斷句分區 ➔ 識別健康隱患：頭暈、食慾不振)*
+  > *(💡 **ASR 技術備註**：Formo ASR 轉錄文字 ➔ 對話大腦理解語意 ➔ 識別健康隱患：頭暈、食慾不振)*
 
 * **🤖 小安 (AI 陪伴語音)**：  
   > 「頭暈暈的呀？奶奶您現在先慢一點站起來，先在床邊坐坐。請問今天早上量血壓了嗎？小安幫您記錄一下好嗎？」
@@ -35,7 +35,7 @@
   > 「量過了，剛才收縮壓是 148，舒張壓 92。」
 
 ```json
-// [SYSTEM LOG - feature_events-extraction]
+// [SYSTEM LOG - direct_seven extraction pipeline]
 {
   "extracted_event": {
     "category": "health_vital",

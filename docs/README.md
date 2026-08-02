@@ -22,8 +22,6 @@
 
 | 文件 | 說明 |
 |------|------|
-| `feature_events-extraction.md` | **生活記錄事件萃取計畫**：說明如何從自然對話萃取結構化事件（diet / activity / sleep / medication / wellbeing / safety / other）。涵蓋 Session batch 觸發條件、萃取 Pipeline 各階段設計、canonical key 身分建構、slot 去重與冪等寫入 |
-| `feature_segmenter-pairwise-v2.md` | **對話分塊器 Pairwise V2**：基於 embedding 餘弦相似度的對話主題切割演算法，含訓練資料格式、標註規範、模型訓練流程與 F1/Precision/Recall 評估指標 |
 | `feature_daily-summarization.md` | **每日摘要排程機制**：nightly 深夜生成當日摘要、data_status（partial / complete）二態設計、backfill 等待視窗重算邏輯、覆寫優先序（complete 不被 partial 覆蓋）、LLM 生成文字 vs 程式計算事實的分工原則 |
 
 ### 開發規範與指南

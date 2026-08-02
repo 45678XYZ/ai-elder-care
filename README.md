@@ -48,7 +48,8 @@ API Gateway + Cognito JWT 認證
 ├── backend/        # Python Lambda handlers＋agentcore_runtime/ 對話大腦＋ASR/TTS 領域模組＋extraction/ 生活記錄萃取 pipeline
 ├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, AgentCore Runtime, Transcribe, SageMaker ASR/TTS
 ├── data/           # 模擬長者 persona、合成情境腳本、seed 腳本、knowledge/ 衛教文件
-├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、交付文件、PII、開發流程與功能移植計畫
+├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、交付文件、PII、開發流程與慣例
+├── eval/           # ASR／TTS 評測語料與 notebook、模型選型紀錄、demo 與情境腳本
 ├── experiments/    # 實驗性 PoC（RAG 檢索驗證）
 ├── scripts/        # 全域工具腳本（知識庫上傳等）
 └── skills/         # 供各 AI 工具開發使用的 skill（開發者需自行加入自己的工具）
@@ -83,8 +84,6 @@ API Gateway + Cognito JWT 認證
 ### 功能設計
 | 文件 | 說明 |
 |------|------|
-| [docs/feature_events-extraction.md](docs/feature_events-extraction.md) | 生活事件萃取：從對話到結構化資料的完整流程 |
-| [docs/feature_segmenter-pairwise-v2.md](docs/feature_segmenter-pairwise-v2.md) | 對話分塊演算法 V2：embedding 相似度主題切割 |
 | [docs/feature_daily-summarization.md](docs/feature_daily-summarization.md) | 每日摘要機制：排程生成、partial/complete 狀態、backfill |
 | [docs/asr-agentcore-frontend-integration-plan.md](docs/asr-agentcore-frontend-integration-plan.md) | ASR／Bedrock Agent／Frontend 相容性整併計畫 |
 
@@ -93,7 +92,9 @@ API Gateway + Cognito JWT 認證
 |------|------|
 | [docs/user-journey.md](docs/user-journey.md) | 使用者旅程 |
 | [docs/deliverables/user-journey.md](docs/deliverables/user-journey.md) | 交付版使用者旅程 |
-| [docs/deliverables/data-usage.md](docs/deliverables/data-usage.md) | 數據及資料應用說明 |
+| [docs/deliverables/frontend-chat-realtime-dataflow.md](docs/deliverables/frontend-chat-realtime-dataflow.md) | 前端 realtime 對話資料流 |
+| [docs/deliverables/frontend-session-dataflow.md](docs/deliverables/frontend-session-dataflow.md) | 前端 session 生命週期資料流 |
+| [docs/deliverables/frontend-caregiver-dataflow.md](docs/deliverables/frontend-caregiver-dataflow.md) | 前端照護者頁面資料流 |
 
 ### 開發指南
 | 文件 | 說明 |
@@ -153,13 +154,17 @@ cp .env.example .env
 | `api_gateway.tf` | API Gateway REST API（路由與 JWT 驗證） |
 | `lambda.tf` | Lambda Functions（chat / tools / elders / routines / events / summaries / stats / session_closer / batch_extractor / dlq_reconciler / daily_digest / summary_generator / pre_token / post_confirmation） |
 | `lambda_config_parameters.tf` | SSM Parameters（Chat Lambda 的 ASR／TTS 設定，內容太大放不進環境變數） |
-| `dynamodb.tf` | DynamoDB Tables（elders / conversations / events / daily_summaries / routines / elder_accounts） |
+| `dynamodb.tf` | DynamoDB Tables（elders / conversations / events / daily_summaries / routines / caregiver_lookup / elder_accounts） |
 | `sqs.tf` | SQS Queue + DLQ（batch 事件萃取佇列） |
 | `eventbridge.tf` | EventBridge Scheduler（idle session close / nightly summary / backfill / daily digest） |
-| `s3.tf` | S3 Bucket（TTS 音訊檔存放） |
-| `s3_vectors.tf` | S3 Bucket（Knowledge Base 向量索引源文件） |
+| `s3.tf` | S3 Buckets（TTS 音訊檔、Knowledge Base 衛教文件來源、Lambda 部署包） |
 | `bedrock_kb.tf` | Bedrock Knowledge Base（衛教知識庫） |
+| `bedrock_iam.tf` | Bedrock 呼叫與 Knowledge Base 檢索的 IAM 政策 |
 | `agentcore.tf` | AgentCore Runtime（對話大腦部署配置） |
+| `asr_models.tf` | ASR SageMaker Endpoints：CE 共同備援 + Formo 客語六腔各一個固定 prompt 端點（預設不建立，待模型通過核准） |
+| `asr_lambda_config.tf` | 組出 Chat Lambda 唯一的 ASR 設定來源（endpoint、allowed providers、routing、production gate） |
+| `tts_models.tf` | TTS SageMaker Endpoint 與 invoke IAM（remote-only，Lambda 不載入模型） |
+| `tts_lambda_config.tf` | 組出 Chat Lambda 唯一的 TTS provider／route 設定來源 |
 | `cloudwatch.tf` | CloudWatch Alarms + SNS（監控告警） |
 | `providers.tf` | AWS Provider 設定 |
 | `variables.tf` | 輸入變數定義 |
