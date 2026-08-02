@@ -353,3 +353,62 @@ def test_release_reservation_is_idempotent(stack):
     assert turns.release_reservation(ELDER, session["session_id"], "cnv_1") is True
     assert turns.release_reservation(ELDER, session["session_id"], "cnv_1") is False
     assert session_of(sessions, session["session_id"])["inflight_turn_count"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────
+# 非同步 TTS 的音訊 key 補寫
+# ─────────────────────────────────────────────────────────────────
+def _completed_turn(turns, elder_id, conversation_id):
+    boto3.resource("dynamodb").Table(TABLE_NAME).put_item(
+        Item={
+            "elder_id": elder_id,
+            "record_id": turns.turn_record_id(conversation_id),
+            "request_status": turns.STATUS_COMPLETED,
+            "ai_respond_audio_pending": True,
+        }
+    )
+
+
+def test_attach_audio_key_writes_the_key_and_clears_pending(stack):
+    _, _, turns = stack
+    _completed_turn(turns, "eld_a", "cnv_a")
+
+    assert turns.attach_audio_key("eld_a", "cnv_a", "tts/cnv_a.mp3") is True
+
+    turn = turns.get_turn("eld_a", "cnv_a")
+    assert turn["ai_respond_audio_s3_key"] == "tts/cnv_a.mp3"
+    assert turn["ai_respond_audio_pending"] is False
+
+
+def test_attach_audio_key_is_idempotent(stack):
+    """SQS 重複投遞不得覆寫已經好的音訊。"""
+    _, _, turns = stack
+    _completed_turn(turns, "eld_b", "cnv_b")
+    turns.attach_audio_key("eld_b", "cnv_b", "tts/cnv_b.mp3")
+
+    assert turns.attach_audio_key("eld_b", "cnv_b", "tts/other.mp3") is False
+    assert turns.get_turn("eld_b", "cnv_b")["ai_respond_audio_s3_key"] == "tts/cnv_b.mp3"
+
+
+def test_attach_audio_key_refuses_a_turn_that_is_not_completed(stack):
+    """還在處理或已失敗的 turn 不該長出音訊。"""
+    _, _, turns = stack
+    boto3.resource("dynamodb").Table(TABLE_NAME).put_item(
+        Item={
+            "elder_id": "eld_c",
+            "record_id": turns.turn_record_id("cnv_c"),
+            "request_status": turns.STATUS_PROCESSING,
+        }
+    )
+
+    assert turns.attach_audio_key("eld_c", "cnv_c", "tts/cnv_c.mp3") is False
+
+
+def test_clear_audio_pending_leaves_existing_audio_alone(stack):
+    """永久失敗是重複投遞的殘響時，已經好的音訊不能被收掉。"""
+    _, _, turns = stack
+    _completed_turn(turns, "eld_d", "cnv_d")
+    turns.attach_audio_key("eld_d", "cnv_d", "tts/cnv_d.mp3")
+
+    assert turns.clear_audio_pending("eld_d", "cnv_d") is False
+    assert turns.get_turn("eld_d", "cnv_d")["ai_respond_audio_s3_key"] == "tts/cnv_d.mp3"

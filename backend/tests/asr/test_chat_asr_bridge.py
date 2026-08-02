@@ -88,14 +88,19 @@ def _reset(monkeypatch: pytest.MonkeyPatch):
         )
 
         class _FakeFacade:
-            def synthesize(self, **kwargs):
-                return SynthesizedAudio(b"mp3", "test_tts")
+            """合成已移出同步路徑；chat 只問這輪會不會有音訊。"""
+
+            def is_available(self, language, dialect):
+                return True
+
+        class _FakeSqs:
+            def send_message(self, **kwargs):
+                return {"MessageId": "msg-1"}
 
         monkeypatch.setattr(chat.db, "get_elder", lambda elder_id: {"elder_id": elder_id})
         monkeypatch.setattr(chat, "get_tts_facade", lambda: _FakeFacade())
-        monkeypatch.setattr(
-            chat, "upload_audio_to_s3", lambda audio_bytes, conversation_id: "tts/test.mp3"
-        )
+        monkeypatch.setattr(chat, "TTS_QUEUE_URL", "https://sqs.example.com/tts")
+        monkeypatch.setattr(chat, "get_sqs_client", lambda: _FakeSqs())
         monkeypatch.setattr(
             chat, "presign_audio", lambda object_key: "https://x" if object_key else None
         )
