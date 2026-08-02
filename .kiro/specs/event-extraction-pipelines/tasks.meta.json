@@ -1,0 +1,950 @@
+{
+  "pbtResults": {
+    "1.3 撰寫 LLM 記帳性質測試": {
+      "status": "passed",
+      "lastRunTimestamp": 1785512634616
+    },
+    "3.4 撰寫 pseudo concept 性質測試": {
+      "status": "passed",
+      "lastRunTimestamp": 1785513567715
+    },
+    "2.3 撰寫尾段身分計算性質測試": {
+      "status": "passed",
+      "lastRunTimestamp": 1785513997276
+    },
+    "2.4 撰寫尾段冪等性質測試": {
+      "status": "passed",
+      "lastRunTimestamp": 1785514791056
+    },
+    "10.2 撰寫七類標籤收斂性質測試": {
+      "status": "passed",
+      "lastRunTimestamp": 1785517351435
+    },
+    "11.3 撰寫萃取單位覆蓋與呼叫數會計性質測試": {
+      "status": "passed",
+      "lastRunTimestamp": 1785518882440
+    }
+  },
+  "executionHistory": {
+    "1.1 加入 `hypothesis` 開發期依賴": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511969810
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511986425
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512470384
+      }
+    ],
+    "1.2 新增 `backend/src/extraction/results.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511970469
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511987216
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512471341
+      }
+    ],
+    "1.3 撰寫 LLM 記帳性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971278
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512480131
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512879626
+      }
+    ],
+    "2.1 新增 `backend/src/extraction/shared_tail.py` 的型別與 `absorb`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971373
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512481514
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512875536
+      }
+    ],
+    "2.2 實作 `SharedTail.finalize()`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971435
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512885740
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513383635
+      }
+    ],
+    "2.3 撰寫尾段身分計算性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971504
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513600084
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514658219
+      }
+    ],
+    "2.4 撰寫尾段冪等性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971564
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514665768
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515057005
+      }
+    ],
+    "2.5 撰寫型別驗證性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971625
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515063181
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515519818
+      }
+    ],
+    "2.6 撰寫尾段單元測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971703
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515527126
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515927623
+      }
+    ],
+    "3.1 在 `backend/src/extraction/taxonomy.py` 合成 pseudo concept 節點": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971789
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511988686
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512472444
+      }
+    ],
+    "3.2 新增 `Taxonomy` 的 pseudo concept 查詢方法": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971867
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512482705
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512877625
+      }
+    ],
+    "3.3 過濾 pseudo concept 於既有腳本": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511971942
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512886974
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513380430
+      }
+    ],
+    "3.4 撰寫 pseudo concept 性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972006
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513396089
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513584796
+      }
+    ],
+    "3.5 撰寫 taxonomy 回歸單元測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972068
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513601137
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514659795
+      }
+    ],
+    "4.1 在 `backend/src/extraction/config.py` 新增設定欄位與環境變數讀取": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972137
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511989710
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512473632
+      }
+    ],
+    "4.2 撰寫環境變數解析性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972211
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512888019
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513379193
+      }
+    ],
+    "5.1 新增 `backend/src/extraction/pipelines/base.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972278
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511990376
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512474530
+      }
+    ],
+    "5.2 新增 `backend/src/extraction/pipelines/registry.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972350
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512483791
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512878750
+      }
+    ],
+    "5.3 新增 `backend/src/extraction/pipelines/__init__.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972422
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512888995
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513381451
+      }
+    ],
+    "5.4 撰寫未登錄名稱性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972527
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513602220
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514657190
+      }
+    ],
+    "5.5 撰寫註冊表公開介面 smoke 測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972600
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514667273
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515056303
+      }
+    ],
+    "6.1 新增 `backend/src/extraction/planning.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972673
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512484427
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512876508
+      }
+    ],
+    "6.2 撰寫分塊共用函式單元測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972739
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512889888
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513382719
+      }
+    ],
+    "7. Checkpoint - 共用基礎完成": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972818
+      }
+    ],
+    "8.1 修改 `backend/src/extraction/pipeline.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972879
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513602926
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514655753
+      }
+    ],
+    "8.2 新增 `backend/src/extraction/pipelines/rac_uco.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511972947
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514668135
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515053654
+      }
+    ],
+    "8.3 維持 `rac_uco` 回歸測試全綠": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973027
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515064386
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515518565
+      }
+    ],
+    "9.1 新增 `backend/src/extraction/pipelines/seven_type.py` 的 prompt 與靜態 schema": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973144
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514669142
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515054654
+      }
+    ],
+    "9.2 實作 `extract_seven_type_events()` 與 `SevenTypeExtraction`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973249
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515064990
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515520601
+      }
+    ],
+    "9.3 實作 `plan_turn_batches()` 與 `TurnBatch`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973323
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515527924
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785516166264
+      }
+    ],
+    "9.4 撰寫 seven_type 單元測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973394
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785516172484
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785516681964
+      }
+    ],
+    "10.1 新增 `backend/src/extraction/pipelines/direct_seven.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973462
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785516173513
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785516682590
+      }
+    ],
+    "10.2 撰寫七類標籤收斂性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973529
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517004271
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517591872
+      }
+    ],
+    "10.3 撰寫事件必備欄位與證據來源性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973593
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517598795
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785518559796
+      }
+    ],
+    "11.1 新增 `backend/src/extraction/pipelines/chunked_seven.py`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973657
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517005277
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517590772
+      }
+    ],
+    "11.2 撰寫七類標籤注入一致性性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973729
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517599840
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785518558761
+      }
+    ],
+    "11.3 撰寫萃取單位覆蓋與呼叫數會計性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973801
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785518568428
+      }
+    ],
+    "11.4 撰寫分塊降級性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973878
+      }
+    ],
+    "12. Checkpoint - 七類系列 pipeline 完成": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511973943
+      }
+    ],
+    "13.1 實作摘要階段": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974010
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785516174392
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785516998018
+      }
+    ],
+    "13.2 實作標籤階段": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974068
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517006101
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517592638
+      }
+    ],
+    "13.3 實作屬性填充階段（僅 `uco`）": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974134
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785517600696
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785518557625
+      }
+    ],
+    "13.4 組裝 pipeline 與 stage_metrics": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974191
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785518567664
+      }
+    ],
+    "13.5 撰寫 structured_detail 白名單性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974253
+      }
+    ],
+    "13.6 撰寫標籤空間與階段計數單元測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974311
+      }
+    ],
+    "14.1 擴充 `backend/src/shared/metrics.py::emit_pipeline_metrics`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974380
+      },
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785518566505
+      }
+    ],
+    "14.2 撰寫 metrics 契約性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974441
+      }
+    ],
+    "14.3 撰寫註冊表往返性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974509
+      }
+    ],
+    "14.4 撰寫簡潔 pipeline 不觸發檢索與寫入性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974576
+      }
+    ],
+    "14.5 撰寫所有 pipeline 皆經共用尾段性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974684
+      }
+    ],
+    "15.1 改寫 `backend/src/handlers/batch_extractor.py::build_pipeline`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974761
+      }
+    ],
+    "15.2 調整 `_run_extraction` 的 manifest 分支與錯誤映射": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974822
+      }
+    ],
+    "15.3 撰寫 handler 單元測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974892
+      }
+    ],
+    "16. Checkpoint - 四條 pipeline 與接線完成": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511974954
+      }
+    ],
+    "17.1 實作 Gold_Annotation 載入與驗證": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975023
+      }
+    ],
+    "17.2 實作報表指標計算": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975082
+      }
+    ],
+    "17.3 實作 CLI 與執行流程": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975147
+      }
+    ],
+    "17.4 撰寫 Gold_Annotation 載入性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975203
+      }
+    ],
+    "17.5 撰寫分類指標定義性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975265
+      }
+    ],
+    "17.6 撰寫統計指標與最佳標記性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975330
+      }
+    ],
+    "17.7 撰寫評測組合完整性與容錯性質測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975395
+      }
+    ],
+    "17.8 撰寫腳本副作用邊界單元測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975453
+      }
+    ],
+    "18.1 更新 `docs/framework.md`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975518
+      }
+    ],
+    "18.2 更新 `docs/feature_events-extraction.md`": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975611
+      }
+    ],
+    "18.3 撰寫環境變數文件 lint 測試": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975676
+      }
+    ],
+    "19. Final checkpoint - 全套測試與回歸": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785511975743
+      }
+    ],
+    "1. 共同輸出型別與 LLM 記帳基礎": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785512879800
+      }
+    ],
+    "4. Extraction_Config 擴充": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513379317
+      }
+    ],
+    "6. 共用分塊 planning": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785513382977
+      }
+    ],
+    "3. 七大類 Pseudo_Concept 與 Taxonomy_Loader": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785514659891
+      }
+    ],
+    "5. Pipeline_Registry 與 pipeline 介面": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515056415
+      }
+    ],
+    "8. `rac_uco` 遷移至新型別（回歸基準）": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515518685
+      }
+    ],
+    "2. 共用尾段 Shared_Tail": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785515927708
+      }
+    ],
+    "9. 七大類共用萃取 seven_type": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785516682120
+      }
+    ],
+    "10. `direct_seven` pipeline": [
+      {
+        "executionId": "b4462cd3-3d92-4396-b8e7-d4a3c30dae5e",
+        "chatSessionId": "sess_d16092d3-d098-45ae-aac4-d1e334943e5e",
+        "timestamp": 1785518559882
+      }
+    ]
+  }
+}
