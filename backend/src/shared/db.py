@@ -212,10 +212,22 @@ def decode_next_token(token: str) -> dict[str, Any]:
 # -----------------------------------------------------------------------------
 
 def get_elder(elder_id: str) -> dict[str, Any] | None:
-    """取得單一長者資料。"""
+    """取得單一長者資料。
+
+    強一致讀（與本檔其餘 get_item 一致）：這張表的內容會被「寫完立刻回頭讀」，
+    最終一致的副本會讀到寫入前的舊值，而三個呼叫端都承受不起：
+
+    - `handle_get_caregivers`：剛綁定的家人不在 `caregiver_ids` 裡，長輩看到剛加的
+      那位家人又消失了（App 進頁面就重拉並整份覆蓋本地清單）。
+    - `auth.assert_can_access_elder`：授權是照 `caregiver_ids` 判的，讀到舊值等於
+      剛綁好的照護者被回 403。
+    - `chat` 的 `elder_fresh`：那個名字要的就是最新的 persona。
+
+    elders 一位長者只有一筆、讀取量小，多花的 RCU 遠比這些症狀便宜。
+    """
     table = get_dynamodb_resource().Table(TABLE_ELDERS)
     try:
-        resp = table.get_item(Key={"elder_id": elder_id})
+        resp = table.get_item(Key={"elder_id": elder_id}, ConsistentRead=True)
         item = resp.get("Item")
         return convert_decimals(item) if item else None
     except ClientError as e:

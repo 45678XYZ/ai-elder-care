@@ -46,12 +46,16 @@ class _LinkCaregiverScreenState extends State<LinkCaregiverScreen> {
     _loadLinked();
   }
 
-  /// 已連結的家人來自後端（`GET /elders/{id}/caregivers`），進頁面時載一次。
+  /// 已連結的家人來自後端（`GET /elders/{id}/caregivers`），**每次進頁面都重拉**。
+  ///
+  /// 不用 `ensureCaregiversLoaded`：那個載過就不再動，家人在另一台裝置上剛綁好時
+  /// 這裡會停在舊的那份。這一頁存在的目的就是「確認連上了沒有」，看到過期的清單
+  /// 等於這一頁沒有用。
   ///
   /// 失敗不擋畫面：連結的入口本身還是要能用，清單載不出來頂多是少看到已連結的那幾位。
   Future<void> _loadLinked() async {
     try {
-      await AppSession.instance.ensureCaregiversLoaded();
+      await AppSession.instance.refreshCaregivers();
     } catch (_) {
       // 清單載不出來就先空著
     }
@@ -204,7 +208,11 @@ class _LinkedRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(caregiver.name, style: text.headlineSmall),
+                // 自己那一筆沒有名字（後端查不到 caregiver lookup，見
+                // Caregiver.isSelf）。空白會讓長輩以為連錯人或資料壞了，
+                // 直接寫「自己」——那正是這一筆的真相。
+                Text(caregiver.isSelf ? t('自己') : caregiver.name,
+                    style: text.headlineSmall),
                 const SizedBox(height: 2),
                 Text(
                   caregiver.caregiverId,
