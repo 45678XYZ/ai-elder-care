@@ -13,8 +13,11 @@ import time
 
 import pytest
 
+from src.shared import config_source
+from src.shared.config_source import ConfigSourceError
 from src.shared.asr.composition import (
     ENV_CONFIG_JSON,
+    ENV_CONFIG_PARAMETER,
     StdoutTelemetrySink,
     build_facade,
     build_provider_registry,
@@ -49,6 +52,18 @@ from src.shared.asr.types import (
     Transcript,
     TypedAsrError,
 )
+
+class _StubSsm:
+    """假的 SSM client：回傳固定 response，或在呼叫時拋出指定的例外。"""
+
+    def __init__(self, result: dict | Exception):
+        self.result = result
+
+    def get_parameter(self, **_kwargs):
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
 
 APPROVED_GATE = ModelProductionGate(
     staging_validation_passed=True,
@@ -253,6 +268,52 @@ def test_malformed_env_json_fails_closed_instead_of_silently_defaulting(
     """設定打錯必須直接失敗，否則實際生效的東西與 operator 以為的不同。"""
     monkeypatch.setenv(ENV_CONFIG_JSON, "{not valid json")
     with pytest.raises(ConfigParseError):
+        load_config()
+
+
+def test_load_config_reads_ssm_parameter_when_env_json_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """六腔全開的設定放不進 4 KB 環境變數，實際部署走的是這條路徑。"""
+    payload = {
+        "routes": {
+            "hak": {
+                "route": "hak_only",
+                "provider_identifier": "hak_mock",
+                "enabled": True,
+            }
+        },
+        "providers": {
+            "hak_mock": {
+                "identifier": "hak_mock",
+                "status": "enabled",
+                "kind": "mock",
+            }
+        },
+        "model_metadata": {},
+    }
+    monkeypatch.setenv(ENV_CONFIG_PARAMETER, "/e-hakka-care/asr/config")
+    monkeypatch.setattr(
+        config_source,
+        "_client",
+        lambda: _StubSsm({"Parameter": {"Value": json.dumps(payload)}}),
+    )
+
+    config = load_config()
+
+    assert set(config.routes) == {"hak"}
+
+
+def test_ssm_failure_fails_closed_instead_of_enabling_default_mock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """讀不到設定時退回 default_config() 會安靜地啟用 hak_mock，必須改為直接失敗。"""
+    monkeypatch.setenv(ENV_CONFIG_PARAMETER, "/e-hakka-care/asr/config")
+    monkeypatch.setattr(
+        config_source, "_client", lambda: _StubSsm(RuntimeError("ssm is down"))
+    )
+
+    with pytest.raises(ConfigSourceError):
         load_config()
 
 

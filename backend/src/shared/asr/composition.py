@@ -31,8 +31,11 @@ from .providers import (
 from .router import AsrRouter
 from .telemetry import SafeTelemetryRecord
 from .types import Language
+from src.shared.config_source import load_raw_config
 
 ENV_CONFIG_JSON = "ASR_CONFIG_JSON"
+# 六腔全開的設定放不進 Lambda 的 4 KB 環境變數上限，改由 SSM 提供（見 config_source）。
+ENV_CONFIG_PARAMETER = "ASR_CONFIG_SSM_PARAMETER"
 ENV_AWS_REGION = "AWS_REGION"
 
 # 設定只能啟用經程式碼審查的模型；不接受任意 class path。
@@ -94,8 +97,8 @@ def default_config() -> AsrConfig:
 
 
 def load_config() -> AsrConfig:
-    raw = os.environ.get(ENV_CONFIG_JSON)
-    if not raw or not raw.strip():
+    raw = load_raw_config(ENV_CONFIG_JSON, ENV_CONFIG_PARAMETER)
+    if raw is None:
         return default_config()
     try:
         data: Any = json.loads(raw)

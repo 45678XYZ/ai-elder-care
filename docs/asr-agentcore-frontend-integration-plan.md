@@ -78,7 +78,8 @@
 
 - Lambda 不下載、載入或執行 ASR 模型。
 - 不加入 `torch`、`transformers`、`faster-whisper` 或其他模型推論依賴。
-- `ASR_CONFIG_JSON` 是 Chat Lambda 唯一的 ASR 設定來源。
+- ASR 設定 JSON 是 Chat Lambda 唯一的 ASR 設定來源，由 `ASR_CONFIG_JSON` 或
+  `ASR_CONFIG_SSM_PARAMETER` 提供。
 - 中文固定 Amazon Transcribe Streaming → CE；客語六腔固定對應 Formo endpoint → CE。
 - 只有 provider unavailable/failure/invalid response 可進同語言備援；未核准 provider 不外呼。
 - Formo prompt 與 `FORMO_GENERATION_LANGUAGE=Chinese` 固定在 SageMaker container 部署設定；

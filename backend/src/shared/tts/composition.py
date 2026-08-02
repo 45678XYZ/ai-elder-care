@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import threading
 
 from .config import (
@@ -15,8 +14,12 @@ from .config import (
 )
 from .providers import MockTtsProvider, PollyTtsProvider, SageMakerTtsProvider
 from .router import TtsFacade, TtsRouter
+from src.shared.config_source import load_raw_config
 
 ENV_CONFIG_JSON = "TTS_CONFIG_JSON"
+# 兩個 TTS endpoint 全開的設定與 ASR 設定相加會超過 Lambda 的 4 KB 環境變數上限，
+# 因此改由 SSM 提供（見 config_source）。
+ENV_CONFIG_PARAMETER = "TTS_CONFIG_SSM_PARAMETER"
 
 # 設定只能切換已經過程式碼審查的遠端模型，不接受任意 model ID。
 REMOTE_MODEL_IDS = frozenset(
@@ -32,7 +35,7 @@ _lock = threading.Lock()
 
 
 def load_config() -> TtsConfig:
-    raw = os.environ.get(ENV_CONFIG_JSON)
+    raw = load_raw_config(ENV_CONFIG_JSON, ENV_CONFIG_PARAMETER)
     return parse_tts_config(raw) if raw else disabled_config()
 
 

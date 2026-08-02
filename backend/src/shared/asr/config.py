@@ -320,7 +320,8 @@ class AsrConfig:
 
     包含 language routes、providers 與 model metadata。
 
-    ASR_CONFIG_JSON 是 Lambda 唯一的 ASR 設定來源。
+    這份設定是 Lambda 唯一的 ASR 設定來源；由 ASR_CONFIG_JSON 或
+    ASR_CONFIG_SSM_PARAMETER 提供（見 shared/config_source.py）。
     """
 
     routes: dict[str, RouteConfig]
@@ -519,7 +520,8 @@ def parse_asr_config(data: Any) -> AsrConfig:
     從 dict-like 資料解析 ASR 設定（remote-only 架構）。
 
     缺欄位、矛盾狀態或不可讀 approval record 一律 fail closed。
-    ASR_CONFIG_JSON 是 Lambda 唯一的 ASR 設定來源。
+    這份設定是 Lambda 唯一的 ASR 設定來源；由 ASR_CONFIG_JSON 或
+    ASR_CONFIG_SSM_PARAMETER 提供（見 shared/config_source.py）。
 
     Args:
         data: dict-like 結構，包含 routes、providers 與 model_metadata。

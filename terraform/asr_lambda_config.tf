@@ -1,10 +1,11 @@
 # ASR Lambda 設定注入與最小 IAM 權限
 #
 # 從 Terraform endpoint 名稱、allowed providers、routing 和 gates 組合
-# ASR_CONFIG_JSON — Lambda 唯一的 ASR 設定來源。
+# ASR 設定 — Lambda 唯一的 ASR 設定來源。
 #
-# Chat Lambda 由 lambda.tf 注入本檔組裝的 JSON；即使 endpoint 關閉也明確注入
-# production-disabled 設定，避免空環境變數啟用 default_config() 的 hak_mock。
+# 本檔只負責組裝 JSON；實際傳遞由 lambda_config_parameters.tf 寫入 SSM，lambda.tf 只把
+# 參數名稱交給 Chat Lambda（兩份設定相加超過 Lambda 4 KB 的環境變數上限）。即使 endpoint
+# 關閉也明確組出 production-disabled 設定，避免空設定啟用 default_config() 的 hak_mock。
 
 locals {
   # ASR_CONFIG_JSON — 由 Terraform 從 endpoint 名稱與設定組裝。

@@ -1,7 +1,20 @@
-# TTS_CONFIG_JSON schema v1
+# TTS 設定 schema v1
 
-`TTS_CONFIG_JSON` 是 Chat Lambda 唯一的 TTS 設定來源。缺少環境變數時使用完全停用設定；
-JSON 無效、schema 不明、route 參照不存在 provider 或 remote model gate 不完整時 fail closed。
+這份 JSON 是 Chat Lambda 唯一的 TTS 設定來源，由下列兩個環境變數之一提供：
+
+| 環境變數 | 內容 | 適用 |
+|---|---|---|
+| `TTS_CONFIG_JSON` | JSON 本身 | 本機、測試，以及小到放得進環境變數的設定 |
+| `TTS_CONFIG_SSM_PARAMETER` | SSM 參數名稱 | 部署。TTS 與 ASR 設定相加超過 Lambda 4 KB 的環境變數上限 |
+
+`TTS_CONFIG_JSON` 優先；兩者都未設定時使用完全停用設定。指定了 SSM 參數卻讀不到時
+拋出 `ConfigSourceError`；JSON 無效、schema 不明、route 參照不存在 provider 或 remote
+model gate 不完整時同樣 fail closed。來源解析見 `backend/src/shared/config_source.py`，
+參數由 `terraform/lambda_config_parameters.tf` 建立。
+
+設定只在 cold start 讀取一次並快取。因此改了 SSM 參數還不夠——必須同時讓函數換一版，
+否則既有的執行環境會抱著舊設定繼續服務。Terraform 以 `TTS_CONFIG_VERSION` 環境變數帶入
+參數版本號來保證這件事（見 `terraform/lambda.tf`）。
 
 ```json
 {
