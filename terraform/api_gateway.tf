@@ -316,8 +316,8 @@ resource "aws_api_gateway_integration" "patch_routine" {
   uri                     = module.api_routines.lambda_function_invoke_arn
 }
 
-# 刪除是把當前版本的 active 改成 false（見 backend/src/handlers/routines.py 的
-# _delete_routine），不是真的移除項目，因此不需要額外的 dynamodb:DeleteItem 權限。
+# 刪除是真的把所有版本移除、只留 7 天 tombstone（見 backend/src/handlers/routines.py 的
+# _delete_routine），因此 api_routines 的角色需要 DeleteItem／BatchWriteItem（見 lambda.tf）。
 resource "aws_api_gateway_method" "delete_routine" {
   rest_api_id          = aws_api_gateway_rest_api.api.id
   resource_id          = aws_api_gateway_resource.routine_id.id

@@ -70,6 +70,19 @@ class TtsFacade:
             text, language, dialect, deadline, cancellation
         )
 
+    def is_available(
+        self, language: Language, dialect: HakkaDialect | None
+    ) -> bool:
+        """這輪是否會產出音訊；供非同步 TTS 在合成前決定要不要讓呼叫端等待。
+
+        輸入驗證與 `synthesize` 相同：語言型別不對、客語缺腔調都視為不會有音訊。
+        """
+        if not isinstance(language, Language):
+            return False
+        if language is Language.HAK and not isinstance(dialect, HakkaDialect):
+            return False
+        return self._router.has_eligible_provider(language, dialect)
+
 
 class TtsRouter:
     def __init__(self, config: TtsConfig, providers: Mapping[str, TtsProvider]) -> None:
@@ -125,6 +138,23 @@ class TtsRouter:
             TtsErrorCategory.ROUTE_NOT_APPROVED,
             f"No eligible TTS provider for {key!r}.",
             False,
+        )
+
+    def has_eligible_provider(
+        self, language: Language, dialect: HakkaDialect | None
+    ) -> bool:
+        """這個語言／腔調是否至少有一個可用 provider，不實際合成。
+
+        非同步 TTS 需要在還沒合成前就回答呼叫端「等一下會有音訊」或「這輪不會有」。
+        判定規則與 `synthesize` 完全共用，避免兩邊漂移後出現「說會有卻永遠不來」。
+        """
+        route = self._config.routes.get(route_key(language, dialect))
+        if route is None or not route.enabled:
+            return False
+        return any(
+            self._is_eligible(self._config.providers[provider_id], language, dialect)
+            and provider_id in self._providers
+            for provider_id in route.provider_order
         )
 
     def _is_eligible(self, provider, language, dialect) -> bool:

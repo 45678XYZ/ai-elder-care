@@ -460,6 +460,63 @@ def fail(
     return get_turn(elder_id, conversation_id) or {}
 
 
+def attach_audio_key(elder_id: str, conversation_id: str, object_key: str) -> bool:
+    """把非同步合成好的音訊 key 補寫進已完成的 turn；沒寫成功回 False。
+
+    TTS 搬到 worker 之後，音訊會晚於 turn 提交才存在。key 必須等物件真的寫進 S3 才補上，
+    不能在提交時先寫：turn 帶著 key 就代表「這句話有音檔」，之後每次重播都會依它簽發
+    presigned URL，指向不存在的物件時長者只會拿到一條播不出來的連結。
+
+    條件限定 turn 已 completed 且尚未有 key：前者擋掉還在處理或已失敗的 turn，後者讓
+    SQS 的重複投遞成為無害的重入，也不會覆寫掉已經好的音訊。
+    """
+    table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
+    try:
+        table.update_item(
+            Key={"elder_id": elder_id, "record_id": turn_record_id(conversation_id)},
+            UpdateExpression=(
+                "SET ai_respond_audio_s3_key = :key,"
+                " ai_respond_audio_pending = :false"
+            ),
+            ConditionExpression=(
+                "request_status = :completed"
+                " AND attribute_not_exists(ai_respond_audio_s3_key)"
+            ),
+            ExpressionAttributeValues={
+                ":key": object_key,
+                ":false": False,
+                ":completed": STATUS_COMPLETED,
+            },
+        )
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise TurnError(f"補寫音訊 key 失敗: {exc.response['Error']['Message']}")
+    return True
+
+
+def clear_audio_pending(elder_id: str, conversation_id: str) -> bool:
+    """把「音訊還在合成」的標記收掉；沒有標記可收時回 False。
+
+    合成永久失敗時必須做這一步。標記留著的話，App 每次重播都會看到 pending 而繼續等一段
+    永遠不會來的音訊；明確收成 unavailable，它才能直接以純文字呈現這輪。
+    """
+    table = db.get_dynamodb_resource().Table(db.TABLE_CONVERSATIONS)
+    try:
+        table.update_item(
+            Key={"elder_id": elder_id, "record_id": turn_record_id(conversation_id)},
+            UpdateExpression="SET ai_respond_audio_pending = :false",
+            # 已經有 key 就別動：音訊其實已經好了，這次的失敗是重複投遞的殘響。
+            ConditionExpression="attribute_not_exists(ai_respond_audio_s3_key)",
+            ExpressionAttributeValues={":false": False},
+        )
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise TurnError(f"清除音訊 pending 失敗: {exc.response['Error']['Message']}")
+    return True
+
+
 def release_reservation(elder_id: str, session_id: str, conversation_id: str) -> bool:
     """把已終態 turn 的 inflight 名額還給 session；名額本來就不在時回 False。
 

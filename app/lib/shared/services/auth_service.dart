@@ -114,8 +114,16 @@ class AuthService {
       _idToken = token;
     }
 
-    final role = p.getString(_kChosenRole);
-    _chosenRole = switch (role) {
+    await _loadChosenRole();
+  }
+
+  /// 從本機讀回這台裝置上宣告過的身分。
+  ///
+  /// 兩條路都需要：App 啟動（[restore]）、以及登出後在同一個生命週期內再登入
+  /// （[signIn]）。這裡只負責讀，採不採用由 [effectiveRole] 比對 sub 決定。
+  Future<void> _loadChosenRole() async {
+    final p = await SharedPreferences.getInstance();
+    _chosenRole = switch (p.getString(_kChosenRole)) {
       'elder' => UserRole.elder,
       'caregiver' => UserRole.caregiver,
       _ => null,
@@ -143,6 +151,10 @@ class AuthService {
 
     // 先設好 _idToken 再處理註冊時暫存的資料：轉正時要綁這次 token 的 sub。
     await _consumePendingSignUpData(email: email, identity: parsed);
+    // 老帳號重新登入時沒有 pending 可兌現，宣告過的身分要從本機讀回來。
+    // [signOut] 只清掉記憶體那一份（持久化的留著，理由見 signOut），少了這一步，
+    // 登出之後不重開 App 直接再登入，`_chosenRole` 仍是 null，照樣被問一次。
+    await _loadChosenRole();
     return parsed;
   }
 
@@ -174,8 +186,12 @@ class AuthService {
     _chosenRoleSub = null;
     final p = await SharedPreferences.getInstance();
     await p.remove(_kIdToken);
-    await p.remove(_kChosenRole);
-    await p.remove(_kChosenRoleSub);
+    // 宣告過的身分**不清掉**：那份記錄綁著宣告者的 sub，而 [effectiveRole] 只在 sub
+    // 相符時才採用，所以留著對下一個登入的人無效——同一支手機換帳號登入照樣會被問。
+    //
+    // 清掉的話，照護者每次登出再登入都要重新回答一次「請問你是？」：他的身分不在
+    // token 裡（沒有 elder_id claim，見檔尾 TODO(backend)），本機這份是唯一的記錄。
+    // 那一頁是換裝置時的退路，不該是每次登入的必經站。
 
     await AppSession.instance.clearForAccount(sub);
   }
