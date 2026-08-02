@@ -108,6 +108,14 @@ TOOL_SPECS: List[Tuple[str, str, ParamSpec]] = [
         },
     ),
     (
+        "uncomplete_routine",
+        "Revert a completed routine back to pending status. Use when the elder accidentally marked a routine as done or says they haven't actually done it yet.",
+        {
+            "routine_id": (str, True, "要退回待辦的行程 ID，例如 rtn_001"),
+            "date": (str, True, "要退回的日期，格式為 YYYY-MM-DD"),
+        },
+    ),
+    (
         "get_recent_events",
         "Retrieve recent life events, activities, and recorded health signals for the elder.",
         {
