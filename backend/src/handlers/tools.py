@@ -105,8 +105,20 @@ _EMERGENCY_COOLDOWN_SECS = 300
 
 
 def _get_elder_name(elder_id: str) -> str:
-    """取得長者姓名，查不到時退回 elder_id。"""
-    elder = db.get_elder(elder_id)
+    """取得長者姓名，查不到或查詢失敗時退回 elder_id。
+
+    **這裡不得把例外往上拋。** 這個名字只是信件內文的可讀性修飾，而唯一的呼叫端是
+    緊急通報的信件組裝——為了讓信裡好看一點而多做的一次查詢，不值得讓整封警報發不出去。
+    退回 elder_id 的信仍然完整可用（編號、時間、長者自述都在），漏發才是真正的傷害。
+
+    實際踩過：`db.get_elder` 只捕 `ClientError`，而環境缺 region 時 boto3 拋的是
+    `NoRegionError`，一路竄到 `handle_notify_caregiver` 讓它整個回 error。
+    """
+    try:
+        elder = db.get_elder(elder_id)
+    except Exception as e:  # noqa: BLE001 — 取不到名字不是不發警報的理由
+        print(f"[Warn] 查詢長者 {elder_id} 姓名失敗，改用編號: {e}")
+        return elder_id
     if elder:
         return elder.get("name") or elder.get("nickname") or elder_id
     return elder_id
