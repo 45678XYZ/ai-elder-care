@@ -345,6 +345,13 @@ module "chat" {
     ASR_CONFIG_SSM_PARAMETER = aws_ssm_parameter.asr_config.name
     TTS_CONFIG_SSM_PARAMETER = aws_ssm_parameter.tts_config.name
 
+    # 設定變更必須讓函數換一版，否則不會生效。composition 的 facade 只在 cold start
+    # 建一次就永久快取；設定放在環境變數時，改設定本身就會更新函數、汰換掉所有執行環境，
+    # 但改成 SSM 之後改設定不再碰到 Lambda——warm container 會抱著舊路由繼續跑到 AWS
+    # 自然回收為止，可能是好幾個小時。把參數版本號帶進來，恢復「改設定即時生效」。
+    ASR_CONFIG_VERSION = tostring(aws_ssm_parameter.asr_config.version)
+    TTS_CONFIG_VERSION = tostring(aws_ssm_parameter.tts_config.version)
+
     TABLE_ELDERS               = aws_dynamodb_table.elders.name
     TABLE_CONVERSATIONS        = aws_dynamodb_table.conversations.name
     TABLE_EVENTS               = aws_dynamodb_table.events.name
