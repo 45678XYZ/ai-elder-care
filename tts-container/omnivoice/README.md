@@ -50,6 +50,20 @@ request 只能送 wire value，不能送任意 instruct 字串；沒帶 `dialect
 | `scripts/build_and_push.sh` | 建映像並推 ECR |
 | `scripts/package_model.sh` | 下載 gated 權重＋封入聲紋 → `model.tar.gz` → S3 |
 
+## GPU 是硬性要求
+
+容器在 `torch.cuda.is_available()` 為 false 時**拒絕啟動**，而不是退回 CPU。
+
+這不是保守起見。CPU 上這個模型合成得出完全正常的音訊，只是慢兩個數量級——eval 量到
+約 1.1 秒/句，掉回 CPU 之後實測 89 個字要 177 秒。`/ping` 照過、endpoint 照樣
+`InService`、音質聽不出差別，於是它會安靜地上線並持續收費，唯一的徵狀是長輩按下去
+之後一直沒有聲音。讓它起不來，SageMaker 會在 ping health check 當場判死。
+
+踩過的實例：`Dockerfile` 若讓 pip 自行解析 torch，會裝到 PyPI 的預設 wheel（cu128），
+而 SageMaker g4dn 主機的驅動只到 CUDA 12.1，`is_available()` 直接回 false。因此 torch
+釘死從 cu121 的 index 安裝，且 build 階段就驗 `torch.version.cuda`——建置機沒有 GPU，
+驗不到 `is_available()`，但驗得到 wheel 是為哪個 CUDA 編的。
+
 ## model artifact 結構
 
 ```text

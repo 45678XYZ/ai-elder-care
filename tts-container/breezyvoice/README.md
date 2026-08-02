@@ -47,6 +47,20 @@ BreezyVoice 是 zero-shot 模型，**沒有內建音色**。它的聲音完全�
 | `scripts/build_and_push.sh` | 建映像並推 ECR（順便建 repository） |
 | `scripts/package_model.sh` | 下載權重＋封入聲紋 → `model.tar.gz` → S3 |
 
+## GPU 是硬性要求
+
+容器啟動時檢查兩件事，任一不成立就**拒絕啟動**，而不是退回 CPU：
+
+1. `torch.cuda.is_available()`
+2. `onnxruntime.get_available_providers()` 含 `CUDAExecutionProvider`
+
+第二項容易被忽略但代價一樣大：CosyVoice 的 speech tokenizer 與聲紋比對走 onnx，
+而上游 `requirements.txt` 裡沒釘版本的 `g2pw` 會把 PyPI 的 CPU 版 `onnxruntime` 一起
+帶進來，兩個套件散出同一個模組目錄、後裝的覆蓋先裝的。實測結果是模型本身還在 GPU 上、
+onnx 那兩段整段在 CPU，GPU 使用率平均只有兩三成，一句話要一百多秒——而輸出完全正常，
+從 `/ping` 與音檔都看不出異常。因此 `onnxruntime-gpu` 的安裝固定放在所有 pip 步驟的
+最後面收尾，build 階段也會驗套件名。
+
 ## model artifact 結構
 
 `model_data_url` 指向的 tar.gz 會被 SageMaker 解壓到 `/opt/ml/model`：
