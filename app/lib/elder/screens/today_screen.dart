@@ -275,18 +275,24 @@ class _TodayScreenState extends State<TodayScreen>
                 );
               },
             ),
-            // 還沒有家人連結時才出現，連上之後就消失——這是一次性的設定，
-            // 不該天天佔著長輩每日要看的畫面。放在最後，不跟「接下來要做什麼」搶注意力。
-            if (!AppSession.instance.hasLinkedCaregiver) ...[
-              const SizedBox(height: AppSpacing.xl),
-              _LinkCaregiverEntry(
-                onTap: () async {
-                  await context.push('/elder/link');
-                  // 從連結頁回來要重畫：連上了這張卡就該不見。
-                  if (mounted) setState(() {});
-                },
-              ),
-            ],
+            // **這顆鈕永遠都在，沒有任何隱藏條件。**
+            //
+            // 它原本只在「還沒連上家人」時出現，理由是連結屬於一次性設定、不該天天
+            // 佔著長輩每日要看的畫面。那個理由不足以抵銷它的代價：這一頁是長輩連上
+            // 家人的唯一入口，判斷一旦算錯，他就再也找不到路，而且不會知道發生什麼事。
+            // 實際上也算錯過兩次——自我註冊的長輩自己就在 `caregiver_ids` 裡
+            // （`POST /elders` 自動綁建立者），於是「清單非空」把他自己算成了家人。
+            //
+            // 而且家人本來就可能不只一位：連上長子之後還要連次女，收起來就沒得連了。
+            // 放在全頁最底下，日常滑動踩不到，留著的成本本來就很低。
+            const SizedBox(height: AppSpacing.xl),
+            _LinkCaregiverEntry(
+              onTap: () async {
+                await context.push('/elder/link');
+                // 從連結頁回來重畫一次：那一頁可能剛連上新的家人。
+                if (mounted) setState(() {});
+              },
+            ),
             // 以下兩個都放全頁最底下：長輩要滑過所有行程才遇得到，日常使用
             // 踩不到。這一頁本來就是長者端唯一適合擺它們的地方——聊天室的
             // 三個互動額度要留給麥克風、打字與分頁，不能再塞。
