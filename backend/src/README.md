@@ -31,6 +31,7 @@ src/
 | `daily_digest.py` | 每日晚報（22:00 台灣時間）：掃描所有長者，組裝今日健康摘要與行程完成狀況，透過 SNS 推播至照護者信箱 |
 | `session_closer.py` | Session 關閉器：前端主動 close API + EventBridge 週期性 idle 收斂，觸發離線 batch materialization |
 | `batch_extractor.py` | SQS 批次事件萃取器：從佇列接收 closed session，執行 Extraction Pipeline，條件式寫入 events。實現 At-Least-Once → Exactly-Once 語義 |
+| `tts_worker.py` | 非同步 TTS 合成 worker：從 SQS 取合成工作，呼叫已核准的 TTS provider，寫入 S3 後把 object key 補回 turn |
 | `dlq_reconciler.py` | SQS DLQ 調和器：處理重試耗盡的 batch 訊息，標記 failed 並發送 SNS 告警 |
 | `tools.py` | 對話大腦工具箱 Lambda：AgentCore Runtime 透過 `lambda:InvokeFunction` 呼叫，分派 12 個業務工具（行程管理、事件查詢、安全通知）。含緊急通知 5 分鐘冷卻機制 |
 | `post_confirmation.py` | Cognito Post Confirmation Trigger：照護者完成註冊後自動訂閱 SNS Topic（緊急警報 + 晚報） |

@@ -4,7 +4,7 @@ import 'package:e_hakka_care/elder/screens/today_screen.dart';
 import 'package:e_hakka_care/shared/services/api_client.dart';
 import 'package:e_hakka_care/shared/services/calendar_tear_store.dart';
 import 'package:e_hakka_care/shared/services/care_repository.dart';
-import 'package:e_hakka_care/shared/services/demo_repository.dart';
+import 'package:e_hakka_care/shared/services/demo/demo_repository.dart';
 import 'package:e_hakka_care/shared/services/routine_sync.dart';
 import 'package:e_hakka_care/shared/services/session_store.dart';
 import 'package:e_hakka_care/theme/app_theme.dart';

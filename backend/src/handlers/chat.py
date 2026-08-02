@@ -53,15 +53,9 @@ from src.shared.asr.types import (
 from src.shared.asr_http import SERVER_SIDE_CATEGORIES, map_asr_error
 from src.shared.models import ChatRequest
 from src.shared.tts import (
-    CancellationSignal as TtsCancellationSignal,
     ConfigParseError as TtsConfigParseError,
-    CorrelationContext as TtsCorrelationContext,
-    Deadline as TtsDeadline,
     HakkaDialect,
     Language as TtsLanguage,
-    SynthesizedAudio,
-    TtsErrorCategory,
-    TypedTtsError,
     get_tts_facade,
 )
 from src.shared.validation import RequestValidationError, validate
@@ -73,8 +67,9 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_BYTES = 5 * 1024 * 1024
 ASR_RESERVED_TAIL_SECONDS = float(os.environ.get("ASR_RESERVED_TAIL_SECONDS", "8"))
 ASR_DEFAULT_BUDGET_SECONDS = float(os.environ.get("ASR_DEFAULT_BUDGET_SECONDS", "20"))
-TTS_RESERVED_TAIL_SECONDS = float(os.environ.get("TTS_RESERVED_TAIL_SECONDS", "2"))
-TTS_DEFAULT_BUDGET_SECONDS = float(os.environ.get("TTS_DEFAULT_BUDGET_SECONDS", "8"))
+# 合成工作的佇列。沒設定時 chat 不入列、也不宣稱之後會有音訊——本機與測試環境
+# 因此維持純文字，而不是回一個永遠不會就緒的 pending。
+TTS_QUEUE_URL = os.environ.get("TTS_QUEUE_URL", "")
 DEFAULT_HAKKA_DIALECT = HakkaDialect.SIXIAN
 
 
@@ -91,6 +86,7 @@ _RUNTIME_SESSION_ID_MAX_LEN = 256
 # 全域 Boto3 Clients (Warm Start 重用連線)
 _s3_client = None
 _agentcore_client = None
+_sqs_client = None
 
 
 def get_s3_client():
@@ -99,6 +95,14 @@ def get_s3_client():
     if _s3_client is None:
         _s3_client = boto3.client("s3", region_name=AWS_REGION)
     return _s3_client
+
+
+def get_sqs_client():
+    """取得 SQS Client 實例（TTS 合成工作入列用）。"""
+    global _sqs_client
+    if _sqs_client is None:
+        _sqs_client = boto3.client("sqs", region_name=AWS_REGION)
+    return _sqs_client
 
 
 def get_agentcore_client():
@@ -137,21 +141,6 @@ def resolve_asr_budget_seconds(context: Any) -> float:
 
     budget = remaining_ms / 1000.0 - ASR_RESERVED_TAIL_SECONDS
     return max(0.0, min(budget, ASR_DEFAULT_BUDGET_SECONDS))
-
-
-def resolve_tts_budget_seconds(context: Any) -> float:
-    """保留 S3 與 commit 時間後，限制同步 TTS 最多使用八秒。"""
-    remaining_ms = None
-    getter = getattr(context, "get_remaining_time_in_millis", None)
-    if callable(getter):
-        try:
-            remaining_ms = getter()
-        except Exception:
-            remaining_ms = None
-    if not isinstance(remaining_ms, (int, float)):
-        return TTS_DEFAULT_BUDGET_SECONDS
-    budget = remaining_ms / 1000.0 - TTS_RESERVED_TAIL_SECONDS
-    return max(0.0, min(budget, TTS_DEFAULT_BUDGET_SECONDS))
 
 
 def transcribe_audio(
@@ -283,27 +272,16 @@ def invoke_agent_brain(
     return reply_text, bool(body.get("routines_updated"))
 
 
-def upload_audio_to_s3(audio_bytes: bytes, conversation_id: str) -> str | None:
-    """將 TTS 合成之 MP3 上傳至 S3，回傳 object key；上傳失敗回 None。
+def audio_object_key(conversation_id: str) -> str:
+    """本輪回覆語音的 S3 key；由 conversation_id 決定，chat 與 worker 共用同一個算式。
 
-    只回 key 不回 URL：presigned URL 有 15 分鐘效期，存進 DynamoDB 之後重播就是一條死連結，
-    因此 turn 只保存 key，每次回應再簽發（見 docs/framework.md 的音訊欄位規則）。
+    只保存 key 不保存 URL：presigned URL 有 15 分鐘效期，存進 DynamoDB 之後重播就是一條
+    死連結，因此 turn 只保存 key，每次回應再簽發（見 docs/framework.md 的音訊欄位規則）。
 
-    失敗必須回 None 而不是照樣回 key：turn 一旦帶著 key 提交成 completed，那個 key 就是
-    永久的——之後每次重播都會簽出一條指向不存在物件的連結，長者永遠聽不到這句回覆。
+    key 可預測是非同步 TTS 能成立的前提：chat 在音訊還不存在時就得簽出 URL 給 App 輪詢，
+    而 worker 稍後要寫進同一個位置。同時也讓重複的 SQS 訊息落在同一個物件上而不是各寫一份。
     """
-    object_key = f"tts/{conversation_id}.mp3"
-    try:
-        get_s3_client().put_object(
-            Bucket=S3_BUCKET_NAME,
-            Key=object_key,
-            Body=audio_bytes,
-            ContentType="audio/mpeg"
-        )
-    except Exception:
-        logger.exception("回覆語音上傳失敗，本輪不附音檔：conversation_id=%s", conversation_id)
-        return None
-    return object_key
+    return f"tts/{conversation_id}.mp3"
 
 
 def presign_audio(object_key: str | None) -> str | None:
@@ -371,8 +349,8 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # 4. 副作用區：turn 已是 processing，之後每一條路徑都必須把它收成終態
         try:
-            transcript, reply_text, routines_updated, audio_key = run_turn(
-                req, audio_bytes, conversation_id, turn_dialect, context
+            transcript, reply_text, routines_updated, audio_key, audio_pending = (
+                run_turn(req, audio_bytes, conversation_id, turn_dialect, context)
             )
         except TurnFailure as failure:
             return fail_turn(req.elder_id, conversation_id, session_id, owner, failure)
@@ -397,6 +375,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     "elder_transcript": transcript,
                     "ai_respond_text": reply_text,
                     "ai_respond_audio_s3_key": audio_key,
+                    # 音訊由 tts_worker 之後補上；先記下「這輪會有」，讓重播也答得出
+                    # pending 而不是把還在合成的 turn 說成沒有音訊。
+                    "ai_respond_audio_pending": audio_pending,
                     "routines_updated": routines_updated,
                 },
             )
@@ -591,11 +572,14 @@ def run_turn(
     conversation_id: str,
     hakka_dialect: HakkaDialect | None,
     context: Any = None,
-) -> Tuple[str, str, bool, str | None]:
-    """ASR → 對話大腦 → TTS → 上傳；回 (transcript, reply_text, routines_updated, audio key)。
+) -> Tuple[str, str, bool, str | None, bool]:
+    """ASR → 對話大腦 → TTS 入列；回 (transcript, reply_text, routines_updated, audio key, audio pending)。
 
-    音檔存不進 S3 時 audio key 為 None，本輪仍然成立：回覆內容與已提交的 routine 副作用都是
-    真的，把整輪判成失敗只會逼長者再講一次，反而可能讓對話產生的 routine 被重複建立。
+    audio key 一律是 None：合成由 tts_worker 非同步完成，key 要等 MP3 真的寫進 S3 才由它
+    補上。回傳位置保留著，是因為 turn 的欄位語意沒變——「有 key 就代表有音檔」。
+
+    拿不到音訊時本輪仍然成立：回覆內容與已提交的 routine 副作用都是真的，把整輪判成失敗
+    只會逼長者再講一次，反而可能讓對話產生的 routine 被重複建立。
     """
     if req.text:
         transcript = req.text
@@ -646,48 +630,81 @@ def run_turn(
     else:
         tts_lang, tts_dialect = req.lang, hakka_dialect
 
+    # 合成本身交給 tts_worker：自建模型要數十秒到數分鐘，而整條 POST /chat 受 API Gateway
+    # REST 的 29 秒硬上限約束，在同步路徑上這些 provider 永遠等不到（見 docs/tts/framework.md）。
+    # 這裡只判斷「這輪會不會有音訊」並把工作入列，turn 仍然以無音訊的狀態提交，
+    # 等 worker 真的把 MP3 寫進 S3 之後再由它補上 key。
     tts_correlation_id = str(uuid.uuid4())
+    audio_pending = enqueue_synthesis(
+        elder_id=req.elder_id,
+        conversation_id=conversation_id,
+        text=reply_text,
+        language=tts_lang,
+        dialect=tts_dialect,
+        correlation_id=tts_correlation_id,
+    )
+
+    return transcript, reply_text, routines_updated, None, audio_pending
+
+
+def enqueue_synthesis(
+    *,
+    elder_id: str,
+    conversation_id: str,
+    text: str,
+    language: str,
+    dialect: Any,
+    correlation_id: str,
+) -> bool:
+    """把合成工作送進佇列；回傳「本輪之後會有音訊」。
+
+    先問 facade 有沒有可用 provider 再入列：route 未核准或語言不支援時入列只會讓 worker
+    做一次註定失敗的嘗試，而呼叫端還會拿到一個永遠不會就緒的 pending 狀態。
+
+    入列失敗回 False 而不是拋例外：文字回覆已經產生，不該因為拿不到音訊就讓整輪失敗。
+    """
+    if not TTS_QUEUE_URL:
+        return False
     try:
-        tts_result = get_tts_facade().synthesize(
-            text=reply_text,
-            language=TtsLanguage.from_str(tts_lang),
-            dialect=tts_dialect,
-            deadline=TtsDeadline.after(
-                resolve_tts_budget_seconds(context), time.monotonic
-            ),
-            cancellation=TtsCancellationSignal(),
-            context=TtsCorrelationContext(correlation_id=tts_correlation_id),
-        )
-    except (TtsConfigParseError, ValueError):
-        logger.error(
-            "TTS configuration rejected: correlation_id=%s", tts_correlation_id
-        )
-        tts_result = TypedTtsError(
-            category=TtsErrorCategory.ROUTE_NOT_APPROVED,
-            message="TTS configuration rejected.",
-            retryable=False,
+        language_value = TtsLanguage.from_str(language)
+    except (ValueError, KeyError):
+        logger.warning("TTS 語言不支援，本輪不附音檔：correlation_id=%s", correlation_id)
+        return False
+
+    try:
+        if not get_tts_facade().is_available(language_value, dialect):
+            logger.info(
+                "TTS 無可用 provider，本輪不附音檔：correlation_id=%s", correlation_id
+            )
+            return False
+    except TtsConfigParseError:
+        logger.error("TTS 設定被拒，本輪不附音檔：correlation_id=%s", correlation_id)
+        return False
+    except Exception:
+        # 任何 TTS 問題都不該讓整輪失敗：文字回覆與已提交的 routine 副作用都是真的，
+        # 把整輪判成失敗只會逼長者再講一次。不記錄 raw exception：可能含設定或文字。
+        logger.error("TTS 可用性判定失敗，本輪不附音檔：correlation_id=%s", correlation_id)
+        return False
+
+    payload = {
+        "elder_id": elder_id,
+        "conversation_id": conversation_id,
+        "object_key": audio_object_key(conversation_id),
+        "text": text,
+        "language": language_value.value,
+        "dialect": getattr(dialect, "value", None),
+        "correlation_id": correlation_id,
+    }
+    try:
+        get_sqs_client().send_message(
+            QueueUrl=TTS_QUEUE_URL,
+            MessageBody=json.dumps(payload, ensure_ascii=False),
         )
     except Exception:
-        # 不記錄 raw exception：可能含 endpoint、文字或 SDK response。
-        logger.error("TTS invocation failed: correlation_id=%s", tts_correlation_id)
-        tts_result = TypedTtsError(
-            category=TtsErrorCategory.PROVIDER_FAILURE,
-            message="TTS invocation failed.",
-            retryable=False,
-        )
-
-    audio_key = None
-    if isinstance(tts_result, SynthesizedAudio):
-        audio_key = upload_audio_to_s3(tts_result.data, conversation_id)
-    else:
-        category = getattr(tts_result.category, "value", "internal_error")
-        logger.warning(
-            "TTS unavailable; completing text turn: category=%s correlation_id=%s",
-            category,
-            tts_correlation_id,
-        )
-
-    return transcript, reply_text, routines_updated, audio_key
+        # 不記錄 raw exception：payload 含長者對話內容。
+        logger.error("TTS 入列失敗，本輪不附音檔：correlation_id=%s", correlation_id)
+        return False
+    return True
 
 
 def fail_turn(
@@ -736,7 +753,27 @@ def in_progress() -> Dict[str, Any]:
 
 
 def chat_response(turn: Dict[str, Any]) -> Dict[str, Any]:
-    """docs/api.md 規範的 flat response；音訊每次重新簽發 presigned URL。"""
+    """docs/api.md 規範的 flat response；音訊每次重新簽發 presigned URL。
+
+    合成是非同步的，所以本輪剛完成時 turn 還沒有 key。狀態一律由 turn 自己推導，
+    首次回應與重播因此走同一條規則：
+
+    - 有 key：worker 先上傳才補 key，所以 key 存在就代表音訊確實可播。
+    - 沒 key 但標了 pending：仍然簽出 URL——key 由 conversation_id 決定，worker 稍後會
+      寫進同一個位置——讓 App 知道現在 404 是正常的、值得再試。
+    - 兩者皆無：這輪不會有音訊，App 不該空等。
+    """
+    stored_key = turn.get("ai_respond_audio_s3_key")
+    if stored_key:
+        status = "ready"
+        object_key = stored_key
+    elif turn.get("ai_respond_audio_pending"):
+        status = "pending"
+        object_key = audio_object_key(turn["conversation_id"])
+    else:
+        status = "unavailable"
+        object_key = None
+
     return responses.json_response(
         200,
         {
@@ -744,7 +781,8 @@ def chat_response(turn: Dict[str, Any]) -> Dict[str, Any]:
             "session_id": turn.get("session_id"),
             "transcript": turn.get("elder_transcript") or "",
             "reply_text": turn.get("ai_respond_text") or "",
-            "reply_audio_url": presign_audio(turn.get("ai_respond_audio_s3_key")),
+            "reply_audio_url": presign_audio(object_key),
+            "reply_audio_status": status,
             "routines_updated": bool(turn.get("routines_updated")),
         },
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Protocol
 
 from .config import ProviderConfig
@@ -80,6 +81,25 @@ class PollyTtsProvider:
         return _audio_or_error(audio, self.provider_id)
 
 
+# 自建 TTS 模型的合成時間以「數十秒」計，遠超過同步請求能等的長度（API Gateway REST
+# 上限 29 秒）。因此 read timeout 由呼叫端的執行環境決定：Chat Lambda 維持短逾時、
+# 讓不可能及時回應的 provider 快速失敗並 fallback；TTS worker 則設成數百秒，真正等它做完。
+DEFAULT_SAGEMAKER_READ_TIMEOUT_SECONDS = 8
+ENV_SAGEMAKER_READ_TIMEOUT = "TTS_SAGEMAKER_READ_TIMEOUT_SECONDS"
+
+
+def _read_timeout_seconds() -> int:
+    raw = os.environ.get(ENV_SAGEMAKER_READ_TIMEOUT)
+    if not raw:
+        return DEFAULT_SAGEMAKER_READ_TIMEOUT_SECONDS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_SAGEMAKER_READ_TIMEOUT_SECONDS
+    # 非正值代表設定寫錯；沿用預設而不是變成「無限等待」。
+    return value if value > 0 else DEFAULT_SAGEMAKER_READ_TIMEOUT_SECONDS
+
+
 class SageMakerTtsProvider:
     """remote-only TTS adapter；Lambda 不載入模型或聲紋。"""
 
@@ -118,7 +138,9 @@ class SageMakerTtsProvider:
                     "sagemaker-runtime",
                     config=Config(
                         connect_timeout=2,
-                        read_timeout=8,
+                        read_timeout=_read_timeout_seconds(),
+                        # 不重試：SageMaker 不會取消已送出的請求，逾時後重試只會讓
+                        # 序列化的容器再多排一份沒人收得到的合成。
                         retries={"max_attempts": 1, "mode": "standard"},
                     ),
                 )

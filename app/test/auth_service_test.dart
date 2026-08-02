@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:e_hakka_care/shared/services/auth_service.dart';
-import 'package:e_hakka_care/shared/services/demo_auth_backend.dart';
+import 'package:e_hakka_care/shared/services/demo/demo_auth_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -166,6 +166,52 @@ void main() {
       await auth.signIn(email: email, password: password);
 
       expect(auth.effectiveRole, isNull);
+    });
+
+    /// 登出不該把宣告過的身分一起洗掉。
+    ///
+    /// 長者的身分在 token 裡（elder_id claim），照護者沒有那個 claim，本機這份是
+    /// 唯一的記錄——signOut 連它一起清的話，照護者每次登出再登入都會被重問一次
+    /// 「請問你是？」，而那一頁本來只是換裝置時的退路。
+    ///
+    /// 留著是安全的：那份記錄綁著宣告者的 sub，effectiveRole 只在 sub 相符時才採用。
+    group('登出之後', () {
+      test('同一個照護者再登入，不必重新回答「請問你是？」', () async {
+        await signUpAndSignIn(UserRole.caregiver);
+        expect(auth.effectiveRole, UserRole.caregiver);
+
+        await auth.signOut();
+        await auth.signIn(email: email, password: password);
+
+        expect(auth.effectiveRole, UserRole.caregiver,
+            reason: '照護者的身分不在 token 裡，本機那份是唯一的記錄');
+      });
+
+      test('重開 App（restore）之後也還記得', () async {
+        await signUpAndSignIn(UserRole.caregiver);
+        await auth.signOut();
+        await auth.signIn(email: email, password: password);
+
+        // 新的實例＝App 重啟，狀態只能從本機讀回來。
+        final fresh = AuthService()..backend = backend;
+        await fresh.restore();
+
+        expect(fresh.effectiveRole, UserRole.caregiver);
+      });
+
+      test('換另一個帳號登入，仍然要問身分', () async {
+        await signUpAndSignIn(UserRole.caregiver);
+        await auth.signOut();
+
+        const other = 'grandpa@example.com';
+        await backend.signUp(email: other, password: password);
+        await backend.confirmSignUp(
+            email: other, code: DemoAuthBackend.demoCode);
+        await auth.signIn(email: other, password: password);
+
+        expect(auth.effectiveRole, isNull,
+            reason: '上一位宣告的身分綁著他的 sub，不該套到下一個登入的人身上');
+      });
     });
   });
 }

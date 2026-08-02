@@ -1,9 +1,8 @@
 ﻿import 'package:e_hakka_care/caregiver/screens/elders_screen.dart';
 import 'package:e_hakka_care/elder/screens/link_caregiver_screen.dart';
-import 'package:e_hakka_care/shared/models/caregiver.dart';
 import 'package:e_hakka_care/shared/services/care_repository.dart';
-import 'package:e_hakka_care/shared/services/demo_data.dart';
-import 'package:e_hakka_care/shared/services/demo_repository.dart';
+import 'package:e_hakka_care/shared/services/demo/demo_data.dart';
+import 'package:e_hakka_care/shared/services/demo/demo_repository.dart';
 import 'package:e_hakka_care/shared/services/session_store.dart';
 import 'package:e_hakka_care/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -248,34 +247,6 @@ void main() {
     });
   });
 
-  /// 今天頁那張「連結家人」卡的出現條件（`hasLinkedCaregiver`）。
-  ///
-  /// 這一條踩過：自我註冊的長輩在建自己的資料時，建立者的 sub 會被寫進
-  /// `caregiver_ids`，所以他的清單從一開始就有一筆「自己」。用 isNotEmpty 判斷的話，
-  /// 他只要點進連結頁一次（那一頁會重拉清單），回到今天頁入口就消失了——而他一個
-  /// 家人都還沒連上，從此再也找不到入口，那是他連上家人的唯一路徑。
-  group('連結入口的出現條件', () {
-    tearDown(() => AppSession.instance.linkedCaregivers = const []);
-
-    test('還沒載入清單時要顯示入口', () {
-      AppSession.instance.linkedCaregivers = const [];
-      expect(AppSession.instance.hasLinkedCaregiver, isFalse);
-    });
-
-    test('清單裡只有「自己」時仍要顯示入口', () {
-      AppSession.instance.linkedCaregivers = const [
-        Caregiver(caregiverId: 'cg_00000001', name: '', isSelf: true),
-      ];
-      expect(AppSession.instance.hasLinkedCaregiver, isFalse,
-          reason: '本人不是自己的家人，不能因為這一筆就把唯一的連結入口收掉');
-    });
-
-    test('連上真的家人之後才收起入口', () {
-      AppSession.instance.linkedCaregivers = const [
-        Caregiver(caregiverId: 'cg_00000001', name: '', isSelf: true),
-        Caregiver(caregiverId: 'cg_7f3a91c2', name: '陳志明'),
-      ];
-      expect(AppSession.instance.hasLinkedCaregiver, isTrue);
-    });
-  });
+  // 「連結入口的出現條件」那一組已經移除：入口不再有條件，永遠顯示。
+  // 現在守這件事的是 link_entry_always_visible_test.dart 的 widget 測試。
 }

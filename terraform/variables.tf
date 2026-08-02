@@ -266,6 +266,14 @@ variable "seven_batch_char_limit" {
   default     = 12000
 }
 
+variable "tts_worker_timeout" {
+  description = "非同步 TTS worker 的 timeout（秒）；SQS visibility timeout 與合成預算由此推導"
+  type        = number
+  # 自建模型合成一段回覆要數十秒到數分鐘，這個值必須容得下最長的一段，
+  # 否則函數會先被砍掉、訊息重投，同一段文字再從頭合成一次。
+  default = 600
+}
+
 variable "batch_lambda_timeout" {
   description = "batch extractor 的 timeout（秒）；SQS visibility timeout 由此推導"
   type        = number

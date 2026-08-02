@@ -2,18 +2,18 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/api_page.dart';
-import '../models/caregiver.dart';
-import '../models/chat_reply.dart';
-import '../models/daily_summary.dart';
-import '../models/elder.dart';
-import '../models/life_event.dart';
-import '../models/routine.dart';
-import '../models/stats.dart';
-import 'api_client.dart';
-import 'api_error_codes.dart';
-import 'api_exception.dart';
-import 'care_repository.dart';
+import '../../models/api_page.dart';
+import '../../models/caregiver.dart';
+import '../../models/chat_reply.dart';
+import '../../models/daily_summary.dart';
+import '../../models/elder.dart';
+import '../../models/life_event.dart';
+import '../../models/routine.dart';
+import '../../models/stats.dart';
+import '../api_client.dart';
+import '../api_error_codes.dart';
+import '../api_exception.dart';
+import '../care_repository.dart';
 import 'demo_data.dart';
 
 /// [CareRepository] 的假資料實作——`DemoData` 的固定資料，加上一層記憶體狀態。
@@ -73,6 +73,7 @@ class DemoRepository implements CareRepository {
         transcript: '（示範資料：錄了 ${_approxKb(audioBase64)} KB 的音檔，但語音辨識在後端，這裡聽不懂）',
         replyText: '我有收到你的聲音，不過現在還沒接上聽得懂的後端。',
         replyAudioUrl: '',
+        replyAudioStatus: ChatAudioStatus.unavailable,
         routinesUpdated: false,
       );
     }
@@ -89,6 +90,7 @@ class DemoRepository implements CareRepository {
       replyText: replyText,
       // demo 沒有 TTS 音檔；畫面在網址為空時退回裝置端 TTS。
       replyAudioUrl: '',
+      replyAudioStatus: ChatAudioStatus.unavailable,
       routinesUpdated: matched != null,
     );
   }

@@ -212,6 +212,13 @@ resource "aws_dynamodb_table" "routines" {
     projection_type = "ALL"
   }
 
+  # DELETE 留下的 tombstone（version=0）自帶 7 天的 ttl 供冪等重播比對，靠這個設定才會
+  # 真的被清掉；沒開的話 tombstone 會永久累積。正式版本項目不帶 ttl 欄位，不受影響。
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
   point_in_time_recovery {
     enabled = true
   }

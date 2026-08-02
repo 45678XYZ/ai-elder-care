@@ -1,6 +1,7 @@
 import 'dart:convert';
 
-import 'auth_backend.dart';
+import '../auth_backend.dart';
+import '../password_validator.dart' as pw;
 
 /// 記憶體版的認證後端，供 Cognito 部署前跑完整流程用。
 ///
@@ -97,6 +98,36 @@ class DemoAuthBackend implements AuthBackend {
   }
 
   @override
+  Future<void> forgotPassword({required String email}) async {
+    await _wait();
+    final account = _accounts[_normalize(email)];
+    if (account == null) return; // 不透露帳號是否存在，靜默成功
+
+    final last = account.lastSentAt;
+    if (last != null && DateTime.now().difference(last) < resendCooldown) {
+      throw AuthException.of(AuthErrorCode.limitExceeded);
+    }
+    account.lastSentAt = DateTime.now();
+  }
+
+  @override
+  Future<void> confirmNewPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    await _wait();
+    final account = _accounts[_normalize(email)];
+    if (account == null || code.trim() != demoCode) {
+      throw AuthException.of(AuthErrorCode.codeMismatch);
+    }
+    if (!pw.isPasswordValid(newPassword)) {
+      throw AuthException.of(AuthErrorCode.invalidPassword);
+    }
+    account.password = newPassword;
+  }
+
+  @override
   Future<String> signIn({
     required String email,
     required String password,
@@ -124,12 +155,8 @@ class DemoAuthBackend implements AuthBackend {
   @override
   Future<String?> currentIdToken() async => _lastToken;
 
-  /// 密碼規則，對齊 terraform/cognito.tf 的 password_policy：
-  /// 至少 8 碼、要有小寫字母與數字（不要求大寫與符號）。
-  static bool isPasswordValid(String password) =>
-      password.length >= 8 &&
-      password.contains(RegExp(r'[a-z]')) &&
-      password.contains(RegExp(r'[0-9]'));
+  /// 密碼規則，委派至 [pw.isPasswordValid]。保留 static 簽名以維持既有測試相容。
+  static bool isPasswordValid(String password) => pw.isPasswordValid(password);
 
   /// demo 專用：把某個帳號變成已綁定的長者，用來預演長者模式。
   /// 真實情境由後端寫 elder_accounts 後、重新取 token 才會有 elder_id。
@@ -163,7 +190,7 @@ class _DemoAccount {
   });
 
   final String email;
-  final String password;
+  String password;
   final String sub;
   bool confirmed = false;
   String? elderId;

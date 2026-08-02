@@ -9,7 +9,7 @@ import '../models/routine.dart';
 import '../models/stats.dart';
 import 'api_repository.dart';
 import 'chat_session.dart';
-import 'demo_repository.dart';
+import 'demo/demo_repository.dart';
 
 /// 畫面取資料的唯一入口——底下可能是真後端（[ApiRepository]）或 demo 假資料
 /// （[DemoRepository]），由 [ApiConfig.useBackend] 決定，畫面兩者都不認識。
