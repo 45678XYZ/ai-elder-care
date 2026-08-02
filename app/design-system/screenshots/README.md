@@ -1,24 +1,14 @@
 # 畫面截圖
 
-放 Claude Design 原型「長照陪伴原型 手帳」各頁截圖（PNG），實作對照用。建議檔名：
+**設計原型的截圖一張都沒有進版控**——Claude Design 原型「長照陪伴原型 手帳」只留在該工具裡。
+本目錄實際只有 [built/](built/)。
 
-**長者模式**
-- `elder-today.png`（今日：農民曆牌面 + 行程）
-- `elder-chat-idle.png` / `elder-chat-listening.png` / `elder-chat-thinking.png` / `elder-chat-speaking.png`
-
-**照護者模式**
-- `caregiver-elders.png`（長者管理）
-- `caregiver-summaries.png`（每日摘要）
-- `caregiver-stats.png`（統計圖表）
-- `caregiver-timeline.png`（事件時間軸）
-
-> 截圖是「要格」不是「要照抄的 code」——實作以 [../MASTER.md](../MASTER.md) 的 token 為準，截圖只定版面與資訊層級。
+規格的唯一來源是 [../MASTER.md](../MASTER.md) 的 token 與 [../pages/](../pages/) 的逐頁規則；
+`built/` 是現況紀錄，**不是規格**。兩者不一致時以 MASTER.md 為準。
 
 ## `built/` — 實作出來的畫面
 
-本目錄下的 [built/](built/) 放的是**目前 App 實際跑出來的樣子**，與上面的設計原型分開：原型是規格來源，`built/` 是現況紀錄。兩者不一致時以原型與 MASTER.md 為準。
-
-目前收錄（390×844）：
+目前 App 實際跑出來的樣子（390×844）：
 
 **認證**（長者與照護者共用，登入後才由 token 分流）
 - `auth-sign-in.png`（登入）

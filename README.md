@@ -48,8 +48,9 @@ API Gateway + Cognito JWT 認證
 ├── backend/        # Python Lambda handlers＋agentcore_runtime/ 對話大腦＋ASR/TTS 領域模組＋extraction/ 生活記錄萃取 pipeline
 ├── terraform/      # API GW, Lambda, DynamoDB, Cognito, EventBridge, S3, Bedrock KB, AgentCore Runtime, Transcribe, SageMaker ASR/TTS
 ├── data/           # 模擬長者 persona、合成情境腳本、seed 腳本、knowledge/ 衛教文件
-├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、交付文件、PII、開發流程與功能移植計畫
-├── experiments/    # 實驗性 PoC（RAG 檢索驗證）
+├── docs/           # 框架、API、ASR／TTS、ADR、使用者旅程、交付文件、PII、開發流程與功能設計
+├── eval/           # ASR／TTS 模型選型評估：語料、SageMaker notebook、選型結論
+├── experiments/    # 實驗性 PoC（RAG 檢索驗證，已由 Bedrock KB 取代）
 ├── scripts/        # 全域工具腳本（知識庫上傳等）
 └── skills/         # 供各 AI 工具開發使用的 skill（開發者需自行加入自己的工具）
 ```
@@ -83,10 +84,16 @@ API Gateway + Cognito JWT 認證
 ### 功能設計
 | 文件 | 說明 |
 |------|------|
-| [docs/feature_events-extraction.md](docs/feature_events-extraction.md) | 生活事件萃取：從對話到結構化資料的完整流程 |
-| [docs/feature_segmenter-pairwise-v2.md](docs/feature_segmenter-pairwise-v2.md) | 對話分塊演算法 V2：embedding 相似度主題切割 |
 | [docs/feature_daily-summarization.md](docs/feature_daily-summarization.md) | 每日摘要機制：排程生成、partial/complete 狀態、backfill |
-| [docs/asr-agentcore-frontend-integration-plan.md](docs/asr-agentcore-frontend-integration-plan.md) | ASR／Bedrock Agent／Frontend 相容性整併計畫 |
+| [docs/asr-agentcore-frontend-integration-plan.md](docs/asr-agentcore-frontend-integration-plan.md) | ASR／AgentCore／Frontend 相容性整併計畫 |
+
+### 給非開發者的概覽
+兩份都是上面規格書的白話版，**規格以原始文件為準**；兩邊不一致時，改的是這裡。
+
+| 文件 | 說明 |
+|------|------|
+| [docs/framework-overview.md](docs/framework-overview.md) | `framework.md` 的高階版 |
+| [docs/api-overview.md](docs/api-overview.md) | `api.md` 的高階版 |
 
 ### 交付文件
 | 文件 | 說明 |
@@ -101,6 +108,8 @@ API Gateway + Cognito JWT 認證
 | [docs/workflow.md](docs/workflow.md) | 開發流程：分支策略、Commit 慣例 |
 | [docs/conventions.md](docs/conventions.md) | 開發慣例：命名、註解、測試規範 |
 | [docs/local_testing.md](docs/local_testing.md) | 本機測試指南 |
+| [docs/pii.md](docs/pii.md) | 個資處理政策 |
+| [docs/adr/](docs/adr/) | 架構決策紀錄（ASR／TTS 的 remote-only 與 production 核准） |
 
 ## 快速開始
 
