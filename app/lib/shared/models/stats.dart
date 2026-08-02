@@ -50,7 +50,8 @@ class StatsToday {
         interactionCount: json['interaction_count'] as int? ?? 0,
         lastInteractionAt: json['last_interaction_at'] == null
             ? null
-            : DateTime.tryParse(json['last_interaction_at'] as String),
+            : DateTime.tryParse(json['last_interaction_at'] as String)
+                ?.toLocal(),
       );
 }
 

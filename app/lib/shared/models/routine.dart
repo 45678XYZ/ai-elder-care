@@ -61,7 +61,7 @@ class Routine {
         active: json['active'] as bool? ?? true,
         createdAt: json['created_at'] == null
             ? null
-            : DateTime.tryParse(json['created_at'] as String),
+            : DateTime.tryParse(json['created_at'] as String)?.toLocal(),
       );
 }
 
@@ -158,13 +158,16 @@ class RoutineOccurrence {
         routineId: json['routine_id'] as String? ?? '',
         title: json['title'] as String? ?? '',
         type: json['type'] as String? ?? 'other',
-        scheduledAt: DateTime.tryParse(json['scheduled_at'] as String? ?? '') ??
+        // 後端帶 `+08:00`，`DateTime.parse` 會回 UTC；轉本地才是牆上時間。
+        // 今日行程按時間排序與「已過時間」的判斷都靠這個值，理由見 life_event.dart。
+        scheduledAt: DateTime.tryParse(json['scheduled_at'] as String? ?? '')
+                ?.toLocal() ??
             DateTime.fromMillisecondsSinceEpoch(0),
         status: json['status'] as String? ?? 'pending',
         createdBy: json['created_by'] as String?,
         completedAt: json['completed_at'] == null
             ? null
-            : DateTime.tryParse(json['completed_at'] as String),
+            : DateTime.tryParse(json['completed_at'] as String)?.toLocal(),
         completedBy: json['completed_by'] as String?,
       );
 }

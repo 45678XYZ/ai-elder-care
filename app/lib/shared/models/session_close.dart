@@ -30,7 +30,7 @@ class SessionCloseResult {
         status: json['status'] as String? ?? '',
         closedAt: json['closed_at'] == null
             ? null
-            : DateTime.tryParse(json['closed_at'] as String),
+            : DateTime.tryParse(json['closed_at'] as String)?.toLocal(),
         batchStatus:
             json['batch_status'] as String? ?? SessionBatchStatus.pending,
       );

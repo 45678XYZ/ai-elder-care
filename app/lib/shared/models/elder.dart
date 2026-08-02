@@ -102,10 +102,10 @@ class Elder {
         habitNote: json['habit_note'] as String?,
         createdAt: json['created_at'] == null
             ? null
-            : DateTime.tryParse(json['created_at'] as String),
+            : DateTime.tryParse(json['created_at'] as String)?.toLocal(),
         updatedAt: json['updated_at'] == null
             ? null
-            : DateTime.tryParse(json['updated_at'] as String),
+            : DateTime.tryParse(json['updated_at'] as String)?.toLocal(),
       );
 }
 
@@ -210,7 +210,7 @@ class HealthNote {
           : HealthNoteSource.caregiver,
       createdAt: map['created_at'] == null
           ? null
-          : DateTime.tryParse(map['created_at'] as String),
+          : DateTime.tryParse(map['created_at'] as String)?.toLocal(),
     );
   }
 }
